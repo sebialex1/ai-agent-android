@@ -11,6 +11,16 @@ data class ShellResult(val output: String, val exitCode: Int, val cwd: String, v
 /** A shell that can run commands against the workspace. */
 interface Shell {
     fun execute(command: String, cwd: String = "/"): ShellResult
+
+    /**
+     * Where each of [programs] is installed (its path), or null for a missing one, looked up
+     * where external commands really run. Returns null when that cannot be told (no shell, no
+     * answer), in which case callers just run the command.
+     */
+    fun which(programs: List<String>): Map<String, String?>? = null
+
+    /** Built-in command names that never need a lookup. */
+    val builtins: Set<String> get() = emptySet()
 }
 
 /**
@@ -33,7 +43,41 @@ class SandboxShell(
     private val mirror: WorkspaceMirror? = null,
 ) : Shell {
 
+    /** Programs already found installed (name to path); removals and uninstalls clear it. */
+    private val known = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    override val builtins: Set<String> get() = BUILTINS
+
+    override fun which(programs: List<String>): Map<String, String?>? {
+        if (programs.isEmpty()) return emptyMap()
+        val todo = programs.filter { it !in known }
+        val looked = HashMap<String, String?>()
+        if (todo.isNotEmpty()) {
+            val script = ToolCheck.script(todo)
+            val t = termux
+            val m = mirror
+            val output = try {
+                if (t != null && m != null && t.status().ready) {
+                    // A probe needs no workspace sync: it runs in the shared folder and changes nothing.
+                    val dir = m.shared.apply { mkdirs() }
+                    t.run(script, dir.absolutePath, PROBE_TIMEOUT_SECONDS, label = "check tools").stdout
+                } else {
+                    // Without Termux, Termux-only programs fail with their own clear reason.
+                    if (todo.any { it in TERMUX_PROGRAMS }) return null
+                    systemShell(script, "/", null).output
+                }
+            } catch (e: Exception) {
+                return null
+            }
+            val parsed = ToolCheck.parse(output, todo) ?: return null
+            parsed.forEach { (name, path) -> if (path != null) known[name] = path }
+            looked.putAll(parsed)
+        }
+        return programs.associateWith { looked[it] ?: known[it] }
+    }
+
     override fun execute(command: String, cwd: String): ShellResult {
+        if (UNINSTALL.containsMatchIn(command)) known.clear()
         var dir = cwd
         val out = StringBuilder()
         var code = 0
@@ -353,6 +397,8 @@ class SandboxShell(
             "mkdir", "touch", "rm", "rmdir", "mv", "cp", "date", "open", "edit", "help", "clear",
         )
         const val TIMEOUT_SECONDS = 60L
+        private const val PROBE_TIMEOUT_SECONDS = 20L
+        private val UNINSTALL = Regex("\\b(uninstall|remove|purge|autoremove)\\b")
         /** apt/pkg/pip installs download and unpack packages, so they get a longer budget. */
         const val INSTALL_TIMEOUT_SECONDS = 300L
         private const val MAX_OUTPUT = 64_000

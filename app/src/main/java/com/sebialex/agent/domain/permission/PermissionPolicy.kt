@@ -70,6 +70,8 @@ class PermissionPolicy(
             else -> PermissionDecision.Allow
         }
         is ToolCall.DeviceInfo -> PermissionDecision.Allow
+        // Only runs `command -v` lookups; changes nothing.
+        is ToolCall.CheckTools -> PermissionDecision.Allow
         is ToolCall.ViewImage -> outsideOr(call.path)
         is ToolCall.Invalid -> PermissionDecision.Allow
     }

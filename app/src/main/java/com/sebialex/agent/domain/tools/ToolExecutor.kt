@@ -2,6 +2,7 @@ package com.sebialex.agent.domain.tools
 
 import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.Shell
+import com.sebialex.agent.data.shell.ToolCheck
 import com.sebialex.agent.data.web.WebGateway
 import com.sebialex.agent.data.web.hostOf
 import com.sebialex.agent.data.workspace.Workspace
@@ -42,9 +43,22 @@ class ToolExecutor(
                     ToolResult(call.callId, true, text, sources = sources)
                 }
                 is ToolCall.Shell -> {
-                    val r = shell.execute(call.command, cwd)
-                    cwd = r.cwd
-                    ToolResult(call.callId, r.exitCode == 0, r.output, exitCode = r.exitCode)
+                    // Programs the command needs are looked up first: a missing yt-dlp or ffmpeg
+                    // gets a clear "not installed, install with …" instead of a pointless run.
+                    val missing = missingPrograms(call.command)
+                    if (missing != null) {
+                        ToolResult(call.callId, false, ToolCheck.missingMessage(missing), exitCode = 127)
+                    } else {
+                        val r = shell.execute(call.command, cwd)
+                        cwd = r.cwd
+                        ToolResult(call.callId, r.exitCode == 0, r.output, exitCode = r.exitCode)
+                    }
+                }
+                is ToolCall.CheckTools -> {
+                    val names = call.tools.map { it.trim() }.filter { it.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) }.distinct()
+                    if (names.isEmpty()) ToolResult(call.callId, false, "No valid program names given.")
+                    else shell.which(names)?.let { ToolResult(call.callId, true, ToolCheck.report(it)) }
+                        ?: ToolResult(call.callId, false, "Could not check: the Termux environment did not answer. See Settings > General > Sandbox.")
                 }
                 is ToolCall.ReadFile -> {
                     // Imported photos and other binaries would only reach the model as noise.
@@ -91,6 +105,18 @@ class ToolExecutor(
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
         }
+    }
+
+    /**
+     * Programs used by [command] that are not installed, or null when the command can just run
+     * (nothing to check, it installs something itself, or the lookup could not answer).
+     */
+    private fun missingPrograms(command: String): List<String>? {
+        if (ToolCheck.installs(command)) return null
+        val programs = ToolCheck.programs(command, shell.builtins)
+        if (programs.isEmpty()) return null
+        val found = shell.which(programs) ?: return null
+        return programs.filter { found[it] == null }.ifEmpty { null }
     }
 
     /** Loads a workspace image (or video frames) so the brain can show it to the model. */

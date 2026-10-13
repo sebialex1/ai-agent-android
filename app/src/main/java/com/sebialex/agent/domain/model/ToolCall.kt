@@ -76,6 +76,12 @@ sealed interface ToolCall {
     /** Current date, time, time zone and basic device facts. */
     data class DeviceInfo(override val callId: String) : ToolCall
 
+    /**
+     * Checks whether command-line programs are installed where commands run (Termux), with the
+     * path of each one found and the install command for each one missing.
+     */
+    data class CheckTools(override val callId: String, val tools: List<String>) : ToolCall
+
     /** Shows a workspace image (or a few frames of a video) to the model, for vision. */
     data class ViewImage(override val callId: String, val path: String) : ToolCall
 

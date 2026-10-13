@@ -412,6 +412,7 @@ class OpenRouterBrain(
             is ToolCall.DownloadFile -> "download_file"
             is ToolCall.HttpRequest -> "http_request"
             is ToolCall.DeviceInfo -> "device_info"
+            is ToolCall.CheckTools -> "check_tools"
             is ToolCall.ViewImage -> "view_image"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
@@ -449,6 +450,7 @@ class OpenRouterBrain(
                 c.body?.let { put("body", it) }
             }.toString()
             is ToolCall.DeviceInfo -> "{}"
+            is ToolCall.CheckTools -> buildJsonObject { putJsonArray("tools") { c.tools.forEach { add(it) } } }.toString()
             is ToolCall.ViewImage -> buildJsonObject { put("path", c.path) }.toString()
             is ToolCall.Invalid -> c.arguments
         }
@@ -521,10 +523,21 @@ class OpenRouterBrain(
                     ToolCall.HttpRequest(id, (arg("method") ?: "GET").trim().uppercase(), url, headers, body)
                 }
                 "device_info" -> ToolCall.DeviceInfo(id)
+                "check_tools" -> {
+                    val tools = stringList(args["tools"]).ifEmpty { stringList(args["tool"]) }
+                    if (tools.isEmpty()) missing("tools") else ToolCall.CheckTools(id, tools)
+                }
                 "view_image" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ViewImage(id, it) } ?: missing("path")
                 else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
             }
         }
+
+        /** A JSON array of strings, or one space/comma separated string, as a list. */
+        private fun stringList(el: JsonElement?): List<String> = when (el) {
+            is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.content }
+            is JsonPrimitive -> if (el.isString) el.content.split(Regex("[\\s,]+")) else emptyList()
+            else -> emptyList()
+        }.map { it.trim() }.filter { it.isNotEmpty() }
 
         private const val MAX_HISTORY_TURNS = 24
         private const val MAX_TOOL_OUTPUT = 16_000
@@ -552,6 +565,9 @@ class OpenRouterBrain(
             - http_request: call a web API (GET, POST, PUT, PATCH, DELETE) with headers and a body; returns status,
               headers and the response text. Non-GET requests ask the user first.
             - device_info: current date, time, time zone, locale and Android version.
+            - check_tools: check that programs (yt-dlp, ffmpeg, git, node, ...) are installed before relying on them.
+              A shell command whose program is missing is not run; you get the install command instead. Offer to
+              install it, or install it right away when the task clearly needs it.
             - view_image: look at a workspace image (or a few frames of a video). Imported files the user asked you to
               look at are already shown with their message; call it only when the task really needs to see one that
               was not shown, and never when the user said not to look at it.
@@ -608,10 +624,10 @@ class OpenRouterBrain(
 
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
-            "search_files, move_file, delete_file, download_file, http_request, device_info, view_image"
+            "search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, view_image"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
-            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, view_image, " +
+            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, view_image, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -662,7 +678,7 @@ class OpenRouterBrain(
         private fun toolNameOf(t: JsonElement): String? =
             (((t as? JsonObject)?.get("function") as? JsonObject)?.get("name") as? JsonPrimitive)?.content
 
-        private val COMPACT_TOOLS = setOf("web_search", "web_fetch", "shell", "python", "read_file", "write_file", "edit_file", "list_files", "device_info")
+        private val COMPACT_TOOLS = setOf("web_search", "web_fetch", "shell", "python", "read_file", "write_file", "edit_file", "list_files", "device_info", "check_tools")
 
         /** A function schema with typed parameters: (name, type, description, required). */
         private fun typedFn(name: String, description: String, vararg params: Param): JsonElement = buildJsonObject {
@@ -683,6 +699,26 @@ class OpenRouterBrain(
                         }
                     }
                     putJsonArray("required") { params.filter { it.required }.forEach { add(it.name) } }
+                }
+            }
+        }
+
+        /** A function whose one required parameter is an array of strings. */
+        private fun arrayFn(name: String, description: String, param: String, paramDescription: String): JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", name)
+                put("description", description)
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject(param) {
+                            put("type", "array")
+                            putJsonObject("items") { put("type", "string") }
+                            put("description", paramDescription)
+                        }
+                    }
+                    putJsonArray("required") { add(param) }
                 }
             }
         }
@@ -734,6 +770,13 @@ class OpenRouterBrain(
                     Param("body", "string", "Request body, e.g. JSON text", required = false),
                 ),
                 typedFn("device_info", "Current date, time, time zone, locale and Android version of this phone."),
+                arrayFn(
+                    "check_tools",
+                    "Check whether command-line programs (yt-dlp, ffmpeg, git, node, ...) are installed in the sandbox. " +
+                        "Returns the path of each installed one and the install command for each missing one. " +
+                        "Call it before a command that depends on such a program.",
+                    "tools", "Program names, e.g. [\"yt-dlp\", \"ffmpeg\"]",
+                ),
                 typedFn(
                     "view_image", "Look at a workspace image (png, jpg, webp, gif) or a few frames of a video. The picture is shown to you after the tool result.",
                     Param("path", "string", "Path relative to /workspace, e.g. imports/photo.jpg"),

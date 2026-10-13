@@ -341,6 +341,7 @@ class AgentOrchestrator(
         is ToolCall.DeleteFile -> Step(nextId(), StepKind.FILE_WRITE, "delete ${call.path.substringAfterLast('/')}", "delete_file", args(call), startedAt = now())
         is ToolCall.DownloadFile -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "download_file", args(call), url = call.url, path = call.path, startedAt = now())
         is ToolCall.HttpRequest -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "http_request", "${call.method} ${call.url}" + (call.body?.let { "\n\n$it" } ?: ""), url = call.url, startedAt = now())
+        is ToolCall.CheckTools -> Step(nextId(), StepKind.SHELL, "check " + call.tools.joinToString(", "), "check_tools", args(call), startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())

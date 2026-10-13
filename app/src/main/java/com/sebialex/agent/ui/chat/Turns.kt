@@ -219,6 +219,18 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
         awaiting -> Palette.Warning
         else -> Palette.IconMuted
     }
+    // A command that was not run because its program is missing: a short readable note under
+    // the row (what is missing and the install command) instead of a bare failure.
+    val missingTool = remember(step.output, step.status) {
+        if (failed && step.exitCode == 127 && MISSING_MARK in step.output) {
+            val lines = step.output.lines()
+            val what = lines.firstOrNull()?.substringBefore(MISSING_MARK)?.trim()?.trimEnd(',')
+                ?.removeSuffix(" is not installed")?.removePrefix("Not installed: ")?.trim().orEmpty()
+            val install = lines.drop(1).map { it.trim() }.firstOrNull { it.startsWith("pip ") || it.startsWith("pkg ") || it.startsWith("apt ") }
+            (if (what.isNotEmpty()) "$what \u2014 not installed" else "Not installed") + (install?.let { " \u00b7 $it" } ?: "")
+        } else null
+    }
+    Column {
     Row(
         Modifier
             .fillMaxWidth()
@@ -252,7 +264,24 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
         Spacer(Modifier.width(8.dp))
         AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
     }
+    if (missingTool != null) {
+        Text(
+            missingTool,
+            style = MonoSmall,
+            color = Palette.Warning,
+            maxLines = 2,
+            modifier = Modifier
+                .padding(start = 34.dp, end = 8.dp, bottom = 6.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Palette.Warning.copy(alpha = 0.08f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+    }
 }
+
+/** Marker in the output of a shell step that was not run because a program is missing (see ToolCheck). */
+private const val MISSING_MARK = "so the command was not run"
 
 /**
  * The quiet reasoning row, with no label in front. While the model is thinking, its raw reasoning streams into the row

@@ -6,7 +6,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## Agent tools
 
-`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), `view_image` (look at a workspace image or video frames), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
+`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), `check_tools` (is yt-dlp / ffmpeg / git … installed, and how to install what is missing), `view_image` (look at a workspace image or video frames), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
 
 ## Chats, settings and files
 
@@ -120,6 +120,10 @@ Nothing falls back to a canned message. Each of these shows up as a failed step 
 | Over the time limit | `[timed out after 60s]` (exit 124) |
 
 `apt`, `apt-get`, `dpkg`, `pkg`, `pip` and `python` never run on the device's `/system/bin/sh` instead. Without Termux they fail with the reason. Other external commands still use `/system/bin/sh` when Termux isn't set up.
+
+### Programs are checked before a command runs
+
+Before the agent's `shell` command runs, every program it uses (the first word of each `&&`, `||`, `;`, `|` part, quote-aware; built-ins and shell keywords skipped) is looked up with one `command -v` probe in Termux (or the device shell). If one is missing, the command is **not run**: the step fails with exit 127 and a readable note under the row, e.g. `yt-dlp — not installed · pip install -U yt-dlp`, and the model gets the install command so it can offer to install it (or install it when the task clearly needs it). Commands that install something themselves are never pre-checked, found programs are cached until something is uninstalled, and if the probe cannot answer the command simply runs. The `check_tools` tool runs the same lookup on demand.
 
 ### The python tool
 
