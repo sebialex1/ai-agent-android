@@ -131,7 +131,17 @@ class OpenRouterBrain(
                 val content = arg("content") ?: return missing("content")
                 ToolCall.WriteFile(id, path, content)
             }
-            else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, read_file, write_file.")
+            "python" -> {
+                val code = arg("code")?.takeIf { it.isNotBlank() } ?: return missing("code")
+                // packages may come as a JSON array or as one space/comma separated string.
+                val packages = when (val p = args["packages"]) {
+                    is JsonArray -> p.mapNotNull { (it as? JsonPrimitive)?.content }
+                    is JsonPrimitive -> if (p.isString) p.content.split(Regex("[\\s,]+")) else emptyList()
+                    else -> emptyList()
+                }.map { it.trim() }.filter { it.isNotEmpty() }
+                ToolCall.Python(id, code, packages, arg("filename"))
+            }
+            else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file.")
         }
     }
 
@@ -216,6 +226,7 @@ class OpenRouterBrain(
         is ToolCall.Shell -> "shell"
         is ToolCall.ReadFile -> "read_file"
         is ToolCall.WriteFile -> "write_file"
+        is ToolCall.Python -> "python"
         is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
     }
 
@@ -225,6 +236,11 @@ class OpenRouterBrain(
         is ToolCall.Shell -> buildJsonObject { put("command", c.command) }.toString()
         is ToolCall.ReadFile -> buildJsonObject { put("path", c.path) }.toString()
         is ToolCall.WriteFile -> buildJsonObject { put("path", c.path); put("content", c.content) }.toString()
+        is ToolCall.Python -> buildJsonObject {
+            put("code", c.code)
+            if (c.packages.isNotEmpty()) putJsonArray("packages") { c.packages.forEach { add(it) } }
+            c.filename?.let { put("filename", it) }
+        }.toString()
         is ToolCall.Invalid -> c.arguments
     }
 
@@ -264,10 +280,18 @@ class OpenRouterBrain(
             You act through tools and every tool call is really executed:
             - web_search: real web search. Returns titles, URLs and snippets.
             - web_fetch: downloads a page and returns its text. Fetch pages before relying on them.
-            - shell: runs a command in the workspace (coreutils-style built-ins, otherwise the device's /system/bin/sh).
+            - shell: runs a command in the workspace. Built-ins (ls, cat, grep, ...) run directly; everything else runs
+              in the real Termux environment (bash, apt, apt-get, dpkg, pkg, pip, python) inside this workspace.
+              Install system tools with `pkg install -y <pkg>` (or `apt install -y <pkg>`) and Python packages with
+              `pip install <pkg>`, e.g. `pip install yt-dlp` then `yt-dlp -o "%(title)s.%(ext)s" <url>`.
+              Always pass -y to apt/pkg; there is no interactive input. Commands time out after 60 s (installs 300 s).
+            - python: runs Python code with Termux's Python in the workspace; list pip packages in `packages` to install
+              them first. Real imports, file I/O and subprocess. Files it writes land in the workspace.
             - read_file / write_file: read and write workspace files. Write documents as Markdown.
             Rules:
             - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
+            - If a command reports that Termux is not available or permission is denied, tell the user what to set up
+              (Settings > Sandbox) instead of pretending it worked.
             - Only cite websites you actually fetched in this conversation.
             - Keep the final answer short and direct. Do not narrate the tools you used; the app shows them.
         """.trimIndent()
@@ -287,11 +311,40 @@ class OpenRouterBrain(
             }
         }
 
+        private val PYTHON_TOOL: JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", "python")
+                put(
+                    "description",
+                    "Run Python 3 code in the sandbox (Termux's Python) with /workspace as working directory. " +
+                        "Packages listed in `packages` are pip-installed first. Returns stdout, stderr and the exit code.",
+                )
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("code") { put("type", "string"); put("description", "Full Python source to run") }
+                        putJsonObject("packages") {
+                            put("type", "array")
+                            putJsonObject("items") { put("type", "string") }
+                            put("description", "pip packages to install before running, e.g. [\"yt-dlp\", \"requests\"]")
+                        }
+                        putJsonObject("filename") {
+                            put("type", "string")
+                            put("description", "Optional script name relative to /workspace, e.g. download.py")
+                        }
+                    }
+                    putJsonArray("required") { add("code") }
+                }
+            }
+        }
+
         val TOOLS: JsonArray = JsonArray(
             listOf(
                 fn("web_search", "Search the web. Returns result titles, URLs and snippets.", "query" to "Search query"),
                 fn("web_fetch", "Fetch a URL and return its readable text content.", "url" to "Absolute http(s) URL"),
-                fn("shell", "Run a command in the sandboxed workspace shell. Working directory is /workspace.", "command" to "Command line"),
+                fn("shell", "Run a command in the sandboxed workspace. Built-ins run directly; anything else runs in Termux (bash, apt, pkg, pip, python). Working directory is /workspace.", "command" to "Command line"),
+                PYTHON_TOOL,
                 fn("read_file", "Read a text file from the workspace.", "path" to "Path relative to /workspace"),
                 fn("write_file", "Create or overwrite a workspace file with the full content.", "path" to "Path relative to /workspace", "content" to "Full file content"),
             ),

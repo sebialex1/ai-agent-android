@@ -23,7 +23,11 @@ class PermissionPolicy(
     private val askBeforeWebAccess: () -> Boolean = { false },
 ) {
     private val destructive = setOf("rm", "rmdir", "shred", "truncate", "dd", "mkfs")
-    private val installers = listOf("pip install", "pip3 install", "pkg install", "apt install", "apt-get install", "npm install", "npm i ", "yarn add", "gem install", "cargo install")
+    private val installers = listOf(
+        "pip install", "pip3 install", "python -m pip install", "python3 -m pip install",
+        "pkg install", "pkg upgrade", "pkg reinstall", "apt install", "apt-get install", "apt upgrade", "apt-get upgrade",
+        "apt reinstall", "dpkg -i", "npm install", "npm i ", "yarn add", "gem install", "cargo install",
+    )
     private val network = setOf("curl", "wget", "ssh", "scp", "nc", "git", "ftp", "rsync")
     private val privilege = setOf("sudo", "su", "chmod", "chown", "mount")
 
@@ -37,6 +41,12 @@ class PermissionPolicy(
         } else PermissionDecision.Allow
         is ToolCall.WebSearch -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, call.query) else PermissionDecision.Allow
         is ToolCall.WebFetch -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, call.url) else PermissionDecision.Allow
+        // Python runs inside the sandbox like any shell command; installing packages asks first.
+        is ToolCall.Python -> if (call.packages.isNotEmpty()) {
+            PermissionDecision.Ask(RiskReason.PACKAGE_INSTALL, "pip install " + call.packages.joinToString(" "))
+        } else if (isOutside(call.scriptPath)) {
+            PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, call.scriptPath)
+        } else PermissionDecision.Allow
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
 

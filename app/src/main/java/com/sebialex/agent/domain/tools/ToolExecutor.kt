@@ -1,5 +1,6 @@
 package com.sebialex.agent.domain.tools
 
+import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.Shell
 import com.sebialex.agent.data.web.WebGateway
 import com.sebialex.agent.data.web.hostOf
@@ -58,12 +59,37 @@ class ToolExecutor(
                     )
                     ToolResult(call.callId, true, "wrote ${call.content.length} bytes to ${w.virtualPath}", attachment = attachment)
                 }
+                is ToolCall.Python -> runPython(call)
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell) 1 else null)
+            ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
         }
+    }
+
+    /**
+     * Saves the code as a script in the workspace, pip-installs the requested packages, then runs
+     * it with Termux's Python from the shell's current directory. A failed install is a failed
+     * step with pip's real output; the script is not run in that case.
+     */
+    private fun runPython(call: ToolCall.Python): ToolResult {
+        val script = workspace.write(call.scriptPath, call.code).virtualPath
+        val out = StringBuilder()
+        if (call.packages.isNotEmpty()) {
+            val pkgs = call.packages.joinToString(" ") { SandboxShell.shellQuote(it) }
+            val install = shell.execute("python -m pip install $pkgs", cwd)
+            out.append("$ pip install ").append(call.packages.joinToString(" ")).append('\n')
+            if (install.output.isNotEmpty()) out.append(install.output).append('\n')
+            if (install.exitCode != 0) {
+                return ToolResult(call.callId, false, out.toString().trimEnd(), exitCode = install.exitCode)
+            }
+            out.append('\n')
+        }
+        val r = shell.execute("python ${SandboxShell.shellQuote("/workspace$script")}", cwd)
+        if (call.packages.isNotEmpty()) out.append("$ python ").append(call.scriptName).append('\n')
+        out.append(r.output)
+        return ToolResult(call.callId, r.exitCode == 0, out.toString().trimEnd(), exitCode = r.exitCode)
     }
 }

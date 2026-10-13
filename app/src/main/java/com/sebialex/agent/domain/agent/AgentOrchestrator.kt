@@ -167,6 +167,16 @@ class AgentOrchestrator(
             nextId(), StepKind.FILE_WRITE, call.path.substringAfterLast('/'), "write_file",
             "{\"path\": \"${esc(call.path)}\", \"bytes\": ${call.content.length}}\n\n${call.content}", path = call.path, startedAt = now(),
         )
+        // Shown like a shell row: terminal icon + "python script.py". The audit keeps the code.
+        is ToolCall.Python -> Step(
+            nextId(), StepKind.SHELL, "python ${call.scriptName}", "python",
+            buildString {
+                if (call.packages.isNotEmpty()) append("# pip install ").append(call.packages.joinToString(" ")).append("\n")
+                append("# /workspace/").append(call.scriptPath.removePrefix("/workspace/").removePrefix("/")).append("\n\n")
+                append(call.code)
+            },
+            path = "/" + call.scriptPath.removePrefix("/workspace/").removePrefix("/"), startedAt = now(),
+        )
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
 
