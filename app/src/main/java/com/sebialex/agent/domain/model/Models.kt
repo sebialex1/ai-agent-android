@@ -1,0 +1,72 @@
+package com.sebialex.agent.domain.model
+
+import kotlinx.serialization.Serializable
+
+@Serializable
+enum class Role { USER, ASSISTANT }
+
+/** The type of an action in the audit trail. Drives the icon shown in the step row. */
+@Serializable
+enum class StepKind { SEARCH, FETCH, SHELL, FILE_READ, FILE_WRITE, PERMISSION }
+
+@Serializable
+enum class StepStatus { RUNNING, DONE, FAILED, AWAITING_APPROVAL, DENIED }
+
+/**
+ * A single executed action. [payload] is the one-line raw useful value shown in the row
+ * (query, hostname, command, file name). Everything else is only visible in the audit view.
+ */
+@Serializable
+data class Step(
+    val id: String,
+    val kind: StepKind,
+    val payload: String,
+    val tool: String,
+    val input: String,
+    val output: String = "",
+    val url: String? = null,
+    val path: String? = null,
+    val status: StepStatus = StepStatus.RUNNING,
+    val risk: String? = null,
+    val startedAt: Long,
+    val finishedAt: Long? = null,
+    val exitCode: Int? = null,
+)
+
+@Serializable
+data class FileAttachment(
+    val path: String,
+    val name: String,
+    /** Snapshot id of the previous version, if the agent modified an existing file. */
+    val baseSnapshot: String? = null,
+    val added: Int = 0,
+    val removed: Int = 0,
+    val updatedAt: Long,
+)
+
+@Serializable
+data class SourceRef(
+    val url: String,
+    val host: String,
+    val title: String = "",
+)
+
+@Serializable
+data class Turn(
+    val id: String,
+    val role: Role,
+    val text: String,
+    val steps: List<Step> = emptyList(),
+    val attachments: List<FileAttachment> = emptyList(),
+    val sources: List<SourceRef> = emptyList(),
+    val createdAt: Long,
+    val complete: Boolean = true,
+)
+
+@Serializable
+data class Session(
+    val id: String,
+    val title: String,
+    val turns: List<Turn>,
+    val createdAt: Long,
+)
