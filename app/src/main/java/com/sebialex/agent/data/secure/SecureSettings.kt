@@ -56,7 +56,7 @@ class SecureSettings(context: Context) {
         val localContext: Int,
         /** Multi-token prediction for models that ship it (faster decoding on GPU). */
         val localSpeculative: Boolean,
-        /** New conversations start with memory of past chats on. Each chat can still change it. */
+        /** What new conversations start with: the last choice made in a chat's options sheet. */
         val memoryForNewChats: Boolean = false,
         /** Let the model write conversation titles. */
         val autoTitles: Boolean = true,

@@ -190,12 +190,14 @@ fun SettingsScreen(
                 SettingsTab.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
                 SettingsTab.CHATS -> {
                     Group("Memory of past chats") {
-                        SwitchRow(
-                            title = "On for new chats",
-                            subtitle = "Memory is set per conversation in its options (\u22ef in the chat or the list). With it on, the agent can list, summarize and read your earlier conversations, read-only.",
-                            checked = snap.memoryForNewChats,
-                            onChange = settings::setMemoryForNewChats,
+                        // Not a second switch: memory lives in each chat's options. This only
+                        // reports what a new chat starts with (the last choice made there).
+                        Text(
+                            "New chats start with memory " + if (snap.memoryForNewChats) "on" else "off",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Palette.TextPrimary,
                         )
+                        Note("Set per chat in its options (\u22ef in the chat or the list). New chats start with the choice you made last. With it on, the agent can list, summarize and read your earlier conversations, read-only.")
                     }
                     Group("Titles") {
                         SwitchRow(

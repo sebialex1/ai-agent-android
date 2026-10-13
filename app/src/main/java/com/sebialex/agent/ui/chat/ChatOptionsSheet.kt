@@ -24,6 +24,9 @@ private enum class OptionsMode { MENU, RENAME, CONFIRM_DELETE }
  *
  * Memory is bound to [SecureSettings.memoryChats], a flow that changes on every switch, so the
  * switch always moves (the old one in the "+" sheet read a snapshot that never changed).
+ *
+ * This switch is the only memory control in the app. Flipping it also becomes the starting
+ * value for new chats ([SecureSettings.setMemoryForNewChats]); Settings > Chats just shows it.
  */
 @Composable
 fun ChatOptionsSheet(
@@ -61,10 +64,14 @@ fun ChatOptionsSheet(
                 SheetSwitch(
                     icon = R.drawable.ic_history,
                     title = "Memory of past chats",
-                    subtitle = if (memory) "On for this chat \u00b7 the agent can look up earlier conversations (read-only)"
-                    else "Off \u00b7 earlier conversations stay private",
+                    subtitle = if (memory) "On for this chat \u00b7 the agent can look up earlier conversations (read-only). New chats start on too."
+                    else "Off for this chat \u00b7 earlier conversations stay private. New chats start off too.",
                     checked = memory,
-                    onChange = { settings.setConversationMemory(sessionId, it) },
+                    onChange = {
+                        settings.setConversationMemory(sessionId, it)
+                        // One control: the last choice is what the next new chat starts with.
+                        settings.setMemoryForNewChats(it)
+                    },
                 )
                 if (saved) {
                     SheetDivider()

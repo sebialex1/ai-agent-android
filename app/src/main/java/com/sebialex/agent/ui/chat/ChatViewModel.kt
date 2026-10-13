@@ -391,7 +391,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** An empty conversation; memory of past chats starts as set in Settings > Chats. */
+    /** An empty conversation; memory of past chats starts as last set in a chat's options. */
     private fun freshSession(): Session {
         val s = Session(newId(), "", emptyList(), System.currentTimeMillis())
         if (container.settings.memoryForNewChats()) container.settings.setConversationMemory(s.id, true)
