@@ -397,7 +397,12 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Placeholder title until the model has written one from the conversation. */
-    private fun titleFor(task: String): String = com.sebialex.agent.data.llm.TitleWriter.fallback(task)
+    private fun titleFor(task: String): String {
+        // Imports are @path mentions: name the chat from the words, or the file when there are none.
+        val paths = com.sebialex.agent.domain.agent.Mentions.paths(task)
+        val plain = com.sebialex.agent.domain.agent.Mentions.strip(task, paths)
+        return com.sebialex.agent.data.llm.TitleWriter.fallback(plain.ifBlank { paths.firstOrNull()?.substringAfterLast('/') ?: task })
+    }
 
     private val titling = HashSet<String>()
 

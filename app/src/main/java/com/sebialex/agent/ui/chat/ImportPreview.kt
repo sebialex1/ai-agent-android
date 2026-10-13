@@ -131,11 +131,11 @@ internal fun ImportCard(path: String, file: File, onClick: () -> Unit) {
     val ratio = (thumb?.ratio ?: 4f / 3f).coerceIn(0.56f, 2.1f)
     val maxW = 248.dp
     val maxH = 300.dp
-    val width: Dp = if (maxW / ratio > maxH) maxH * ratio else maxW
+    val cardWidth: Dp = if (maxW / ratio > maxH) maxH * ratio else maxW
     val shape = RoundedCornerShape(20.dp)
     Box(
         Modifier
-            .width(width)
+            .width(cardWidth)
             .aspectRatio(ratio)
             .softSurface(shape, Palette.SurfaceHigh, elevation = 3.dp)
             .clip(shape)

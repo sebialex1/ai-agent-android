@@ -118,7 +118,7 @@ fun SettingsScreen(
             .imePadding(),
     ) {
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            QuietIconButton(R.drawable.ic_back, "Back", onClick = ::back)
+            QuietIconButton(R.drawable.ic_back, "Back", onClick = { back() })
             AnimatedContent(
                 targetState = section?.label ?: "Settings",
                 transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) },
