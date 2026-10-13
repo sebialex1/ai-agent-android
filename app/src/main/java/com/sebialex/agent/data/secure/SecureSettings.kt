@@ -69,6 +69,8 @@ class SecureSettings(context: Context) {
     fun autoApprove(): Boolean = prefs.getBoolean(KEY_AUTO_APPROVE, false)
     fun remoteModel(): String = prefs.getString(KEY_REMOTE_MODEL, null)?.takeIf { it.isNotBlank() }
         ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) || it.startsWith(OLLAMA_PREFIX) } ?: DEFAULT_MODEL
+    /** The model of the selected cloud provider: last Ollama model, or the last OpenRouter model. */
+    fun cloudModel(): String = if (cloudProvider() == PROVIDER_OLLAMA) ollamaModel().ifEmpty { remoteModel() } else remoteModel()
     fun localBackend(): String = prefs.getString(KEY_LOCAL_BACKEND, null)?.takeIf { it == BACKEND_CPU } ?: BACKEND_GPU
     fun localContext(): Int = prefs.getInt(KEY_LOCAL_CONTEXT, DEFAULT_LOCAL_CONTEXT).takeIf { it in LOCAL_CONTEXTS } ?: DEFAULT_LOCAL_CONTEXT
     fun localSpeculative(): Boolean = prefs.getBoolean(KEY_LOCAL_SPECULATIVE, false)

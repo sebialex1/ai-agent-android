@@ -52,6 +52,8 @@ import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningPreference
 import com.sebialex.agent.data.llm.ReasoningRules
+import com.sebialex.agent.data.local.LocalEngine
+import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
@@ -64,10 +66,15 @@ fun SettingsScreen(
     settings: SecureSettings,
     models: OpenRouterModels,
     termux: com.sebialex.agent.data.shell.TermuxBridge,
+    modelStore: ModelStore,
+    localEngine: LocalEngine,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
 ) {
     val snap by settings.state.collectAsStateWithLifecycle()
+    var tab by remember { mutableStateOf(SettingsTab.GENERAL) }
+    val generalScroll = rememberScrollState()
+    val onDeviceScroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxSize()
@@ -79,7 +86,14 @@ fun SettingsScreen(
             QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
             Text("Settings", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(start = 8.dp))
         }
-        val scroll = rememberScrollState()
+        SegmentedText(
+            options = SettingsTab.entries,
+            selected = tab,
+            label = { it.label },
+            onSelect = { tab = it },
+            modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp),
+        )
+        val scroll = if (tab == SettingsTab.GENERAL) generalScroll else onDeviceScroll
         Column(
             Modifier
                 .fillMaxSize()
@@ -100,85 +114,94 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            KeyField(
-                label = "TinyFish API key",
-                saved = snap.hasTinyFishKey,
-                hint = snap.tinyFishHint,
-                onSave = settings::setTinyFishKey,
-                onClear = { settings.setTinyFishKey(null) },
-            )
-            KeyField(
-                label = "OpenRouter API key",
-                saved = snap.hasOpenRouterKey,
-                hint = snap.openRouterHint,
-                onSave = settings::setOpenRouterKey,
-                onClear = { settings.setOpenRouterKey(null) },
-            )
-            PlainField(
-                label = "Model",
-                value = snap.model,
-                placeholder = SecureSettings.DEFAULT_MODEL,
-                onSave = settings::setModel,
-            )
-            ReasoningSetting(
-                model = snap.model,
-                pref = snap.reasoning,
-                models = models,
-                onEnabled = { settings.setReasoningEnabled(snap.model, it) },
-                onEffort = { settings.setReasoningEffort(snap.model, it) },
-            )
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAskBeforeWeb(!snap.askBeforeWeb) }.padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Ask before web access", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
-                Switch(
-                    checked = snap.askBeforeWeb,
-                    onCheckedChange = settings::setAskBeforeWeb,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Palette.OnAccent,
-                        checkedTrackColor = Palette.Accent,
-                        uncheckedThumbColor = Palette.IconMuted,
-                        uncheckedTrackColor = Palette.SurfaceHigh,
-                        uncheckedBorderColor = Palette.SurfaceHighest,
-                    ),
+            if (tab == SettingsTab.ON_DEVICE) {
+                OnDeviceSettings(settings, modelStore, localEngine)
+            } else {
+                KeyField(
+                    label = "TinyFish API key",
+                    saved = snap.hasTinyFishKey,
+                    hint = snap.tinyFishHint,
+                    onSave = settings::setTinyFishKey,
+                    onClear = { settings.setTinyFishKey(null) },
                 )
-            }
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAutoApprove(!snap.autoApprove) }.padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-                    Text(
-                        "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Palette.TextTertiary,
-                        modifier = Modifier.padding(top = 2.dp, end = 12.dp),
+                KeyField(
+                    label = "OpenRouter API key",
+                    saved = snap.hasOpenRouterKey,
+                    hint = snap.openRouterHint,
+                    onSave = settings::setOpenRouterKey,
+                    onClear = { settings.setOpenRouterKey(null) },
+                )
+                PlainField(
+                    label = "Model",
+                    value = snap.model,
+                    placeholder = SecureSettings.DEFAULT_MODEL,
+                    onSave = settings::setModel,
+                )
+                ReasoningSetting(
+                    model = snap.model,
+                    pref = snap.reasoning,
+                    models = models,
+                    onEnabled = { settings.setReasoningEnabled(snap.model, it) },
+                    onEffort = { settings.setReasoningEffort(snap.model, it) },
+                )
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAskBeforeWeb(!snap.askBeforeWeb) }.padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Ask before web access", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = snap.askBeforeWeb,
+                        onCheckedChange = settings::setAskBeforeWeb,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.OnAccent,
+                            checkedTrackColor = Palette.Accent,
+                            uncheckedThumbColor = Palette.IconMuted,
+                            uncheckedTrackColor = Palette.SurfaceHigh,
+                            uncheckedBorderColor = Palette.SurfaceHighest,
+                        ),
                     )
                 }
-                Switch(
-                    checked = snap.autoApprove,
-                    onCheckedChange = settings::setAutoApprove,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Palette.OnAccent,
-                        checkedTrackColor = Palette.Accent,
-                        uncheckedThumbColor = Palette.IconMuted,
-                        uncheckedTrackColor = Palette.SurfaceHigh,
-                        uncheckedBorderColor = Palette.SurfaceHighest,
-                    ),
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAutoApprove(!snap.autoApprove) }.padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+                        Text(
+                            "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.TextTertiary,
+                            modifier = Modifier.padding(top = 2.dp, end = 12.dp),
+                        )
+                    }
+                    Switch(
+                        checked = snap.autoApprove,
+                        onCheckedChange = settings::setAutoApprove,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.OnAccent,
+                            checkedTrackColor = Palette.Accent,
+                            uncheckedThumbColor = Palette.IconMuted,
+                            uncheckedTrackColor = Palette.SurfaceHigh,
+                            uncheckedBorderColor = Palette.SurfaceHighest,
+                        ),
+                    )
+                }
+                SandboxSetting(termux)
+                Text(
+                    "Delete all conversations and workspaces",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Palette.Danger,
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClearConversations).padding(vertical = 8.dp),
                 )
+                Spacer(Modifier.height(24.dp))
             }
-            SandboxSetting(termux)
-            Text(
-                "Delete all conversations and workspaces",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Palette.Danger,
-                modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClearConversations).padding(vertical = 8.dp),
-            )
-            Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+private enum class SettingsTab(val label: String) {
+    GENERAL("General"),
+    ON_DEVICE("On-device"),
 }
 
 private sealed interface ModelCheck {
