@@ -63,14 +63,18 @@ class OllamaBrain(
         }
         // One retry without the feature the model rejects ("does not support tools/thinking").
         var attempt = 0
+        var c = ctx
         while (true) {
             try {
-                return@withContext request(ctx, name, withTools, thinkValue, onReasoning)
+                return@withContext request(c, name, withTools, thinkValue, onReasoning)
             } catch (e: UnsupportedFeature) {
                 if (attempt++ > 1) throw IOException(e.message)
                 if (e.tools && withTools) withTools = false
                 else if (e.thinking && thinkValue != null) thinkValue = null
                 else throw IOException(e.message)
+            } catch (e: IOException) {
+                // A model without vision: once more without the pictures (the model is told).
+                if (c.hasImages && BrainContext.isImageRejection(e.message)) c = c.withoutImages() else throw e
             }
         }
         throw IOException("unreachable")
@@ -180,9 +184,20 @@ class OllamaBrain(
             openAi.forEach { el ->
                 val m = el as? JsonObject ?: return@forEach
                 val role = str(m["role"]).orEmpty()
+                // Content parts (text + image_url data URLs) become text plus native `images` (base64).
+                val parts = m["content"] as? JsonArray
+                val text = if (parts == null) str(m["content"]).orEmpty() else parts.mapNotNull { p ->
+                    (p as? JsonObject)?.takeIf { str(it["type"]) == "text" }?.let { str(it["text"]) }
+                }.joinToString("\n")
+                val images = parts.orEmpty().mapNotNull { p ->
+                    val o = p as? JsonObject ?: return@mapNotNull null
+                    if (str(o["type"]) != "image_url") return@mapNotNull null
+                    str((o["image_url"] as? JsonObject)?.get("url"))?.substringAfter("base64,", "")?.takeIf { it.isNotEmpty() }
+                }
                 add(buildJsonObject {
                     put("role", role)
-                    put("content", str(m["content"]).orEmpty())
+                    put("content", text)
+                    if (images.isNotEmpty()) put("images", buildJsonArray { images.forEach { add(JsonPrimitive(it)) } })
                     if (role == "assistant") {
                         str(m["reasoning"])?.takeIf { it.isNotBlank() }?.let { put("thinking", it) }
                         (m["tool_calls"] as? JsonArray)?.let { tc ->

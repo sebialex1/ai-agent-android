@@ -60,10 +60,14 @@ class AgentOrchestrator(
         var thoughtStep: Step? = null
         var executed = 0
         var batch = 0
+        // Imported images: shown with the message when the user asked to look (or wrote nothing
+        // else); otherwise the model is only told they exist and may call view_image itself.
+        val (images, imageNote) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
+        val modelTask = task + imageNote
 
         while (executed < maxSteps) {
             val memory = memoryEnabled()
-            val ctx = BrainContext(task, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory)
+            val ctx = BrainContext(modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images)
             val requestedAt = now()
             // Live reasoning: the thought row is created on the first streamed delta and updated
             // (throttled) while the model thinks. Every event carries the full step, so a dropped
@@ -197,6 +201,32 @@ class AgentOrchestrator(
         const val THOUGHT_LABEL = "thought"
         /** Minimum gap between live reasoning updates, so the UI is not flooded per token. */
         const val LIVE_THROTTLE_MS = 70L
+        /** Most imported pictures sent with one message. */
+        const val MAX_IMAGES = 4
+    }
+
+    /**
+     * Images and videos mentioned as `@path` in [task] that exist in the workspace. When
+     * [VisionIntent] says to look, they are loaded (videos as a few frames) and a short note
+     * names them; otherwise only the note goes along, pointing at view_image.
+     */
+    private fun attachedImages(task: String): Pair<List<com.sebialex.agent.domain.model.ImageInput>, String> {
+        val media = Mentions.paths(task)
+            .filter { Mentions.isImage(it) || com.sebialex.agent.data.workspace.ImageEncoder.isVideo(it) }
+            .mapNotNull { p -> runCatching { workspace.resolve(p) }.getOrNull()?.takeIf { it.isFile }?.let { workspace.virtualOf(it) to it } }
+            .take(MAX_IMAGES)
+        if (media.isEmpty()) return emptyList<com.sebialex.agent.domain.model.ImageInput>() to ""
+        val names = media.joinToString(", ") { it.first }
+        if (!VisionIntent.shouldLook(task)) {
+            return emptyList<com.sebialex.agent.domain.model.ImageInput>() to
+                "\n\n[Attached: $names. Not shown to you, because the user did not ask you to look at it. " +
+                "Call view_image only if the task really needs to see it.]"
+        }
+        val images = media.flatMap { (label, file) -> com.sebialex.agent.data.workspace.ImageEncoder.load(file, label) }
+        if (images.isEmpty()) return images to "\n\n[Attached: $names (could not be decoded as an image).]"
+        val onlyMedia = Mentions.strip(task, Mentions.paths(task)).isBlank()
+        return images to "\n\n[Attached and shown below: ${images.joinToString(", ") { it.label }}." +
+            (if (onlyMedia) " The user sent it without any text: describe what it shows." else "") + "]"
     }
 
     private fun workspaceFiles(): List<String> =
@@ -260,6 +290,7 @@ class AgentOrchestrator(
         is ToolCall.DownloadFile -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "download_file", args(call), url = call.url, path = call.path, startedAt = now())
         is ToolCall.HttpRequest -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "http_request", "${call.method} ${call.url}" + (call.body?.let { "\n\n$it" } ?: ""), url = call.url, startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
+        is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
 

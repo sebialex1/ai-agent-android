@@ -6,7 +6,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## Agent tools
 
-`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
+`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), `view_image` (look at a workspace image or video frames), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
 
 ## Chats, settings and files
 
@@ -144,6 +144,15 @@ Settings live on the conversations screen. System Back walks up: file viewer, wo
 When you send a new message, all earlier step groups collapse. Answers, files, and sources stay visible. Only pages the agent actually fetched become website sources.
 
 A newly received answer types out with a fast typewriter that speeds up as the answer grows. Each answer is revealed once. Reopening a conversation, restarting the app, or coming back from another screen shows the saved text immediately.
+
+## Images and vision
+
+Whether the agent looks at an imported image is decided from the message it came with:
+
+- **Looks**: the message is only the import, or it asks to look ("what's this", "describe", "read the text", "who is this", a question about it, Romanian "uită-te", "ce e" and similar), or it is any other request about the picture. The image is sent with that message as an `image_url` part (scaled to at most 1568 px, EXIF rotation applied, JPEG or PNG); a video is sent as three frames (start, middle, end). Up to four imports per message.
+- **Does not look**: the message only says what to do with the file ("use this as the background", "upload it", "convert to png", "rename it") or says not to look. The model is told the file exists and can call the `view_image` tool if the task turns out to need the picture.
+
+If the selected model has no image input, the request is retried once without the picture and the model says it could not see it. Ollama Cloud gets the same pictures in its native `images` field. On-device models take text only and are told so.
 
 ## Memory of past chats
 

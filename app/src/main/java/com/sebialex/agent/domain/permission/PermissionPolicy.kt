@@ -70,6 +70,7 @@ class PermissionPolicy(
             else -> PermissionDecision.Allow
         }
         is ToolCall.DeviceInfo -> PermissionDecision.Allow
+        is ToolCall.ViewImage -> outsideOr(call.path)
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
 

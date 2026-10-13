@@ -170,7 +170,8 @@ class LocalBrain(
             if (t.text.isBlank()) return@forEach
             turns += t.role to t.text.take(budget.historyTurnChars)
         }
-        turns += Role.USER to ctx.task
+        // On-device models here take text only: say so instead of claiming a picture is shown.
+        turns += Role.USER to if (ctx.images.isEmpty()) ctx.task else ctx.task + "\n\n" + LOCAL_NO_IMAGES_NOTE
         val merged = ArrayList<Pair<Role, String>>()
         for ((role, text) in turns) {
             val prev = merged.lastOrNull()
@@ -255,6 +256,9 @@ class LocalBrain(
         /** Chat-template switch for models with a thinking mode (Gemma 4). */
         private const val ENABLE_THINKING = "enable_thinking"
         private const val MAX_HISTORY_TURNS = 12
+        /** Replaces the "shown below" note: on-device models in this app get no image input. */
+        private const val LOCAL_NO_IMAGES_NOTE = "[The picture is not visible to you: this on-device model takes text only. " +
+            "Say so briefly if the task needs to see it, and suggest a cloud vision model.]"
         private const val MAX_FILES = 60
         private const val CANCEL_WAIT_MS = 5_000L
         /** Approximate size of the compact tool schemas once rendered into the prompt. */

@@ -61,7 +61,15 @@ class OpenRouterBrain(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision = withContext(Dispatchers.IO) {
+    override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision = try {
+        request(ctx, onReasoning)
+    } catch (e: IOException) {
+        // A model without image input rejects the whole request: answer once more without the
+        // pictures, and the model is told it could not see them.
+        if (ctx.hasImages && BrainContext.isImageRejection(e.message)) request(ctx.withoutImages(), onReasoning) else throw e
+    }
+
+    private suspend fun request(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision = withContext(Dispatchers.IO) {
         // A metadata failure must never block the chat: send no reasoning fields in that case.
         val reasoning = try {
             reasoningFields()
@@ -153,7 +161,14 @@ class OpenRouterBrain(
                 put("content", if (t.role == Role.ASSISTANT) t.text + actionsNote(t) else t.text)
             })
         }
-        add(buildJsonObject { put("role", "user"); put("content", ctx.task) })
+        add(buildJsonObject {
+            put("role", "user")
+            when {
+                ctx.images.isNotEmpty() -> put("content", contentWithImages(ctx.task, ctx.images))
+                ctx.imagesDropped -> put("content", ctx.task + "\n\n" + BrainContext.IMAGES_DROPPED_NOTE)
+                else -> put("content", ctx.task)
+            }
+        })
         ctx.observations.groupBy { it.batch }.toSortedMap().forEach { (batch, group) -> addBatch(group, ctx.thoughts[batch]) }
     }
 
@@ -186,6 +201,23 @@ class OpenRouterBrain(
                 val body = o.result.output.ifEmpty { if (o.result.ok) "(no output)" else "(failed with no output)" }
                 val code = o.result.exitCode?.let { "exit code $it\n" }.orEmpty()
                 put("content", (if (o.result.ok) "" else "ERROR: ") + code + body.take(MAX_TOOL_OUTPUT))
+            })
+        }
+        // Tool messages carry text only, so pictures from view_image follow as one user message.
+        val images = group.flatMap { it.result.images }
+        if (images.isNotEmpty()) add(buildJsonObject {
+            put("role", "user")
+            put("content", contentWithImages("[view_image] " + images.joinToString(", ") { it.label }, images))
+        })
+    }
+
+    /** OpenAI-style content parts: the text, then one `image_url` part (a data URL) per picture. */
+    private fun contentWithImages(text: String, images: List<com.sebialex.agent.domain.model.ImageInput>): JsonArray = buildJsonArray {
+        add(buildJsonObject { put("type", "text"); put("text", text) })
+        images.forEach { img ->
+            add(buildJsonObject {
+                put("type", "image_url")
+                putJsonObject("image_url") { put("url", img.dataUrl) }
             })
         }
     }
@@ -380,6 +412,7 @@ class OpenRouterBrain(
             is ToolCall.DownloadFile -> "download_file"
             is ToolCall.HttpRequest -> "http_request"
             is ToolCall.DeviceInfo -> "device_info"
+            is ToolCall.ViewImage -> "view_image"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -416,6 +449,7 @@ class OpenRouterBrain(
                 c.body?.let { put("body", it) }
             }.toString()
             is ToolCall.DeviceInfo -> "{}"
+            is ToolCall.ViewImage -> buildJsonObject { put("path", c.path) }.toString()
             is ToolCall.Invalid -> c.arguments
         }
 
@@ -487,6 +521,7 @@ class OpenRouterBrain(
                     ToolCall.HttpRequest(id, (arg("method") ?: "GET").trim().uppercase(), url, headers, body)
                 }
                 "device_info" -> ToolCall.DeviceInfo(id)
+                "view_image" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ViewImage(id, it) } ?: missing("path")
                 else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
             }
         }
@@ -517,6 +552,8 @@ class OpenRouterBrain(
             - http_request: call a web API (GET, POST, PUT, PATCH, DELETE) with headers and a body; returns status,
               headers and the response text. Non-GET requests ask the user first.
             - device_info: current date, time, time zone, locale and Android version.
+            - view_image: look at a workspace image (or a few frames of a video). Imported files the user asked you to
+              look at are already shown with their message; call it only when you need to see one that was not shown.
             Rules:
             - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
             - If a command reports that Termux is not available or permission is denied, tell the user what to set up
@@ -570,10 +607,10 @@ class OpenRouterBrain(
 
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
-            "search_files, move_file, delete_file, download_file, http_request, device_info"
+            "search_files, move_file, delete_file, download_file, http_request, device_info, view_image"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
-            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, " +
+            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, view_image, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -696,6 +733,10 @@ class OpenRouterBrain(
                     Param("body", "string", "Request body, e.g. JSON text", required = false),
                 ),
                 typedFn("device_info", "Current date, time, time zone, locale and Android version of this phone."),
+                typedFn(
+                    "view_image", "Look at a workspace image (png, jpg, webp, gif) or a few frames of a video. The picture is shown to you after the tool result.",
+                    Param("path", "string", "Path relative to /workspace, e.g. imports/photo.jpg"),
+                ),
             ),
         )
     }

@@ -76,6 +76,9 @@ sealed interface ToolCall {
     /** Current date, time, time zone and basic device facts. */
     data class DeviceInfo(override val callId: String) : ToolCall
 
+    /** Shows a workspace image (or a few frames of a video) to the model, for vision. */
+    data class ViewImage(override val callId: String, val path: String) : ToolCall
+
     /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
     data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
@@ -89,6 +92,8 @@ data class ToolResult(
     val sources: List<SourceRef> = emptyList(),
     val attachment: FileAttachment? = null,
     val searchHits: List<SearchHit> = emptyList(),
+    /** Pictures for the model to look at (from view_image); sent right after the tool results. */
+    val images: List<ImageInput> = emptyList(),
 )
 
 data class SearchHit(val title: String, val url: String, val snippet: String)

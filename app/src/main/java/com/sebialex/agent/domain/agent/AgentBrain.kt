@@ -1,5 +1,6 @@
 package com.sebialex.agent.domain.agent
 
+import com.sebialex.agent.domain.model.ImageInput
 import com.sebialex.agent.domain.model.ToolCall
 import com.sebialex.agent.domain.model.ToolResult
 import com.sebialex.agent.domain.model.Turn
@@ -30,7 +31,39 @@ data class BrainContext(
      * `conversation_memory` tool is offered. When false the tool is not advertised at all.
      */
     val memoryTool: Boolean = false,
-)
+    /**
+     * Imported images (or video frames) shown with the current message, chosen by
+     * [VisionIntent]. Empty when the user did not ask to look at them.
+     */
+    val images: List<ImageInput> = emptyList(),
+    /** The model rejected image input once in this request, so pictures are left out (with a note). */
+    val imagesDropped: Boolean = false,
+) {
+    /** True when this request carries any picture (with the message or from view_image). */
+    val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }
+
+    /** The same request without any picture, for models that do not accept image input. */
+    fun withoutImages(): BrainContext = copy(
+        images = emptyList(),
+        observations = observations.map { o ->
+            if (o.result.images.isEmpty()) o else o.copy(result = o.result.copy(images = emptyList()))
+        },
+        imagesDropped = true,
+    )
+
+    companion object {
+        /** Whether a provider error says the model cannot take images (so a retry without them can work). */
+        fun isImageRejection(message: String?): Boolean {
+            val m = message?.lowercase() ?: return false
+            return ("image" in m || "vision" in m || "multimodal" in m || "modalit" in m) &&
+                ("support" in m || "not" in m || "endpoint" in m || "invalid" in m || "unsupported" in m)
+        }
+
+        /** Told to the model when its request had to be retried without pictures. */
+        const val IMAGES_DROPPED_NOTE = "[The attached image could not be shown to you: the selected model does not accept image input. " +
+            "Say so briefly and suggest picking a vision-capable model.]"
+    }
+}
 
 sealed interface BrainDecision {
     val thought: Thought?

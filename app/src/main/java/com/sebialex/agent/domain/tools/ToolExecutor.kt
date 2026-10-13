@@ -83,6 +83,7 @@ class ToolExecutor(
                 is ToolCall.DownloadFile -> NetTools.download(workspace, call)
                 is ToolCall.HttpRequest -> NetTools.request(call)
                 is ToolCall.DeviceInfo -> ToolResult(call.callId, true, NetTools.deviceInfo())
+                is ToolCall.ViewImage -> viewImage(call)
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -90,6 +91,17 @@ class ToolExecutor(
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
         }
+    }
+
+    /** Loads a workspace image (or video frames) so the brain can show it to the model. */
+    private fun viewImage(call: ToolCall.ViewImage): ToolResult {
+        val f = workspace.resolve(call.path)
+        if (!f.isFile) return ToolResult(call.callId, false, "${call.path}: no such file")
+        val label = workspace.virtualOf(f)
+        val images = com.sebialex.agent.data.workspace.ImageEncoder.load(f, label)
+        if (images.isEmpty()) return ToolResult(call.callId, false, "$label is not an image or video that can be shown.")
+        val what = if (images.size == 1) "The image $label" else "${images.size} frames of $label"
+        return ToolResult(call.callId, true, "$what follows in the next message.", images = images)
     }
 
     private fun runMemory(call: ToolCall.Memory): ToolResult {
