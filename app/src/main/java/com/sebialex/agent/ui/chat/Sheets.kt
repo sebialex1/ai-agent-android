@@ -70,31 +70,39 @@ fun StepDetailSheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            val reasoning = step.kind == StepKind.REASONING
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (step.kind == StepKind.FETCH) Favicon(step.payload, size = 18.dp)
-                else AppIcon(iconFor(step.kind), null, tint = Palette.IconActive, size = 20.dp)
-                Spacer(Modifier.width(12.dp))
+                if (!reasoning) {
+                    if (step.kind == StepKind.FETCH) Favicon(step.payload, size = 18.dp)
+                    else AppIcon(iconFor(step.kind), null, tint = Palette.IconActive, size = 20.dp)
+                    Spacer(Modifier.width(12.dp))
+                }
                 Text(step.tool, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
                 QuietIconButton(R.drawable.ic_copy, "Copy", onClick = {
-                    clipboard.setText(AnnotatedString(step.input + "\n\n" + step.output))
+                    clipboard.setText(AnnotatedString(if (reasoning) step.output else step.input + "\n\n" + step.output))
                 }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
             }
-            val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Meta("status", step.status.name.lowercase(Locale.US).replace('_', ' '))
-                step.risk?.let { Meta("risk", it) }
-                Meta("started", time.format(Date(step.startedAt)))
-                step.finishedAt?.let { Meta("duration", "${it - step.startedAt} ms") }
-                step.exitCode?.let { Meta("exit", it.toString()) }
+            if (reasoning) {
+                // The model's raw reasoning, as returned. No timing, no status.
+                RawBlock("raw", step.output, wrap = true)
+            } else {
+                val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Meta("status", step.status.name.lowercase(Locale.US).replace('_', ' '))
+                    step.risk?.let { Meta("risk", it) }
+                    Meta("started", time.format(Date(step.startedAt)))
+                    step.finishedAt?.let { Meta("duration", "${it - step.startedAt} ms") }
+                    step.exitCode?.let { Meta("exit", it.toString()) }
+                }
+                step.url?.let { url ->
+                    LinkRow(R.drawable.ic_open_external, url) { onOpenUrl(url) }
+                }
+                if (step.url == null) step.path?.let { path ->
+                    LinkRow(R.drawable.ic_file, path) { onOpenPath(path) }
+                }
+                RawBlock("input", step.input)
+                if (step.output.isNotEmpty()) RawBlock("output", step.output)
             }
-            step.url?.let { url ->
-                LinkRow(R.drawable.ic_open_external, url) { onOpenUrl(url) }
-            }
-            if (step.url == null) step.path?.let { path ->
-                LinkRow(R.drawable.ic_file, path) { onOpenPath(path) }
-            }
-            RawBlock("input", step.input)
-            if (step.output.isNotEmpty()) RawBlock("output", step.output)
         }
     }
 }
@@ -125,7 +133,7 @@ private fun LinkRow(icon: Int, text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RawBlock(label: String, text: String) {
+private fun RawBlock(label: String, text: String, wrap: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary)
         Box(
@@ -135,11 +143,11 @@ private fun RawBlock(label: String, text: String) {
                 .clip(RoundedCornerShape(14.dp))
                 .background(Palette.CodeBackground)
                 .verticalScroll(rememberScrollState())
-                .horizontalScroll(rememberScrollState())
+                .then(if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
                 .padding(14.dp),
         ) {
             SelectionContainer {
-                Text(text, style = MonoSmall, color = Palette.TextSecondary, softWrap = false)
+                Text(text, style = MonoSmall, color = Palette.TextSecondary, softWrap = wrap)
             }
         }
     }

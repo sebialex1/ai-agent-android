@@ -5,9 +5,12 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class Role { USER, ASSISTANT }
 
-/** The type of an action in the audit trail. Drives the icon shown in the step row. */
+/**
+ * The type of an action in the audit trail. Drives the icon shown in the step row.
+ * [REASONING] holds the model's raw reasoning for the turn; it is always the first step.
+ */
 @Serializable
-enum class StepKind { SEARCH, FETCH, SHELL, FILE_READ, FILE_WRITE, PERMISSION }
+enum class StepKind { SEARCH, FETCH, SHELL, FILE_READ, FILE_WRITE, PERMISSION, REASONING }
 
 @Serializable
 enum class StepStatus { RUNNING, DONE, FAILED, AWAITING_APPROVAL, DENIED }

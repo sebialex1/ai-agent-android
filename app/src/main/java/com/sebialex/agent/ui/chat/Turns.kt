@@ -87,8 +87,11 @@ fun AssistantTurn(
     onRevealed: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (turn.steps.isNotEmpty()) {
-            StepsGroup(turn.steps, expanded, onToggle, onOpenStep)
+        val actions = turn.steps.filter { it.kind != StepKind.REASONING }
+        when {
+            actions.isNotEmpty() -> StepsGroup(turn.steps, actions.size, expanded, onToggle, onOpenStep)
+            // Reasoning alone needs no group: the quiet thought row is the whole action list.
+            turn.steps.isNotEmpty() -> turn.steps.forEach { StepRow(it, onClick = { onOpenStep(it) }) }
         }
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
@@ -140,7 +143,7 @@ private fun TypewriterMarkdown(text: String, onDone: () -> Unit) {
 }
 
 @Composable
-private fun StepsGroup(steps: List<Step>, expanded: Boolean, onToggle: () -> Unit, onOpenStep: (Step) -> Unit) {
+private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenStep: (Step) -> Unit) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, animationSpec = tween(180), label = "chevron")
     Column {
         Row(
@@ -151,7 +154,7 @@ private fun StepsGroup(steps: List<Step>, expanded: Boolean, onToggle: () -> Uni
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (steps.size == 1) "1 step" else "${steps.size} steps",
+                if (actionCount == 1) "1 step" else "$actionCount steps",
                 style = MaterialTheme.typography.labelMedium,
                 color = Palette.TextTertiary,
             )
@@ -191,6 +194,8 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
     ) {
         Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
             when {
+                // Reasoning: a plain ellipsis, no icon and no colour.
+                step.kind == StepKind.REASONING -> Text("\u2026", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
                 failed && step.kind != StepKind.PERMISSION -> AppIcon(R.drawable.ic_warning, "Failed", tint = tint, size = 17.dp)
                 step.kind == StepKind.FETCH -> Favicon(step.payload, size = 15.dp)
                 else -> AppIcon(iconFor(step.kind), null, tint = tint, size = 17.dp)
@@ -215,6 +220,8 @@ fun iconFor(kind: StepKind): Int = when (kind) {
     StepKind.FILE_READ -> R.drawable.ic_file
     StepKind.FILE_WRITE -> R.drawable.ic_file_edit
     StepKind.PERMISSION -> R.drawable.ic_shield
+    // Never drawn in a row (the row shows an ellipsis); kept so the mapping stays total.
+    StepKind.REASONING -> R.drawable.ic_more
 }
 
 @Composable

@@ -52,18 +52,38 @@ class AgentOrchestrator(
         val observations = mutableListOf<Observation>()
         val attachments = linkedMapOf<String, FileAttachment>()
         val sources = linkedMapOf<String, SourceRef>()
+        val thoughts = mutableMapOf<Int, Thought>()
+        var thoughtStep: Step? = null
         var executed = 0
         var batch = 0
 
         while (executed < maxSteps) {
-            val ctx = BrainContext(task, history, observations.toList(), workspaceFiles())
-            when (val decision = brain.next(ctx)) {
+            val ctx = BrainContext(task, history, observations.toList(), workspaceFiles(), thoughts.toMap())
+            val requestedAt = now()
+            val decision = brain.next(ctx)
+            // Reasoning becomes one quiet step at the top of the turn; later reasoning is appended.
+            decision.thought?.takeIf { it.text.isNotBlank() }?.let { t ->
+                val prior = thoughtStep
+                val step = if (prior == null) {
+                    Step(
+                        id = nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                        input = "", output = t.text, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
+                    )
+                } else {
+                    prior.copy(output = prior.output + "\n\n" + t.text, finishedAt = now())
+                }
+                thoughtStep = step
+                send(if (prior == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
+                audit.record(step)
+            }
+            when (decision) {
                 is BrainDecision.Answer -> {
                     send(AgentEvent.Finished(decision.text, attachments.values.toList(), sources.values.toList()))
                     return@channelFlow
                 }
                 is BrainDecision.Act -> {
                     batch++
+                    decision.thought?.let { thoughts[batch] = it }
                     for (call in decision.calls) {
                         executed++
                         if (call is ToolCall.Invalid) {
@@ -120,6 +140,11 @@ class AgentOrchestrator(
             }
         }
         send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList()))
+    }
+
+    private companion object {
+        /** The one neutral word shown on the reasoning row. */
+        const val THOUGHT_LABEL = "thought"
     }
 
     private fun workspaceFiles(): List<String> =

@@ -10,6 +10,7 @@ import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
 import com.sebialex.agent.domain.model.SessionSummary
 import com.sebialex.agent.domain.model.Step
+import com.sebialex.agent.domain.model.StepKind
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.Turn
 import kotlinx.coroutines.CompletableDeferred
@@ -203,7 +204,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun handle(sessionId: String, turnId: String, event: AgentEvent) {
         when (event) {
-            is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) { it.copy(steps = it.steps + event.step) }
+            is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) {
+                // Reasoning always sits at the top of the turn's action list.
+                if (event.step.kind == StepKind.REASONING) it.copy(steps = listOf(event.step) + it.steps)
+                else it.copy(steps = it.steps + event.step)
+            }
             is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
