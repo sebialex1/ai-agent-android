@@ -65,7 +65,7 @@ To use real backends, swap in different implementations behind `AgentBrain`, `We
 
 ## Build
 
-Each push to `main` runs `.github/workflows/build-apk.yml`. It sets up JDK 17 and the Android SDK, runs the unit tests, runs `assembleDebug`, and publishes the APK as a pre-release (`v0.1.<run>`) with `softprops/action-gh-release`.
+Pushing a `v*` tag (or a manual dispatch) runs `.github/workflows/build-apk.yml`. It sets up JDK 17 and the Android SDK, runs the unit tests, runs `assembleDebug`, and publishes the APK as a pre-release under that tag with `softprops/action-gh-release`.
 
 Local build:
 

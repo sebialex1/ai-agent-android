@@ -2,11 +2,16 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  # Tag pushes use the pushed tag; manual runs get a generated v0.1.<run> tag.
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.1.{0}', github.run_number) }}
 
 jobs:
   build:
@@ -42,7 +47,7 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/agent-v0.1.${{ github.run_number }}-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/agent-${{ env.RELEASE_TAG }}-debug.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -53,8 +58,8 @@ jobs:
       - name: Publish pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
-          name: Agent v0.1.${{ github.run_number }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Agent ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: true
