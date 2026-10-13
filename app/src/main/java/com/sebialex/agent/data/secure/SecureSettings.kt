@@ -61,6 +61,17 @@ class SecureSettings(context: Context) {
     private val _state = MutableStateFlow(read())
     val state: StateFlow<Snapshot> = _state.asStateFlow()
 
+    /**
+     * Conversations with memory of past chats switched on. Kept as its own flow: the value is
+     * per conversation and not part of [Snapshot], so a switch bound to [state] alone never saw
+     * the change (equal snapshots are not re-emitted) and looked stuck.
+     */
+    private val _memoryChats = MutableStateFlow(
+        prefs.all.keys.filter { it.startsWith(KEY_MEMORY_PREFIX) && prefs.getBoolean(it, false) }
+            .map { it.removePrefix(KEY_MEMORY_PREFIX) }.toSet(),
+    )
+    val memoryChats: StateFlow<Set<String>> = _memoryChats.asStateFlow()
+
     fun tinyFishKey(): String? = prefs.getString(KEY_TINYFISH, null)?.takeIf { it.isNotBlank() }
     fun openRouterKey(): String? = prefs.getString(KEY_OPENROUTER, null)?.takeIf { it.isNotBlank() }
     fun ollamaKey(): String? = prefs.getString(KEY_OLLAMA, null)?.takeIf { it.isNotBlank() }
@@ -122,11 +133,15 @@ class SecureSettings(context: Context) {
      * agent gets the read-only `conversation_memory` tool in that conversation only.
      */
     fun conversationMemory(sessionId: String): Boolean = prefs.getBoolean(KEY_MEMORY_PREFIX + sessionId, false)
-    fun setConversationMemory(sessionId: String, value: Boolean) = edit {
-        if (value) putBoolean(KEY_MEMORY_PREFIX + sessionId, true) else remove(KEY_MEMORY_PREFIX + sessionId)
+    fun setConversationMemory(sessionId: String, value: Boolean) {
+        edit { if (value) putBoolean(KEY_MEMORY_PREFIX + sessionId, true) else remove(KEY_MEMORY_PREFIX + sessionId) }
+        _memoryChats.value = if (value) _memoryChats.value + sessionId else _memoryChats.value - sessionId
     }
     /** Drops per-conversation settings of a deleted conversation. */
-    fun forgetConversation(sessionId: String) = edit { remove(KEY_MEMORY_PREFIX + sessionId) }
+    fun forgetConversation(sessionId: String) {
+        edit { remove(KEY_MEMORY_PREFIX + sessionId) }
+        _memoryChats.value = _memoryChats.value - sessionId
+    }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
     fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
     fun setReasoningEnabled(model: String, value: Boolean) = edit { putBoolean(reasoningOnKey(model), value) }

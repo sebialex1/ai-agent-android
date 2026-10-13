@@ -53,7 +53,7 @@ class SessionStore(private val baseDir: File) {
         .filter { it.isDirectory }
         .mapNotNull { dir -> load(dir.name) }
         .filter { it.turns.isNotEmpty() }
-        .map { SessionSummary(it.id, it.title, it.updatedAt, it.turns.size) }
+        .map { SessionSummary(it.id, it.title, it.updatedAt, it.turns.size, it.pinned) }
         .sortedByDescending { it.updatedAt }
 
     /** Deletes a conversation together with its workspace and audit trail. */

@@ -87,7 +87,6 @@ fun AttachSheet(
                 AttachTile(R.drawable.ic_file, "Files", Modifier.weight(1f)) { onPick(AttachSource.FILES) }
             }
             ThinkingToggle(settings, models)
-            MemoryToggle(settings, sessionId)
         }
     }
 }
@@ -106,48 +105,6 @@ private fun AttachTile(@DrawableRes icon: Int, label: String, modifier: Modifier
         AppIcon(icon, null, tint = Palette.IconActive, size = 24.dp)
         Spacer(Modifier.height(10.dp))
         Text(label, style = MaterialTheme.typography.labelLarge, color = Palette.TextPrimary)
-    }
-}
-
-/**
- * "Memory of past chats" for this conversation only, off by default. When on, the agent can list,
- * summarize and read earlier conversations (read-only); when off the tool is not offered at all.
- */
-@Composable
-private fun MemoryToggle(settings: SecureSettings, sessionId: String) {
-    val snap by settings.state.collectAsStateWithLifecycle()
-    // Re-read on every settings change; the value itself is stored per conversation.
-    val on = remember(snap, sessionId) { settings.conversationMemory(sessionId) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable { settings.setConversationMemory(sessionId, !on) }
-            .padding(horizontal = 6.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppIcon(R.drawable.ic_folder, null, tint = Palette.IconMuted, size = 20.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text("Memory of past chats", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-            Text(
-                if (on) "On for this chat \u00b7 the agent can look up earlier conversations" else "Off \u00b7 earlier conversations stay private",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
-                maxLines = 1,
-            )
-        }
-        Switch(
-            checked = on,
-            onCheckedChange = { settings.setConversationMemory(sessionId, it) },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Palette.OnAccent,
-                checkedTrackColor = Palette.Accent,
-                uncheckedThumbColor = Palette.IconMuted,
-                uncheckedTrackColor = Palette.SurfaceHigh,
-                uncheckedBorderColor = Palette.SurfaceHighest,
-            ),
-        )
     }
 }
 

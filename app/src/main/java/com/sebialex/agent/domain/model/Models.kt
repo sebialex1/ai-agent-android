@@ -81,6 +81,12 @@ data class Session(
     val turns: List<Turn>,
     val createdAt: Long,
     val updatedAt: Long = createdAt,
+    /** Pinned conversations are listed first, in their own section. */
+    val pinned: Boolean = false,
+    /** The user renamed it; automatic titles never overwrite it. */
+    val customTitle: Boolean = false,
+    /** The title was written by the model from the conversation (not just the first words). */
+    val generatedTitle: Boolean = false,
 )
 
 /** Lightweight row for the conversations menu. */
@@ -89,4 +95,5 @@ data class SessionSummary(
     val title: String,
     val updatedAt: Long,
     val turnCount: Int,
+    val pinned: Boolean = false,
 )

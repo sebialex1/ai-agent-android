@@ -140,6 +140,7 @@ fun AppRoot(container: AppContainer) {
                     onNew = { vm.newConversation(); backToChat() },
                     onStartWith = { text -> vm.newConversation(); vm.send(text); backToChat() },
                     onSettings = { push(Screen.Settings) },
+                    settings = container.settings,
                 )
             }
         }

@@ -146,6 +146,31 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         io.trySend { container.sessions.delete(id) }
     }
 
+    /** Pins or unpins a conversation. Pinned ones are listed first. */
+    fun setPinned(id: String, pinned: Boolean) = updateSession(id) { it.copy(pinned = pinned) }
+
+    /** Renames a conversation. A user title is never replaced by an automatic one. */
+    fun rename(id: String, title: String) {
+        val t = title.trim().take(80)
+        if (t.isEmpty()) return
+        updateSession(id) { it.copy(title = t, customTitle = true) }
+    }
+
+    /**
+     * Changes a conversation's metadata without touching its messages or updatedAt (so pinning
+     * does not reorder the list). Works for conversations that were never opened this launch.
+     */
+    private fun updateSession(id: String, block: (Session) -> Session) {
+        viewModelScope.launch {
+            val session = cache[id] ?: withContext(Dispatchers.IO) { container.sessions.load(id) } ?: return@launch
+            val next = block(session)
+            cache[id] = next
+            summaries[id] = SessionSummary(next.id, next.title, next.updatedAt, next.turns.size, next.pinned)
+            publish()
+            persist(id)
+        }
+    }
+
     fun clearAll() {
         runs.values.forEach { it.approval?.complete(false); it.job.cancel() }
         runs.clear()
@@ -313,7 +338,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             revealing = revealing,
         )
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
-            summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size)
+            summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)
         }
         _conversations.value = ConversationsUiState(
             items = summaries.values.sortedByDescending { it.updatedAt },

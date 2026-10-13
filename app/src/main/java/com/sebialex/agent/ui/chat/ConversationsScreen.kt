@@ -31,8 +31,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,8 +69,10 @@ fun ConversationsScreen(
     onNew: () -> Unit,
     onStartWith: (text: String) -> Unit,
     onSettings: () -> Unit,
+    settings: com.sebialex.agent.data.secure.SecureSettings,
 ) {
     val state by vm.conversations.collectAsStateWithLifecycle()
+    var options by remember { mutableStateOf<SessionSummary?>(null) }
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     var input by remember { mutableStateOf(TextFieldValue("")) }
@@ -119,22 +119,31 @@ fun ConversationsScreen(
                     contentPadding = PaddingValues(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 12.dp),
                     verticalArrangement = Arrangement.Bottom,
                 ) {
-                    item {
-                        Text(
-                            "Recently updated",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Palette.TextTertiary,
-                            modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 6.dp),
-                        )
+                    val pinned = filtered.filter { it.pinned }
+                    val recent = filtered.filterNot { it.pinned }
+                    if (pinned.isNotEmpty()) {
+                        item(key = "h:pinned") { ListHeader("Pinned") }
+                        items(pinned, key = { "p:" + it.id }) { item ->
+                            ConversationRow(
+                                item = item,
+                                running = item.id in state.runningIds,
+                                current = item.id == state.currentId,
+                                onClick = { onOpen(item.id) },
+                                onOptions = { options = item },
+                            )
+                        }
                     }
-                    items(filtered, key = { it.id }) { item ->
-                        ConversationRow(
-                            item = item,
-                            running = item.id in state.runningIds,
-                            current = item.id == state.currentId,
-                            onClick = { onOpen(item.id) },
-                            onDelete = { vm.deleteConversation(item.id) },
-                        )
+                    if (recent.isNotEmpty()) {
+                        item(key = "h:recent") { ListHeader("Recently updated") }
+                        items(recent, key = { it.id }) { item ->
+                            ConversationRow(
+                                item = item,
+                                running = item.id in state.runningIds,
+                                current = item.id == state.currentId,
+                                onClick = { onOpen(item.id) },
+                                onOptions = { options = item },
+                            )
+                        }
                     }
                 }
             }
@@ -165,6 +174,29 @@ fun ConversationsScreen(
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp),
         )
     }
+
+    options?.let { item ->
+        ChatOptionsSheet(
+            sessionId = item.id,
+            title = item.title,
+            pinned = item.pinned,
+            settings = settings,
+            onPin = { vm.setPinned(item.id, it) },
+            onRename = { vm.rename(item.id, it) },
+            onDelete = { vm.deleteConversation(item.id) },
+            onDismiss = { options = null },
+        )
+    }
+}
+
+@Composable
+private fun ListHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = Palette.TextTertiary,
+        modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 6.dp),
+    )
 }
 
 @Composable
@@ -209,9 +241,8 @@ private fun ConversationRow(
     running: Boolean,
     current: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
+    onOptions: () -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -223,7 +254,11 @@ private fun ConversationRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-            if (running) RunningDot() else AppIcon(R.drawable.ic_check, null, tint = Palette.IconMuted, size = 17.dp)
+            when {
+                running -> RunningDot()
+                item.pinned -> AppIcon(R.drawable.ic_pin, null, tint = Palette.IconMuted, size = 17.dp)
+                else -> AppIcon(R.drawable.ic_check, null, tint = Palette.IconMuted, size = 17.dp)
+            }
         }
         Spacer(Modifier.width(14.dp))
         FadingText(
@@ -239,15 +274,7 @@ private fun ConversationRow(
             color = Palette.TextTertiary,
             maxLines = 1,
         )
-        Box {
-            QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = { menu = true }, tint = Palette.IconMuted, iconSize = 18.dp)
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Delete", style = MaterialTheme.typography.bodyMedium, color = Palette.Danger) },
-                    onClick = { menu = false; onDelete() },
-                )
-            }
-        }
+        QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
     }
 }
 
