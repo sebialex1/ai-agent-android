@@ -14,7 +14,7 @@ import com.sebialex.agent.domain.model.Turn
 /** Deterministic first-launch conversation and workspace so the full interaction model is visible. */
 object SampleData {
 
-    const val PLAN_V1 = """# Integration Plan
+    val PLAN_V1 = """# Integration Plan
 
 > Plan the integration of an embedded terminal sandbox with TinyFish web access on Android.
 
@@ -63,7 +63,7 @@ Package installs and destructive commands always require approval. See the
 - [ ] Document the approval flow
 """
 
-    const val MAKE_PLAN = """# Generates integration-plan.md from collected notes
+    val MAKE_PLAN = """# Generates integration-plan.md from collected notes
 CONTENT = ""${'"'}
 # Integration Plan
 ""${'"'}
