@@ -2,40 +2,116 @@ package com.sebialex.agent.data.persistence
 
 import com.sebialex.agent.domain.agent.AuditSink
 import com.sebialex.agent.domain.model.Session
+import com.sebialex.agent.domain.model.SessionSummary
 import com.sebialex.agent.domain.model.Step
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/** Stores the current conversation as JSON in app-private storage. */
-class SessionStore(baseDir: File) {
-    private val dir = File(baseDir, "sessions").apply { mkdirs() }
-    private val current = File(dir, "current.json")
+/**
+ * Stores every conversation in its own directory under app-private storage:
+ *
+ * ```
+ * files/conversations/<id>/session.json   messages, steps, files, sources
+ * files/conversations/<id>/audit.jsonl    raw audit trail for this conversation only
+ * files/conversations/<id>/workspace/     this conversation's workspace
+ * files/conversations/<id>/snapshots/     previous versions for diffs
+ * files/conversations/active              id of the conversation shown on launch
+ * ```
+ *
+ * Nothing is shared between conversations.
+ */
+class SessionStore(private val baseDir: File) {
+    private val root = File(baseDir, "conversations").apply { mkdirs() }
+    private val activeFile = File(root, "active")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun load(): Session? = runCatching { json.decodeFromString<Session>(current.readText()) }.getOrNull()
+    fun dirFor(id: String): File {
+        require(id.isNotBlank() && !id.contains('/') && !id.contains("..")) { "bad session id" }
+        return File(root, id)
+    }
 
+    @Synchronized
+    fun load(id: String): Session? = runCatching {
+        json.decodeFromString<Session>(File(dirFor(id), SESSION_FILE).readText())
+    }.getOrNull()
+
+    @Synchronized
     fun save(session: Session) {
-        val tmp = File(dir, "current.json.tmp")
+        val dir = dirFor(session.id).apply { mkdirs() }
+        val tmp = File(dir, "$SESSION_FILE.tmp")
         tmp.writeText(json.encodeToString(session))
-        tmp.renameTo(current)
+        if (!tmp.renameTo(File(dir, SESSION_FILE))) {
+            File(dir, SESSION_FILE).writeText(tmp.readText()); tmp.delete()
+        }
     }
 
-    /** Moves the current conversation out of the way; it is kept on disk for the audit trail. */
-    fun archive(session: Session) {
-        if (session.turns.isEmpty()) return
-        File(dir, "${session.id}.json").writeText(json.encodeToString(session))
+    /** Saved conversations with at least one message, most recently updated first. */
+    @Synchronized
+    fun list(): List<SessionSummary> = (root.listFiles() ?: emptyArray())
+        .filter { it.isDirectory }
+        .mapNotNull { dir -> load(dir.name) }
+        .filter { it.turns.isNotEmpty() }
+        .map { SessionSummary(it.id, it.title, it.updatedAt, it.turns.size) }
+        .sortedByDescending { it.updatedAt }
+
+    /** Deletes a conversation together with its workspace and audit trail. */
+    @Synchronized
+    fun delete(id: String) {
+        dirFor(id).deleteRecursively()
+        if (activeId() == id) activeFile.delete()
     }
 
+    fun activeId(): String? = runCatching { activeFile.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
+
+    fun setActive(id: String) {
+        runCatching { activeFile.writeText(id) }
+    }
+
+    @Synchronized
     fun clearAll() {
-        dir.listFiles()?.forEach { it.delete() }
+        root.listFiles()?.forEach { it.deleteRecursively() }
+    }
+
+    /**
+     * Earlier builds kept one "current.json" (plus archives) and a single shared workspace.
+     * Real conversations are moved into their own directories; the pre-loaded sample ("seed")
+     * is dropped. The old shared workspace is left untouched and is not attached to any session.
+     */
+    @Synchronized
+    fun migrateLegacy() {
+        val legacy = File(baseDir, "sessions")
+        if (!legacy.isDirectory) return
+        legacy.listFiles()?.filter { it.isFile && it.name.endsWith(".json") }?.forEach { f ->
+            val s = runCatching { json.decodeFromString<Session>(f.readText()) }.getOrNull() ?: return@forEach
+            val turns = s.turns.filterNot { it.id.startsWith("seed-") }
+            if (s.id != "seed" && turns.isNotEmpty() && load(s.id) == null) {
+                val updated = turns.maxOf { it.createdAt }
+                save(s.copy(turns = turns, updatedAt = updated))
+                // Bring along only the files this conversation actually produced.
+                val oldWs = File(baseDir, "workspace")
+                val newWs = File(dirFor(s.id), "workspace")
+                turns.flatMap { it.attachments }.map { it.path.removePrefix("/") }.distinct().forEach { rel ->
+                    val src = File(oldWs, rel)
+                    if (src.isFile && src.canonicalPath.startsWith(oldWs.canonicalPath)) {
+                        runCatching { src.copyTo(File(newWs, rel), overwrite = false) }
+                    }
+                }
+                if (f.name == "current.json") setActive(s.id)
+            }
+        }
+        legacy.deleteRecursively()
+    }
+
+    companion object {
+        private const val SESSION_FILE = "session.json"
     }
 }
 
-/** Append-only JSON-lines audit log of every executed or attempted action. */
-class FileAuditLog(baseDir: File) : AuditSink {
-    private val file = File(baseDir, "audit.jsonl")
+/** Append-only JSON-lines audit log of every executed or attempted action in one conversation. */
+class FileAuditLog(dir: File) : AuditSink {
+    private val file = File(dir.apply { mkdirs() }, "audit.jsonl")
     private val json = Json { encodeDefaults = true }
 
     @Synchronized

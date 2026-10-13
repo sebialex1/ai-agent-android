@@ -38,7 +38,7 @@ fun ChatTopBar(
             .height(56.dp)
             .padding(horizontal = 6.dp),
     ) {
-        QuietIconButton(R.drawable.ic_close, "Close", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
+        QuietIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,

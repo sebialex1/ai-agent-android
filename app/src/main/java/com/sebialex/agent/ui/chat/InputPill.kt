@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -37,9 +39,10 @@ fun InputPill(
     running: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onAttach: () -> Unit,
+    onAttach: (() -> Unit)?,
     onMic: () -> Unit,
     modifier: Modifier = Modifier,
+    placeholder: String = "Ask anything",
 ) {
     val canSend = value.text.isNotBlank() && !running
     val fill by animateColorAsState(if (canSend || running) Palette.Accent else Palette.SurfaceHighest, label = "send")
@@ -51,7 +54,11 @@ fun InputPill(
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
-        QuietIconButton(R.drawable.ic_plus, "Add file", onClick = onAttach, tint = Palette.IconMuted)
+        if (onAttach != null) {
+            QuietIconButton(R.drawable.ic_plus, "Add file", onClick = onAttach, tint = Palette.IconMuted)
+        } else {
+            Spacer(Modifier.width(10.dp))
+        }
         Box(
             Modifier
                 .weight(1f)
@@ -69,7 +76,7 @@ fun InputPill(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                 decorationBox = { inner ->
                     if (value.text.isEmpty()) {
-                        Text("Ask anything", style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
                     }
                     inner()
                 },

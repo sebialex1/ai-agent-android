@@ -8,16 +8,17 @@ import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
+import com.sebialex.agent.domain.model.SessionSummary
 import com.sebialex.agent.domain.model.Step
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.Turn
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -30,81 +31,186 @@ data class ChatUiState(
     val pendingApproval: ApprovalRequest? = null,
 )
 
+data class ConversationsUiState(
+    val items: List<SessionSummary> = emptyList(),
+    val runningIds: Set<String> = emptySet(),
+    val currentId: String = "",
+)
+
+/**
+ * Owns all conversations. Each conversation keeps its own messages, model context, agent run,
+ * approval prompt, audit log and workspace. A run keeps going in the background if you switch
+ * to another conversation, and only ever writes into its own session.
+ */
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
-    private val _state = MutableStateFlow(ChatUiState(Session("boot", "", emptyList(), 0)))
+    private class Run(val job: Job) {
+        var approval: CompletableDeferred<Boolean>? = null
+        var pending: ApprovalRequest? = null
+    }
+
+    private val cache = HashMap<String, Session>()
+    private val summaries = HashMap<String, SessionSummary>()
+    private val runs = HashMap<String, Run>()
+    private var currentId: String = newId()
+    private var expanded: Set<String> = emptySet()
+
+    private val _state = MutableStateFlow(ChatUiState(Session(currentId, "", emptyList(), 0)))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
-    private var job: Job? = null
-    private var approval: CompletableDeferred<Boolean>? = null
-    private var activeTurnId: String? = null
+    /** All disk writes go through one ordered queue so saves and deletes never race. */
+    private val io = Channel<() -> Unit>(Channel.UNLIMITED)
+
+    private val _conversations = MutableStateFlow(ConversationsUiState())
+    val conversations: StateFlow<ConversationsUiState> = _conversations.asStateFlow()
 
     init {
+        cache[currentId] = _state.value.session
+        viewModelScope.launch(Dispatchers.IO) {
+            for (op in io) runCatching { op() }
+        }
         viewModelScope.launch {
-            val session = withContext(Dispatchers.IO) {
-                // The old pre-loaded sample conversation ("seed") is never shown.
-                container.sessions.load()?.takeIf { it.id != "seed" }
-                    ?: Session(id(), "", emptyList(), System.currentTimeMillis()).also { container.sessions.save(it) }
+            val (list, active) = withContext(Dispatchers.IO) {
+                container.sessions.migrateLegacy()
+                val list = container.sessions.list()
+                val active = container.sessions.activeId()?.let { container.sessions.load(it) }
+                list to active
             }
-            _state.update { it.copy(session = session) }
+            list.forEach { summaries[it.id] = it }
+            if (active != null && cache[currentId]?.turns.isNullOrEmpty()) {
+                cache.remove(currentId)
+                cache[active.id] = active
+                currentId = active.id
+            }
+            publish()
         }
     }
+
+    val currentSessionId: String get() = currentId
+
+    // ---- Conversations ------------------------------------------------------------------
+
+    /** Switches to a saved conversation. Its text is shown as saved; nothing is replayed. */
+    fun open(id: String) {
+        if (id == currentId) return
+        viewModelScope.launch {
+            val session = cache[id] ?: withContext(Dispatchers.IO) { container.sessions.load(id) } ?: return@launch
+            cache[id] = session
+            dropIfEmpty(currentId)
+            currentId = id
+            expanded = emptySet()
+            io.trySend { container.sessions.setActive(id) }
+            publish()
+        }
+    }
+
+    /** Starts a fresh, empty conversation with its own empty workspace. */
+    fun newConversation() {
+        if (cache[currentId]?.turns.isNullOrEmpty()) return
+        val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+        cache[fresh.id] = fresh
+        currentId = fresh.id
+        expanded = emptySet()
+        publish()
+    }
+
+    fun deleteConversation(id: String) {
+        runs.remove(id)?.let { it.approval?.complete(false); it.job.cancel() }
+        cache.remove(id)
+        summaries.remove(id)
+        container.forget(id)
+        if (id == currentId) {
+            val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+            cache[fresh.id] = fresh
+            currentId = fresh.id
+            expanded = emptySet()
+        }
+        publish()
+        io.trySend { container.sessions.delete(id) }
+    }
+
+    fun clearAll() {
+        runs.values.forEach { it.approval?.complete(false); it.job.cancel() }
+        runs.clear()
+        cache.clear()
+        summaries.clear()
+        container.forgetAll()
+        val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+        cache[fresh.id] = fresh
+        currentId = fresh.id
+        expanded = emptySet()
+        publish()
+        io.trySend { container.sessions.clearAll() }
+    }
+
+    // ---- Agent turn ---------------------------------------------------------------------
 
     fun send(text: String) {
         val task = text.trim()
-        if (task.isEmpty() || _state.value.running) return
+        val sessionId = currentId
+        if (task.isEmpty() || runs.containsKey(sessionId)) return
         val now = System.currentTimeMillis()
-        val user = Turn(id(), Role.USER, task, createdAt = now)
-        val assistant = Turn(id(), Role.ASSISTANT, "", createdAt = now + 1, complete = false)
-        val history = _state.value.session.turns
-        activeTurnId = assistant.id
-        _state.update { s ->
-            val title = s.session.title.ifBlank { titleFor(task) }
-            s.copy(
-                session = s.session.copy(title = title, turns = s.session.turns + user + assistant),
-                running = true,
-                // Sending a new message collapses every previous execution group.
-                expanded = setOf(assistant.id),
-            )
-        }
+        val user = Turn(newId(), Role.USER, task, createdAt = now)
+        val assistant = Turn(newId(), Role.ASSISTANT, "", createdAt = now + 1, complete = false)
+        val before = cache[sessionId] ?: return
+        val history = before.turns
+        cache[sessionId] = before.copy(
+            title = before.title.ifBlank { titleFor(task) },
+            turns = before.turns + user + assistant,
+            updatedAt = now,
+        )
+        // Sending a new message collapses every previous execution group.
+        expanded = setOf(assistant.id)
+        io.trySend { container.sessions.setActive(sessionId) }
+        persist(sessionId)
+
         val gate = object : ApprovalGate {
             override suspend fun request(request: ApprovalRequest): Boolean {
+                val run = runs[sessionId] ?: return false
                 val deferred = CompletableDeferred<Boolean>()
-                approval = deferred
-                _state.update { it.copy(pendingApproval = request) }
+                run.approval = deferred
+                run.pending = request
+                publish()
                 return try {
                     deferred.await()
                 } finally {
-                    approval = null
-                    _state.update { it.copy(pendingApproval = null) }
+                    run.approval = null
+                    run.pending = null
+                    publish()
                 }
             }
         }
-        job = viewModelScope.launch {
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator().run(task, history, gate).collect { event -> handle(assistant.id, event) }
+                container.newOrchestrator(sessionId).run(task, history, gate).collect { event -> handle(sessionId, assistant.id, event) }
             } finally {
-                finishIfIncomplete(assistant.id)
+                finishIfIncomplete(sessionId, assistant.id)
             }
         }
+        runs[sessionId] = Run(job)
+        publish()
+        job.start()
     }
 
-    private fun handle(turnId: String, event: AgentEvent) {
+    private fun handle(sessionId: String, turnId: String, event: AgentEvent) {
         when (event) {
-            is AgentEvent.StepAdded -> mutateTurn(turnId) { it.copy(steps = it.steps + event.step) }
-            is AgentEvent.StepUpdated -> mutateTurn(turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }
+            is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) { it.copy(steps = it.steps + event.step) }
+            is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }
             is AgentEvent.Finished -> {
-                mutateTurn(turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }
-                _state.update { it.copy(running = false) }
-                persist()
+                onAnswerReceived(turnId)
+                mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }
+                persist(sessionId)
             }
         }
     }
 
-    private fun finishIfIncomplete(turnId: String) {
-        val turn = _state.value.session.turns.firstOrNull { it.id == turnId } ?: return
-        if (!turn.complete) {
-            mutateTurn(turnId) { t ->
+    /** Hook for the first-receive reveal. */
+    private fun onAnswerReceived(turnId: String) = Unit
+
+    private fun finishIfIncomplete(sessionId: String, turnId: String) {
+        val turn = cache[sessionId]?.turns?.firstOrNull { it.id == turnId }
+        if (turn != null && !turn.complete) {
+            mutateTurn(sessionId, turnId) { t ->
                 t.copy(
                     text = t.text.ifBlank { "Stopped." },
                     complete = true,
@@ -115,69 +221,76 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     },
                 )
             }
-            persist()
+            persist(sessionId)
         }
-        _state.update { it.copy(running = false, pendingApproval = null) }
-        if (activeTurnId == turnId) activeTurnId = null
+        runs.remove(sessionId)
+        publish()
     }
 
     fun stop() {
-        approval?.complete(false)
-        job?.cancel()
+        runs[currentId]?.let { it.approval?.complete(false); it.job.cancel() }
     }
 
     fun respondToApproval(allow: Boolean) {
-        approval?.complete(allow)
+        runs[currentId]?.approval?.complete(allow)
     }
 
     fun toggleSteps(turnId: String) {
-        _state.update { s -> s.copy(expanded = if (turnId in s.expanded) s.expanded - turnId else s.expanded + turnId) }
+        expanded = if (turnId in expanded) expanded - turnId else expanded + turnId
+        publish()
     }
 
-    fun newConversation() {
-        stop()
-        val old = _state.value.session
-        val fresh = Session(id(), "", emptyList(), System.currentTimeMillis())
-        _state.value = ChatUiState(fresh)
-        viewModelScope.launch(Dispatchers.IO) {
-            container.sessions.archive(old)
-            container.sessions.save(fresh)
-        }
-    }
-
-    fun clearAll() {
-        stop()
-        val fresh = Session(id(), "", emptyList(), System.currentTimeMillis())
-        _state.value = ChatUiState(fresh)
-        viewModelScope.launch(Dispatchers.IO) {
-            container.sessions.clearAll()
-            container.sessions.save(fresh)
-        }
-    }
-
-    /** Copies a user-picked document into the workspace and returns its workspace path. */
+    /** Copies a user-picked document into the current conversation's workspace. */
     suspend fun importFile(name: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
         val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
         val path = "imports/$safe"
-        container.workspace.write(path, bytes.toString(Charsets.UTF_8))
+        container.runtime(currentId).workspace.write(path, bytes.toString(Charsets.UTF_8))
         path
     }
 
     fun step(stepId: String): Step? = _state.value.session.turns.asSequence().flatMap { it.steps }.firstOrNull { it.id == stepId }
 
-    private fun mutateTurn(turnId: String, block: (Turn) -> Turn) {
-        _state.update { s -> s.copy(session = s.session.copy(turns = s.session.turns.map { if (it.id == turnId) block(it) else it })) }
+    // ---- Internals ----------------------------------------------------------------------
+
+    private fun mutateTurn(sessionId: String, turnId: String, block: (Turn) -> Turn) {
+        val s = cache[sessionId] ?: return
+        cache[sessionId] = s.copy(turns = s.turns.map { if (it.id == turnId) block(it) else it }, updatedAt = System.currentTimeMillis())
+        publish()
     }
 
-    private fun persist() {
-        val snapshot = _state.value.session
-        viewModelScope.launch(Dispatchers.IO) { container.sessions.save(snapshot) }
+    private fun dropIfEmpty(id: String) {
+        if (cache[id]?.turns.isNullOrEmpty() && !runs.containsKey(id)) cache.remove(id)
+    }
+
+    private fun publish() {
+        val session = cache[currentId] ?: Session(currentId, "", emptyList(), System.currentTimeMillis()).also { cache[currentId] = it }
+        val run = runs[currentId]
+        _state.value = ChatUiState(
+            session = session,
+            running = run != null,
+            expanded = expanded,
+            pendingApproval = run?.pending,
+        )
+        cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
+            summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size)
+        }
+        _conversations.value = ConversationsUiState(
+            items = summaries.values.sortedByDescending { it.updatedAt },
+            runningIds = runs.keys.toSet(),
+            currentId = currentId,
+        )
+    }
+
+    private fun persist(sessionId: String) {
+        val snapshot = cache[sessionId] ?: return
+        if (snapshot.turns.isEmpty()) return
+        io.trySend { container.sessions.save(snapshot) }
     }
 
     private fun titleFor(task: String): String {
-        val words = task.split(Regex("\\s+")).take(5).joinToString(" ")
-        return if (words.length > 34) words.take(34).trimEnd() else words
+        val words = task.split(Regex("\\s+")).take(6).joinToString(" ")
+        return if (words.length > 40) words.take(40).trimEnd() else words
     }
 
-    private fun id() = UUID.randomUUID().toString().take(12)
+    private fun newId() = UUID.randomUUID().toString().replace("-", "").take(16)
 }

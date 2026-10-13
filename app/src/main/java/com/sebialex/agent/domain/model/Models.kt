@@ -63,10 +63,23 @@ data class Turn(
     val complete: Boolean = true,
 )
 
+/**
+ * One conversation. Each session is fully independent: its own messages, model context,
+ * action history (audit log) and workspace directory.
+ */
 @Serializable
 data class Session(
     val id: String,
     val title: String,
     val turns: List<Turn>,
     val createdAt: Long,
+    val updatedAt: Long = createdAt,
+)
+
+/** Lightweight row for the conversations menu. */
+data class SessionSummary(
+    val id: String,
+    val title: String,
+    val updatedAt: Long,
+    val turnCount: Int,
 )

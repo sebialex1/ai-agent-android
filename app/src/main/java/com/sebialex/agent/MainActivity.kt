@@ -27,6 +27,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sebialex.agent.ui.chat.ChatScreen
 import com.sebialex.agent.ui.chat.ChatViewModel
+import com.sebialex.agent.ui.chat.ConversationsScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.ui.files.FileViewerScreen
 import com.sebialex.agent.ui.settings.SettingsScreen
 import com.sebialex.agent.ui.terminal.WorkspaceScreen
@@ -38,6 +40,7 @@ sealed interface Screen {
     data class File(val path: String, val baseSnapshot: String?) : Screen
     data object Settings : Screen
     data object Workspace : Screen
+    data object Conversations : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -50,14 +53,14 @@ class MainActivity : ComponentActivity() {
         val container = (application as AgentApplication).container
         setContent {
             AgentTheme {
-                AppRoot(container, onClose = { finish() })
+                AppRoot(container)
             }
         }
     }
 }
 
 @Composable
-fun AppRoot(container: AppContainer, onClose: () -> Unit) {
+fun AppRoot(container: AppContainer) {
     val vm: ChatViewModel = viewModel(factory = object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = ChatViewModel(container) as T
@@ -65,6 +68,10 @@ fun AppRoot(container: AppContainer, onClose: () -> Unit) {
     var stack by remember { mutableStateOf(listOf<Screen>(Screen.Chat)) }
     fun push(s: Screen) { stack = stack + s }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
+    fun backToChat() { stack = listOf(Screen.Chat) }
+    // Files and the workspace shell always belong to the conversation that is open.
+    val chat by vm.state.collectAsStateWithLifecycle()
+    val runtime = container.runtime(chat.session.id)
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -83,22 +90,29 @@ fun AppRoot(container: AppContainer, onClose: () -> Unit) {
             when (screen) {
                 Screen.Chat -> ChatScreen(
                     vm = vm,
-                    onClose = onClose,
+                    onClose = { push(Screen.Conversations) },
                     onOpenFile = { path, base -> push(Screen.File(path, base)) },
                     onOpenWorkspace = { push(Screen.Workspace) },
                     onOpenSettings = { push(Screen.Settings) },
                 )
-                is Screen.File -> FileViewerScreen(container.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
+                is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
                 Screen.Settings -> SettingsScreen(
                     settings = container.settings,
                     onBack = ::pop,
-                    onClearConversations = { vm.clearAll(); pop() },
+                    onClearConversations = { vm.clearAll(); backToChat() },
                 )
                 Screen.Workspace -> WorkspaceScreen(
-                    shell = container.shell,
+                    shell = runtime.shell,
                     policy = container.policy,
                     onBack = ::pop,
                     onOpenFile = { push(Screen.File(it, null)) },
+                )
+                Screen.Conversations -> ConversationsScreen(
+                    vm = vm,
+                    onOpen = { vm.open(it); backToChat() },
+                    onNew = { vm.newConversation(); backToChat() },
+                    onStartWith = { text -> vm.newConversation(); vm.send(text); backToChat() },
+                    onSettings = { push(Screen.Settings) },
                 )
             }
         }
