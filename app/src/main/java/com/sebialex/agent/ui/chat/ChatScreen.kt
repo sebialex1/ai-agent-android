@@ -43,7 +43,6 @@ fun ChatScreen(
     onClose: () -> Unit,
     onOpenFile: (path: String, baseSnapshot: String?) -> Unit,
     onOpenWorkspace: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -94,7 +93,6 @@ fun ChatScreen(
             onClose = onClose,
             onNew = { vm.newConversation(); input = TextFieldValue("") },
             onWorkspace = onOpenWorkspace,
-            onSettings = onOpenSettings,
         )
         val turns = state.session.turns
         LazyColumn(
