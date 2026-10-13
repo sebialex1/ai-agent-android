@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.domain.model.SourceRef
@@ -183,6 +184,79 @@ fun SourcesSheet(sources: List<SourceRef>, onDismiss: () -> Unit, onOpen: (Sourc
                         FadingText(s.url.removePrefix("https://"), MaterialTheme.typography.labelSmall, Palette.TextTertiary)
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Compact preview shown when a web source is tapped: favicon, title, domain and an excerpt of
+ * what was read. Nothing is opened until the user taps "Open website".
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SourcePreviewSheet(source: SourceRef, onDismiss: () -> Unit, onOpenWebsite: (SourceRef) -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Palette.Surface,
+        scrimColor = Palette.Ink.copy(alpha = 0.6f),
+        dragHandle = { SheetHandle() },
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Palette.SurfaceHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Favicon(source.host, size = 22.dp)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        source.title.ifBlank { source.host },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Palette.TextPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(source.host, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+                }
+                QuietIconButton(R.drawable.ic_copy, "Copy link", onClick = {
+                    clipboard.setText(AnnotatedString(source.url))
+                }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
+            }
+            if (source.snippet.isNotBlank()) {
+                Text(
+                    source.snippet,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.TextSecondary,
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            FadingText(source.url.removePrefix("https://").removePrefix("http://"), MonoSmall, Palette.TextTertiary)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(50))
+                    .background(Palette.Accent)
+                    .clickable { onOpenWebsite(source) }
+                    .padding(vertical = 13.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Open website", style = MaterialTheme.typography.labelLarge, color = Palette.OnAccent)
+                Spacer(Modifier.width(8.dp))
+                AppIcon(R.drawable.ic_open_external, null, tint = Palette.OnAccent, size = 16.dp)
             }
         }
     }

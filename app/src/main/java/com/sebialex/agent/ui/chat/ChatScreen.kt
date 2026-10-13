@@ -58,6 +58,7 @@ fun ChatScreen(
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
+    var previewSource by remember { mutableStateOf<SourceRef?>(null) }
     val listState = rememberLazyListState()
 
     fun openUrl(url: String) {
@@ -152,7 +153,7 @@ fun ChatScreen(
                         onToggle = { vm.toggleSteps(turn.id) },
                         onOpenStep = { openStepId = it.id },
                         onOpenFile = { f: FileAttachment -> onOpenFile(f.path, f.baseSnapshot) },
-                        onOpenSource = { openUrl(it.url) },
+                        onOpenSource = { previewSource = it },
                         onMoreSources = { moreSources = it },
                         onApproval = vm::respondToApproval,
                         reveal = turn.id in state.revealing,
@@ -206,6 +207,14 @@ fun ChatScreen(
         )
     }
     moreSources?.let { list ->
-        SourcesSheet(list, onDismiss = { moreSources = null }, onOpen = { openUrl(it.url) })
+        SourcesSheet(list, onDismiss = { moreSources = null }, onOpen = { moreSources = null; previewSource = it })
+    }
+    // Tapping a source never navigates straight away: preview first, then "Open website".
+    previewSource?.let { src ->
+        SourcePreviewSheet(
+            source = src,
+            onDismiss = { previewSource = null },
+            onOpenWebsite = { previewSource = null; openUrl(it.url) },
+        )
     }
 }

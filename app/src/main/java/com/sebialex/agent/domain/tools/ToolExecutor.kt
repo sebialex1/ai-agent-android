@@ -36,7 +36,7 @@ class ToolExecutor(
                     val page = web.fetch(call.url)
                     val text = page.text.ifBlank { "(the page had no readable text)" }
                     // A page only counts as a source when it actually returned readable content.
-                    val sources = if (page.text.isNotBlank()) listOf(SourceRef(page.url, hostOf(page.url), page.title)) else emptyList()
+                    val sources = if (page.text.isNotBlank()) listOf(SourceRef(page.url, hostOf(page.url), page.title, snippetOf(page.text))) else emptyList()
                     ToolResult(call.callId, true, text, sources = sources)
                 }
                 is ToolCall.Shell -> {
@@ -73,6 +73,18 @@ class ToolExecutor(
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
         }
+    }
+
+    /** A short, single-paragraph excerpt of a page for the source preview card. */
+    private fun snippetOf(text: String): String {
+        val flat = text.replace(Regex("\\s+"), " ").trim()
+        if (flat.length <= SNIPPET_CHARS) return flat
+        val cut = flat.take(SNIPPET_CHARS)
+        return cut.substringBeforeLast(' ', cut).trimEnd(',', ';', ':', '-') + "\u2026"
+    }
+
+    private companion object {
+        const val SNIPPET_CHARS = 280
     }
 
     private fun isBinary(f: java.io.File): Boolean = f.inputStream().use { input ->

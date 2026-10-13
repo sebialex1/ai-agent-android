@@ -54,6 +54,8 @@ data class SourceRef(
     val url: String,
     val host: String,
     val title: String = "",
+    /** First readable words of the fetched page, shown in the source preview. */
+    val snippet: String = "",
 )
 
 @Serializable
