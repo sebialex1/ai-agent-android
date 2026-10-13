@@ -102,7 +102,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun askBeforeWeb(): Boolean = prefs.getBoolean(KEY_ASK_WEB, false)
     fun autoApprove(): Boolean = prefs.getBoolean(KEY_AUTO_APPROVE, false)
     fun remoteModel(): String = prefs.getString(KEY_REMOTE_MODEL, null)?.takeIf { it.isNotBlank() }
-        ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) || it.startsWith(OLLAMA_PREFIX) } ?: DEFAULT_MODEL
+        ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) || it.startsWith(OLLAMA_PREFIX) || it.startsWith(CUSTOM_MODEL_PREFIX) } ?: DEFAULT_MODEL
     /** The model of the selected cloud provider: last Ollama model, or the last OpenRouter model. */
     fun cloudModel(): String = if (cloudProvider() == PROVIDER_OLLAMA) ollamaModel().ifEmpty { remoteModel() } else remoteModel()
     fun localBackend(): String = prefs.getString(KEY_LOCAL_BACKEND, null)?.takeIf { it == BACKEND_CPU } ?: BACKEND_GPU
@@ -296,7 +296,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         // Remember the OpenRouter choice separately so the picker can switch back to it.
         val v = value?.trim()
         when {
-            v.isNullOrEmpty() || v.startsWith(LOCAL_PREFIX) -> Unit
+            v.isNullOrEmpty() || v.startsWith(LOCAL_PREFIX) || v.startsWith(CUSTOM_MODEL_PREFIX) -> Unit
             v.startsWith(OLLAMA_PREFIX) -> { putString(KEY_OLLAMA_MODEL, v); putString(KEY_PROVIDER, PROVIDER_OLLAMA) }
             else -> { putString(KEY_REMOTE_MODEL, v); putString(KEY_PROVIDER, PROVIDER_OPENROUTER) }
         }

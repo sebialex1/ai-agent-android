@@ -57,6 +57,8 @@ class OpenRouterBrain(
     private val openRouterExtras: Boolean = true,
     /** Offer the agent's tools. Off for models whose provider reports no tool support. */
     private val withTools: Boolean = true,
+    /** Send the model's earlier reasoning back with its tool calls (OpenRouter, Ollama's native conversion). */
+    private val replayReasoning: Boolean = true,
 ) : AgentBrain {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -177,8 +179,10 @@ class OpenRouterBrain(
             put("role", "assistant")
             put("content", "")
             // Replay the model's own reasoning for this step so it keeps its chain of thought.
-            if (thought != null && thought.text.isNotBlank()) put("reasoning", thought.text)
-            thought?.details?.let { raw ->
+            // Off for custom OpenAI-compatible APIs, which may reject unknown message fields
+            // (DeepSeek, for one, refuses reasoning sent back to it).
+            if (replayReasoning && thought != null && thought.text.isNotBlank()) put("reasoning", thought.text)
+            if (replayReasoning) thought?.details?.let { raw ->
                 runCatching { json.parseToJsonElement(raw) as? JsonArray }.getOrNull()?.let { put("reasoning_details", it) }
             }
             putJsonArray("tool_calls") {

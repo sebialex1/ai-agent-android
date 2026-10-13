@@ -54,27 +54,38 @@ import com.sebialex.agent.ui.theme.softSurface
 internal enum class ModelSource(val label: String) {
     OPENROUTER("OpenRouter"),
     OLLAMA("Ollama Cloud"),
+    CUSTOM("Custom provider"),
     DEVICE("On this phone");
 
     companion object {
         fun of(model: String): ModelSource = when {
             LocalModels.isLocal(model) -> DEVICE
             OllamaCloud.isOllama(model) -> OLLAMA
+            com.sebialex.agent.data.llm.CustomProviders.isCustom(model) -> CUSTOM
             else -> OPENROUTER
         }
     }
 }
 
 /** One-line description of where [model] runs, shown under its name. */
-internal fun sourceLine(model: String, backend: String): String = when (ModelSource.of(model)) {
+internal fun sourceLine(
+    model: String,
+    backend: String,
+    providers: List<SecureSettings.CustomProvider> = emptyList(),
+): String = when (ModelSource.of(model)) {
     ModelSource.DEVICE -> "On this phone \u00b7 ${if (backend == SecureSettings.BACKEND_CPU) "CPU" else "GPU"}"
     ModelSource.OLLAMA -> "Ollama Cloud"
     ModelSource.OPENROUTER -> "OpenRouter"
+    ModelSource.CUSTOM -> com.sebialex.agent.data.llm.CustomProviders.parse(model)?.first
+        ?.let { id -> providers.firstOrNull { it.id == id }?.name } ?: "Custom provider"
 }
 
 /** Human name for any model id: catalog name, Ollama name without prefix, or the OpenRouter id. */
-internal fun modelName(model: String): String =
-    if (OllamaCloud.isOllama(model)) OllamaCloud.wireName(model) else LocalModels.displayName(model)
+internal fun modelName(model: String): String = when {
+    OllamaCloud.isOllama(model) -> OllamaCloud.wireName(model)
+    com.sebialex.agent.data.llm.CustomProviders.isCustom(model) -> com.sebialex.agent.data.llm.CustomProviders.parse(model)?.second ?: model
+    else -> LocalModels.displayName(model)
+}
 
 /** The "Model" row in Settings: current model and where it runs; opens the picker. */
 @Composable
@@ -187,7 +198,21 @@ fun ModelList(
     val device = (LocalModels.catalog + imported).filter { statuses[it.id] is ModelStatus.Ready && matches(it.name, it.id) }
     val routerItems = (router as? Listing.Ready)?.items.orEmpty()
     val hostedItems = (hosted as? Listing.Ready)?.items.orEmpty()
-    val total = device.size + routerItems.size + hostedItems.size
+    // Custom providers list the models saved at setup (refreshed from /models when opened).
+    val customs = snap.customProviders
+    var customLists by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    LaunchedEffect(attempt, customs.map { it.id to it.baseUrl }) {
+        customs.forEach { p ->
+            val key = settings.activeKey(com.sebialex.agent.data.llm.CustomProviders.keyRing(p.id))
+            val fresh = runCatching { com.sebialex.agent.data.llm.CustomProviders.fetchModels(p.baseUrl, key) }.getOrNull()
+            if (!fresh.isNullOrEmpty()) {
+                customLists = customLists + (p.id to fresh)
+                if (fresh != p.models) settings.saveCustomProvider(p.copy(models = fresh))
+            }
+        }
+    }
+    val customItems = customs.associate { p -> p.id to (customLists[p.id] ?: p.models).filter { matches(it, p.name) } }
+    val total = device.size + routerItems.size + hostedItems.size + customItems.values.sumOf { it.size }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (total > 8) SearchField(query, { query = it })
@@ -281,7 +306,28 @@ fun ModelList(
                 }
             }
 
-            if (!snap.hasOpenRouterKey && !snap.hasOllamaKey) item(key = "nokeys") {
+            // ---- Custom OpenAI-compatible providers (Settings > Models > Custom providers)
+            customs.forEach { p ->
+                item(key = "h:c:" + p.id) { Header(p.name) }
+                val ids = customItems[p.id].orEmpty()
+                items(ids, key = { "c:" + p.id + ":" + it }) { m ->
+                    val id = com.sebialex.agent.data.llm.CustomProviders.modelId(p.id, m)
+                    PickRow(title = m, subtitle = null, selected = snap.model == id, onClick = { pickCloud(id) })
+                }
+                val current = com.sebialex.agent.data.llm.CustomProviders.parse(snap.model)?.takeIf { it.first == p.id }?.second
+                if (current != null && current !in ids && matches(current)) item(key = "c:" + p.id + ":current") {
+                    PickRow(title = current, subtitle = "Typed model id", selected = true, onClick = { })
+                }
+                if (ids.isEmpty() && q.isEmpty()) item(key = "c:" + p.id + ":manual") {
+                    ModelIdField(
+                        placeholder = "Model id, e.g. llama-3.3-70b",
+                        initial = current.orEmpty(),
+                        onSubmit = { m -> if (m.isNotBlank()) pickCloud(com.sebialex.agent.data.llm.CustomProviders.modelId(p.id, m.trim())) },
+                    )
+                }
+            }
+
+            if (!snap.hasOpenRouterKey && !snap.hasOllamaKey && customs.isEmpty()) item(key = "nokeys") {
                 Note("Add an OpenRouter or Ollama Cloud API key in Settings \u203a Models to use cloud models.")
             }
             if (q.isNotEmpty() && total == 0) item(key = "nomatch") { Note("No models match \u201c$q\u201d") }

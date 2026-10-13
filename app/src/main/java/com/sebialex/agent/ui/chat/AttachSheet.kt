@@ -104,7 +104,7 @@ private fun ModelRow(settings: SecureSettings, onClick: () -> Unit) {
     SheetOption(
         icon = R.drawable.ic_code,
         title = modelName(snap.model),
-        subtitle = sourceLine(snap.model, snap.localBackend),
+        subtitle = sourceLine(snap.model, snap.localBackend, snap.customProviders),
         onClick = onClick,
     ) {
         AppIcon(R.drawable.ic_chevron_right, "Choose model", tint = Palette.IconMuted, size = 16.dp)

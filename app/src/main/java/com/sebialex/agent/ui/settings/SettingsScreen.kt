@@ -200,6 +200,8 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                        // Any other OpenAI-compatible provider: presets or a URL that is auto-detected.
+                        CustomProvidersGroup(settings, snap)
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
                     SettingsSection.CHATS -> {

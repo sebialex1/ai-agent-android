@@ -38,6 +38,7 @@ class TitleWriter(
             when {
                 LocalModels.isLocal(model) -> null
                 OllamaCloud.isOllama(model) -> settings.ollamaKey()?.let { ollamaTitle(it, model, transcript) }
+                CustomProviders.isCustom(model) -> customTitle(model, transcript)
                 else -> settings.openRouterKey()?.let { openRouterTitle(it, model, transcript) }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -62,6 +63,24 @@ class TitleWriter(
             put("stream", false)
         }
         val root = post("https://openrouter.ai/api/v1/chat/completions", key, body.toString(), openRouter = true)
+        val msg = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
+        return (msg?.get("content") as? JsonPrimitive)?.content
+    }
+
+    /** Same request as OpenRouter's, sent to a custom provider's own chat completions endpoint. */
+    private fun customTitle(model: String, transcript: String): String? {
+        val (providerId, wireModel) = CustomProviders.parse(model) ?: return null
+        val provider = settings.customProvider(providerId) ?: return null
+        val key = settings.activeKey(CustomProviders.keyRing(providerId))
+            ?: if (CustomProviders.isLocalAddress(provider.baseUrl)) "sk-no-key" else return null
+        val body = buildJsonObject {
+            put("model", wireModel)
+            put("messages", messages(transcript))
+            put("max_tokens", 400)
+            put("temperature", 0.3)
+            put("stream", false)
+        }
+        val root = post(CustomProviders.chatEndpoint(provider.baseUrl), key, body.toString(), openRouter = false)
         val msg = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
         return (msg?.get("content") as? JsonPrimitive)?.content
     }

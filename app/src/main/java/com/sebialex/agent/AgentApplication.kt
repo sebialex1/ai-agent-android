@@ -1,6 +1,7 @@
 package com.sebialex.agent
 
 import android.app.Application
+import com.sebialex.agent.data.llm.CustomProviders
 import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OllamaBrain
 import com.sebialex.agent.data.llm.OllamaCloud
@@ -101,6 +102,8 @@ class AppContainer(app: Application) {
             when {
                 LocalModels.isLocal(id) -> localReasoning(id)
                 OllamaCloud.isOllama(id) -> ollama.reasoning(id)
+                // Custom providers publish no reasoning metadata: no reasoning control is offered.
+                CustomProviders.isCustom(id) -> ModelReasoning.unsupported(id)
                 else -> null
             }
         },
@@ -135,10 +138,47 @@ class AppContainer(app: Application) {
                         })
                     },
                 )
+                CustomProviders.isCustom(model) -> customRoute(model)
                 else -> null
             }
         },
     )
+
+    /**
+     * A model of a user-added OpenAI-compatible provider: the shared OpenAI-style brain pointed at
+     * the provider's /chat/completions (no OpenRouter-only fields), with its own key ring. Local
+     * servers that need no key (LM Studio, Ollama, llama.cpp) run without one.
+     */
+    private fun customRoute(model: String): BrainRoute {
+        val (providerId, wireModel) = CustomProviders.parse(model)
+            ?: return BrainRoute("custom provider request", null, notice = "This model id is not valid. Pick a model again in the + sheet.")
+        val provider = settings.customProvider(providerId)
+            ?: return BrainRoute("custom provider request", null, notice = "That provider was removed in Settings. Pick another model in the + sheet. Nothing was executed.")
+        fun brain(key: String) = OpenRouterBrain(
+            apiKey = key,
+            model = wireModel,
+            endpoint = CustomProviders.chatEndpoint(provider.baseUrl),
+            provider = provider.name,
+            openRouterExtras = false,
+            replayReasoning = false,
+        )
+        val ring = CustomProviders.keyRing(providerId)
+        if (settings.keyCount(ring) == 0) {
+            val local = CustomProviders.isLocalAddress(provider.baseUrl)
+            return BrainRoute(
+                label = "${provider.name} request",
+                brain = if (local) brain("sk-no-key") else null,
+                notice = "Add an API key for ${provider.name} in Settings > Models to use this model. Nothing was executed.",
+            )
+        }
+        return BrainRoute(
+            label = "${provider.name} request",
+            brain = null,
+            notice = "Add an API key for ${provider.name} in Settings > Models. Nothing was executed.",
+            provider = ring,
+            brainFor = ::brain,
+        )
+    }
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
