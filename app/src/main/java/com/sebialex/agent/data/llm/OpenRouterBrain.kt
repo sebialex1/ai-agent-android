@@ -114,32 +114,7 @@ class OpenRouterBrain(
         val fn = o["function"] as? JsonObject
         val name = (fn?.get("name") as? JsonPrimitive)?.content.orEmpty()
         val rawArgs = (fn?.get("arguments") as? JsonPrimitive)?.content.orEmpty().ifBlank { "{}" }
-        val args = runCatching { json.parseToJsonElement(rawArgs).jsonObject }.getOrNull()
-            ?: return ToolCall.Invalid(id, name, rawArgs, "Arguments were not valid JSON: $rawArgs")
-        fun arg(k: String) = (args[k] as? JsonPrimitive)?.content
-        fun missing(k: String) = ToolCall.Invalid(id, name, rawArgs, "Missing required argument \"$k\" for $name")
-        return when (name) {
-            "web_search" -> arg("query")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebSearch(id, it) } ?: missing("query")
-            "web_fetch" -> arg("url")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebFetch(id, it) } ?: missing("url")
-            "shell" -> arg("command")?.takeIf { it.isNotBlank() }?.let { ToolCall.Shell(id, it) } ?: missing("command")
-            "read_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ReadFile(id, it) } ?: missing("path")
-            "write_file" -> {
-                val path = arg("path")?.takeIf { it.isNotBlank() } ?: return missing("path")
-                val content = arg("content") ?: return missing("content")
-                ToolCall.WriteFile(id, path, content)
-            }
-            "python" -> {
-                val code = arg("code")?.takeIf { it.isNotBlank() } ?: return missing("code")
-                // packages may come as a JSON array or as one space/comma separated string.
-                val packages = when (val p = args["packages"]) {
-                    is JsonArray -> p.mapNotNull { (it as? JsonPrimitive)?.content }
-                    is JsonPrimitive -> if (p.isString) p.content.split(Regex("[\\s,]+")) else emptyList()
-                    else -> emptyList()
-                }.map { it.trim() }.filter { it.isNotEmpty() }
-                ToolCall.Python(id, code, packages, arg("filename"))
-            }
-            else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file.")
-        }
+        return parseToolCall(id, name, rawArgs)
     }
 
     /** Content may be a plain string or an array of content parts. */
@@ -215,30 +190,6 @@ class OpenRouterBrain(
         val files = ctx.workspaceFiles.take(200)
         return SYSTEM_PROMPT + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
-    }
-
-    private fun toolName(c: ToolCall) = when (c) {
-        is ToolCall.WebSearch -> "web_search"
-        is ToolCall.WebFetch -> "web_fetch"
-        is ToolCall.Shell -> "shell"
-        is ToolCall.ReadFile -> "read_file"
-        is ToolCall.WriteFile -> "write_file"
-        is ToolCall.Python -> "python"
-        is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
-    }
-
-    private fun arguments(c: ToolCall): String = when (c) {
-        is ToolCall.WebSearch -> buildJsonObject { put("query", c.query) }.toString()
-        is ToolCall.WebFetch -> buildJsonObject { put("url", c.url) }.toString()
-        is ToolCall.Shell -> buildJsonObject { put("command", c.command) }.toString()
-        is ToolCall.ReadFile -> buildJsonObject { put("path", c.path) }.toString()
-        is ToolCall.WriteFile -> buildJsonObject { put("path", c.path); put("content", c.content) }.toString()
-        is ToolCall.Python -> buildJsonObject {
-            put("code", c.code)
-            if (c.packages.isNotEmpty()) putJsonArray("packages") { c.packages.forEach { add(it) } }
-            c.filename?.let { put("filename", it) }
-        }.toString()
-        is ToolCall.Invalid -> c.arguments
     }
 
     /**
@@ -391,10 +342,73 @@ class OpenRouterBrain(
     }
 
     companion object {
+
+        private val ARGS_JSON = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /** Wire name of a tool call. */
+        fun toolName(c: ToolCall) = when (c) {
+            is ToolCall.WebSearch -> "web_search"
+            is ToolCall.WebFetch -> "web_fetch"
+            is ToolCall.Shell -> "shell"
+            is ToolCall.ReadFile -> "read_file"
+            is ToolCall.WriteFile -> "write_file"
+            is ToolCall.Python -> "python"
+            is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
+        }
+
+        /** Wire JSON arguments of a tool call. */
+        fun arguments(c: ToolCall): String = when (c) {
+            is ToolCall.WebSearch -> buildJsonObject { put("query", c.query) }.toString()
+            is ToolCall.WebFetch -> buildJsonObject { put("url", c.url) }.toString()
+            is ToolCall.Shell -> buildJsonObject { put("command", c.command) }.toString()
+            is ToolCall.ReadFile -> buildJsonObject { put("path", c.path) }.toString()
+            is ToolCall.WriteFile -> buildJsonObject { put("path", c.path); put("content", c.content) }.toString()
+            is ToolCall.Python -> buildJsonObject {
+                put("code", c.code)
+                if (c.packages.isNotEmpty()) putJsonArray("packages") { c.packages.forEach { add(it) } }
+                c.filename?.let { put("filename", it) }
+            }.toString()
+            is ToolCall.Invalid -> c.arguments
+        }
+
+        /**
+         * Turns one tool call (name plus raw JSON arguments) into a [ToolCall], or a
+         * [ToolCall.Invalid] that explains what was wrong. Shared by every brain.
+         */
+        fun parseToolCall(id: String, name: String, rawArgs: String): ToolCall {
+            val args = runCatching { ARGS_JSON.parseToJsonElement(rawArgs.ifBlank { "{}" }).jsonObject }.getOrNull()
+                ?: return ToolCall.Invalid(id, name, rawArgs, "Arguments were not valid JSON: $rawArgs")
+            fun arg(k: String) = (args[k] as? JsonPrimitive)?.content
+            fun missing(k: String) = ToolCall.Invalid(id, name, rawArgs, "Missing required argument \"$k\" for $name")
+            return when (name) {
+                "web_search" -> arg("query")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebSearch(id, it) } ?: missing("query")
+                "web_fetch" -> arg("url")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebFetch(id, it) } ?: missing("url")
+                "shell" -> arg("command")?.takeIf { it.isNotBlank() }?.let { ToolCall.Shell(id, it) } ?: missing("command")
+                "read_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ReadFile(id, it) } ?: missing("path")
+                "write_file" -> {
+                    val path = arg("path")?.takeIf { it.isNotBlank() } ?: return missing("path")
+                    val content = arg("content") ?: return missing("content")
+                    ToolCall.WriteFile(id, path, content)
+                }
+                "python" -> {
+                    val code = arg("code")?.takeIf { it.isNotBlank() } ?: return missing("code")
+                    // packages may come as a JSON array or as one space/comma separated string.
+                    val packages = when (val p = args["packages"]) {
+                        is JsonArray -> p.mapNotNull { (it as? JsonPrimitive)?.content }
+                        is JsonPrimitive -> if (p.isString) p.content.split(Regex("[\\s,]+")) else emptyList()
+                        else -> emptyList()
+                    }.map { it.trim() }.filter { it.isNotEmpty() }
+                    ToolCall.Python(id, code, packages, arg("filename"))
+                }
+                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file.")
+            }
+        }
+
         private const val MAX_HISTORY_TURNS = 24
         private const val MAX_TOOL_OUTPUT = 16_000
 
-        private val SYSTEM_PROMPT = """
+        /** The agent instructions, shared with the on-device brain. */
+        internal val SYSTEM_PROMPT = """
             You are an agent running on an Android device with a private, sandboxed workspace at /workspace.
             You act through tools and every tool call is really executed:
             - web_search: real web search. Returns titles, URLs and snippets.

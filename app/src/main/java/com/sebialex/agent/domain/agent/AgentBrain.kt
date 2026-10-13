@@ -47,26 +47,43 @@ interface AgentBrain {
 }
 
 /**
- * Uses OpenRouter whenever a key is configured. There is no offline or scripted fallback:
- * without a key the turn ends with a plain notice and nothing is executed.
+ * How a model that is not served by OpenRouter is answered: by [brain], or, when that provider
+ * is not set up (for example no API key), with [notice] and nothing executed. [label] names the
+ * provider in error messages.
+ */
+class BrainRoute(val label: String, val brain: AgentBrain?, val notice: String = "")
+
+/**
+ * Sends each request to the provider of the selected model. [other] claims models that run
+ * elsewhere (on this phone, other cloud providers); everything else goes to OpenRouter. There is
+ * no offline or scripted fallback: an unconfigured provider ends the turn with a plain notice
+ * and nothing is executed.
  */
 class RoutingBrain(
     private val openRouterKey: () -> String?,
     private val model: () -> String,
     private val remote: (key: String, model: String) -> AgentBrain,
+    private val other: (model: String) -> BrainRoute? = { null },
 ) : AgentBrain {
     override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
-        val key = openRouterKey() ?: return BrainDecision.Answer(NO_KEY_NOTICE)
-        return try {
-            remote(key, model()).next(ctx, onReasoning)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            BrainDecision.Answer("The model request failed: ${e.message ?: e.javaClass.simpleName}")
+        val m = model()
+        other(m)?.let { route ->
+            val brain = route.brain ?: return BrainDecision.Answer(route.notice)
+            return guarded(route.label) { brain.next(ctx, onReasoning) }
         }
+        val key = openRouterKey() ?: return BrainDecision.Answer(NO_KEY_NOTICE)
+        return guarded("model request") { remote(key, m).next(ctx, onReasoning) }
+    }
+
+    private suspend fun guarded(label: String, block: suspend () -> BrainDecision): BrainDecision = try {
+        block()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        BrainDecision.Answer("The $label failed: ${e.message ?: e.javaClass.simpleName}")
     }
 
     companion object {
-        const val NO_KEY_NOTICE = "Add an OpenRouter API key in Settings to run the agent. Nothing was executed."
+        const val NO_KEY_NOTICE = "Add an OpenRouter API key in Settings, or pick another provider or an on-device model in the model picker, to run the agent. Nothing was executed."
     }
 }

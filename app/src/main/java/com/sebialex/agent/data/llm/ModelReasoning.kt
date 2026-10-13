@@ -71,6 +71,23 @@ data class ModelReasoning(
 
         fun unsupported(model: String) = ModelReasoning(model, false, null, null, null, false, false, false, false, false)
 
+        /**
+         * An on-device model. Models with a thinking mode get a plain on/off switch (off by
+         * default, since thinking is slow on a phone); others have no reasoning control.
+         */
+        fun local(model: String, thinking: Boolean) = if (!thinking) unsupported(model) else ModelReasoning(
+            modelId = model,
+            hasBlock = true,
+            supportedEfforts = null,
+            defaultEffort = null,
+            defaultEnabled = false,
+            mandatory = false,
+            supportsMaxTokens = false,
+            acceptsReasoning = true,
+            acceptsIncludeReasoning = false,
+            acceptsReasoningEffort = false,
+        )
+
         fun parse(entry: JsonObject): ModelReasoning {
             val id = (entry["id"] as? JsonPrimitive)?.content.orEmpty()
             val params = (entry["supported_parameters"] as? JsonArray).orEmpty()
@@ -151,6 +168,11 @@ class OpenRouterModels(
     private val apiKey: () -> String?,
     private val endpoint: String = "https://openrouter.ai/api/v1/models",
     private val ttlMs: Long = 10 * 60_000L,
+    /**
+     * Reasoning info for models that OpenRouter does not serve (on-device models, other cloud
+     * providers). Non-null answers win and the OpenRouter catalog is not fetched for them.
+     */
+    private val other: suspend (String) -> ModelReasoning? = { null },
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val lock = Mutex()
@@ -159,6 +181,7 @@ class OpenRouterModels(
 
     /** Reasoning metadata for [model]. Unknown models and routers come back as unsupported. */
     suspend fun reasoning(model: String, refresh: Boolean = false): ModelReasoning {
+        other(model)?.let { return it }
         val all = catalog(refresh)
         return all[model] ?: all[model.substringBefore(':')]?.takeIf { model.contains(':') } ?: ModelReasoning.unsupported(model)
     }

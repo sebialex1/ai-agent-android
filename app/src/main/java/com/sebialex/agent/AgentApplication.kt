@@ -1,7 +1,12 @@
 package com.sebialex.agent
 
 import android.app.Application
+import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OpenRouterBrain
+import com.sebialex.agent.data.local.LocalBrain
+import com.sebialex.agent.data.local.LocalEngine
+import com.sebialex.agent.data.local.LocalModels
+import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningRules
 import com.sebialex.agent.data.persistence.FileAuditLog
@@ -13,9 +18,13 @@ import com.sebialex.agent.data.shell.WorkspaceMirror
 import com.sebialex.agent.data.web.RoutingWebGateway
 import com.sebialex.agent.data.workspace.Workspace
 import com.sebialex.agent.domain.agent.AgentOrchestrator
+import com.sebialex.agent.domain.agent.BrainRoute
 import com.sebialex.agent.domain.agent.RoutingBrain
 import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.domain.tools.ToolExecutor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * Everything that belongs to one conversation: its own workspace directory (and snapshots),
@@ -44,8 +53,32 @@ class AppContainer(app: Application) {
     val policy = PermissionPolicy(askBeforeWebAccess = { settings.askBeforeWeb() })
     private val runtimes = HashMap<String, SessionRuntime>()
 
-    /** Live OpenRouter model metadata, used for per-model reasoning support. */
-    val models = OpenRouterModels(apiKey = { settings.openRouterKey() })
+    /** Background work that outlives any screen: model downloads and model loading. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** On-device model files (downloads, imports) and the engine that runs them on the GPU. */
+    val modelStore = ModelStore(app, appScope)
+    val localEngine = LocalEngine(modelStore, settings, appScope)
+
+    /** Reasoning support of an on-device model: an on/off switch when it has a thinking mode. */
+    private fun localReasoning(id: String): ModelReasoning {
+        val model = LocalModels.resolve(id)
+        val thinking = when {
+            model == null -> false
+            model.imported -> localEngine.capabilities(id)?.thinking ?: false
+            else -> model.thinking
+        }
+        return ModelReasoning.local(id, thinking)
+    }
+
+    /**
+     * Live model metadata, used for per-model reasoning support. On-device models are answered
+     * locally; everything else comes from OpenRouter's catalog.
+     */
+    val models = OpenRouterModels(
+        apiKey = { settings.openRouterKey() },
+        other = { id -> if (LocalModels.isLocal(id)) localReasoning(id) else null },
+    )
 
     private val brain = RoutingBrain(
         openRouterKey = { settings.openRouterKey() },
@@ -55,6 +88,15 @@ class AppContainer(app: Application) {
                 // Read the model's live reasoning metadata before every chat request.
                 ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model))
             })
+        },
+        other = { model ->
+            if (!LocalModels.isLocal(model)) null
+            else BrainRoute(
+                label = "on-device model",
+                brain = LocalBrain(localEngine, modelStore, model, thinking = {
+                    ReasoningRules.resolve(localReasoning(model), settings.reasoning(model)).on
+                }),
+            )
         },
     )
 
