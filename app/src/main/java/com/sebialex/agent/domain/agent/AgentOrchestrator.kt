@@ -238,7 +238,10 @@ class AgentOrchestrator(
     ) {
         /** Why a view_image call must be refused under [intent], or null when it may run. */
         fun refusal(call: ToolCall): String? {
-            if (call !is ToolCall.ViewImage || intent == null || intent.viewImage) return null
+            // Stable local copy and an explicit type check: no smart cast on the property is needed.
+            val current: VisionIntent.Intent = intent ?: return null
+            val isViewImage = call is ToolCall.ViewImage
+            if (!isViewImage || current.viewImage) return null
             return "Refused: the user asked you not to look at images in this message."
         }
     }

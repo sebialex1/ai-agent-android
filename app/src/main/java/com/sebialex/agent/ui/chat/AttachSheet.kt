@@ -187,11 +187,13 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
         )
     }
     // A single level is just "on" (Ollama boolean thinking), so chips only for real choices.
-    if (resolved?.on == true && efforts.size > 1) {
+    // Explicit non-null local instead of relying on a smart cast from `resolved?.on == true`.
+    val active: com.sebialex.agent.data.llm.ResolvedReasoning? = resolved?.takeIf { it.on }
+    if (active != null && efforts.size > 1) {
         Box(Modifier.padding(start = 44.dp, end = 10.dp, bottom = 6.dp)) {
             ChoiceChips(
                 options = efforts,
-                selected = resolved.effort ?: "",
+                selected = active.effort ?: "",
                 label = { it },
                 onSelect = { settings.setReasoningEffort(snap.model, it) },
             )
