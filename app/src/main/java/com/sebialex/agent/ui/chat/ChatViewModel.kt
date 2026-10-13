@@ -209,7 +209,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 if (event.step.kind == StepKind.REASONING) it.copy(steps = listOf(event.step) + it.steps)
                 else it.copy(steps = it.steps + event.step)
             }
-            is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }
+            // Upsert: live reasoning updates may arrive for a row whose first event was dropped.
+            is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t ->
+                when {
+                    t.steps.any { it.id == event.step.id } -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it })
+                    event.step.kind == StepKind.REASONING -> t.copy(steps = listOf(event.step) + t.steps)
+                    else -> t.copy(steps = t.steps + event.step)
+                }
+            }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }

@@ -39,7 +39,11 @@ sealed interface BrainDecision {
 
 /** Decides the next action given the task and everything observed so far in this turn. */
 interface AgentBrain {
-    suspend fun next(ctx: BrainContext): BrainDecision
+    /**
+     * [onReasoning] receives raw reasoning text as it streams in, delta by delta, so the UI can
+     * show live thinking. It may be called from a background thread and never after return.
+     */
+    suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit = {}): BrainDecision
 }
 
 /**
@@ -51,10 +55,10 @@ class RoutingBrain(
     private val model: () -> String,
     private val remote: (key: String, model: String) -> AgentBrain,
 ) : AgentBrain {
-    override suspend fun next(ctx: BrainContext): BrainDecision {
+    override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
         val key = openRouterKey() ?: return BrainDecision.Answer(NO_KEY_NOTICE)
         return try {
-            remote(key, model()).next(ctx)
+            remote(key, model()).next(ctx, onReasoning)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

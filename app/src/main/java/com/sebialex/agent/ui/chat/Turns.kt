@@ -1,7 +1,11 @@
 package com.sebialex.agent.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -17,6 +21,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -37,7 +43,16 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.domain.agent.ApprovalRequest
@@ -175,6 +190,10 @@ private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, o
 
 @Composable
 private fun StepRow(step: Step, onClick: () -> Unit) {
+    if (step.kind == StepKind.REASONING) {
+        ThoughtRow(step, onClick)
+        return
+    }
     val failed = step.status == StepStatus.FAILED
     val awaiting = step.status == StepStatus.AWAITING_APPROVAL
     val muted = step.status == StepStatus.RUNNING || step.status == StepStatus.DENIED
@@ -217,6 +236,93 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
         AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
     }
 }
+
+/**
+ * The quiet "thought >" row. While the model is thinking, its raw reasoning streams into the row
+ * as words: a window about one line tall, pinned to the newest text, with the older line fading
+ * out at the top and the right edge fading when a line runs long. When thinking ends the row
+ * keeps a single line of the reasoning, fading out at its tail. Tapping opens the full text.
+ */
+@Composable
+private fun ThoughtRow(step: Step, onClick: () -> Unit) {
+    val live = step.status == StepStatus.RUNNING
+    // Collapse whitespace so the reasoning reads as one flowing line of words.
+    val flowing = remember(step.output) { step.output.replace(Regex("\\s+"), " ").trim() }
+    val style = MaterialTheme.typography.bodySmall
+    val lineHeight = with(LocalDensity.current) { style.lineHeight.toDp() }
+    val pulse = rememberInfiniteTransition(label = "thinking")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "thinkingAlpha",
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(start = 2.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+            Text("\u2026", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            if (live) "thinking" else "thought",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Palette.TextTertiary,
+            modifier = if (live) Modifier.alpha(alpha) else Modifier,
+        )
+        Spacer(Modifier.width(10.dp))
+        if (flowing.isEmpty()) {
+            Spacer(Modifier.weight(1f))
+        } else if (live) {
+            // Newest words at the bottom of a ~1.4 line window; whatever overflows fades away.
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(lineHeight * 1.4f)
+                    .clipToBounds()
+                    .fadeTopEdge(),
+            ) {
+                Text(
+                    flowing.takeLast(LIVE_THOUGHT_CHARS),
+                    style = style,
+                    color = Palette.TextTertiary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomStart)
+                        .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
+                )
+            }
+        } else {
+            FadingText(flowing.take(240), style, Palette.TextTertiary, Modifier.weight(1f))
+        }
+        Spacer(Modifier.width(8.dp))
+        AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
+    }
+}
+
+/** Live reasoning is a moving window; only the tail ever needs to be laid out. */
+private const val LIVE_THOUGHT_CHARS = 360
+
+/** Fades the top of the content out (destination-in mask), so older text dissolves upward. */
+private fun Modifier.fadeTopEdge(): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.Transparent,
+                0.55f to Color.Black,
+                1f to Color.Black,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
 
 fun iconFor(kind: StepKind): Int = when (kind) {
     StepKind.SEARCH -> R.drawable.ic_search

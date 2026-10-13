@@ -52,7 +52,7 @@ class OpenRouterBrain(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    override suspend fun next(ctx: BrainContext): BrainDecision = withContext(Dispatchers.IO) {
+    override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision = withContext(Dispatchers.IO) {
         // A metadata failure must never block the chat: send no reasoning fields in that case.
         val reasoning = try {
             reasoningFields()
@@ -68,13 +68,10 @@ class OpenRouterBrain(
             put("tool_choice", "auto")
             put("parallel_tool_calls", true)
             reasoning.forEach { (k, v) -> put(k, v) }
+            // Streamed so reasoning can be shown live; the full message is reassembled below.
+            put("stream", true)
         }.toString()
-        val root = json.parseToJsonElement(post(body)).jsonObject
-        (root["error"] as? JsonObject)?.let { err ->
-            throw IOException((err["message"] as? JsonPrimitive)?.content ?: "OpenRouter error")
-        }
-        val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
-            ?: throw IOException("OpenRouter returned no choices")
+        val choice = postStreaming(body, onReasoning)
         val message = choice["message"] as? JsonObject ?: throw IOException("OpenRouter returned no message")
 
         val calls = (message["tool_calls"] as? JsonArray).orEmpty().mapIndexedNotNull { i, el ->
@@ -244,31 +241,153 @@ class OpenRouterBrain(
         is ToolCall.Invalid -> c.arguments
     }
 
-    private fun post(body: String): String {
-        val conn = URL(endpoint).openConnection() as HttpURLConnection
+    /**
+     * Sends the request with `stream: true` and reads OpenRouter's server-sent events. Content,
+     * reasoning, `reasoning_details` and `tool_calls` deltas are accumulated into one choice
+     * object of the same shape as a non-streaming response (`{message, finish_reason}`), so the
+     * parsing above is shared. Reasoning deltas are forwarded to [onReasoning] as they arrive.
+     * A plain JSON body (some errors, or providers that ignore `stream`) is handled too.
+     */
+    private fun postStreaming(body: String, onReasoning: (String) -> Unit): JsonObject {
+        val conn = open(body, accept = "text/event-stream")
         try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 20_000
-            conn.readTimeout = 180_000
-            conn.doOutput = true
-            conn.setRequestProperty("Authorization", "Bearer $apiKey")
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("HTTP-Referer", "https://github.com/sebialex1/ai-agent-android")
-            conn.setRequestProperty("X-Title", "Agent for Android")
-            conn.outputStream.use { it.write(body.toByteArray()) }
             val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
-            if (code !in 200..299) {
-                val detail = runCatching {
-                    ((json.parseToJsonElement(text).jsonObject["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.content
-                }.getOrNull()
-                throw IOException("HTTP $code" + if (!detail.isNullOrBlank()) ": $detail" else "")
+            if (code !in 200..299) throw httpError(code, conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty())
+            val acc = StreamAccumulator()
+            conn.inputStream.bufferedReader().use { reader ->
+                val first = StringBuilder()
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (acc.events == 0 && first.isEmpty() && line.trimStart().startsWith("{")) {
+                        // Not an event stream: the whole body is one JSON document.
+                        first.append(line).append('\n').append(reader.readText())
+                        return nonStreamingChoice(first.toString())
+                    }
+                    if (line.isEmpty() || line.startsWith(":")) continue // keep-alive comments
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data == "[DONE]") break
+                    val chunk = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: continue
+                    (chunk["error"] as? JsonObject)?.let { err ->
+                        throw IOException((err["message"] as? JsonPrimitive)?.content ?: "OpenRouter error")
+                    }
+                    acc.add(chunk, onReasoning)
+                }
             }
-            return text
+            return acc.choice()
         } finally {
             conn.disconnect()
         }
+    }
+
+    private fun nonStreamingChoice(text: String): JsonObject {
+        val root = json.parseToJsonElement(text).jsonObject
+        (root["error"] as? JsonObject)?.let { err ->
+            throw IOException((err["message"] as? JsonPrimitive)?.content ?: "OpenRouter error")
+        }
+        return (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
+            ?: throw IOException("OpenRouter returned no choices")
+    }
+
+    /** Reassembles streamed deltas into a single non-streaming style choice. */
+    private class StreamAccumulator {
+        var events = 0
+        private val content = StringBuilder()
+        private val reasoning = StringBuilder()
+        private var finishReason: String? = null
+        private class Call(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
+        private val calls = sortedMapOf<Int, Call>()
+        /** reasoning_details parts, merged per (index or position, type). */
+        private val details = linkedMapOf<String, MutableMap<String, JsonElement>>()
+
+        fun add(chunk: JsonObject, onReasoning: (String) -> Unit) {
+            events++
+            val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return
+            (choice["finish_reason"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { finishReason = it }
+            val delta = (choice["delta"] ?: choice["message"]) as? JsonObject ?: return
+            str(delta["content"])?.let { content.append(it) }
+            val plain = str(delta["reasoning"]) ?: str(delta["reasoning_content"])
+            var detailText = ""
+            (delta["reasoning_details"] as? JsonArray)?.forEachIndexed { pos, el ->
+                val o = el as? JsonObject ?: return@forEachIndexed
+                val type = str(o["type"]).orEmpty()
+                val key = ((o["index"] as? JsonPrimitive)?.content ?: "p$pos") + ":" + type
+                val merged = details.getOrPut(key) { linkedMapOf() }
+                o.forEach { (k, v) ->
+                    val prev = merged[k]
+                    merged[k] = if (k in CONCAT && prev is JsonPrimitive && prev.isString && v is JsonPrimitive && v.isString) {
+                        JsonPrimitive(prev.content + v.content)
+                    } else v
+                }
+                listOf("text", "summary").firstNotNullOfOrNull { str(o[it]) }?.let { detailText += it }
+            }
+            // OpenRouter usually sends both `reasoning` and `reasoning_details`; show it once.
+            val live = plain?.takeIf { it.isNotEmpty() } ?: detailText.takeIf { it.isNotEmpty() }
+            if (live != null) {
+                reasoning.append(live)
+                runCatching { onReasoning(live) }
+            }
+            (delta["tool_calls"] as? JsonArray)?.forEachIndexed { pos, el ->
+                val o = el as? JsonObject ?: return@forEachIndexed
+                val index = (o["index"] as? JsonPrimitive)?.content?.toIntOrNull() ?: pos
+                val call = calls.getOrPut(index) { Call() }
+                str(o["id"])?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                val fn = o["function"] as? JsonObject
+                str(fn?.get("name"))?.takeIf { it.isNotBlank() }?.let { call.name = it }
+                str(fn?.get("arguments"))?.let { call.args.append(it) }
+            }
+        }
+
+        fun choice(): JsonObject = buildJsonObject {
+            putJsonObject("message") {
+                put("role", "assistant")
+                put("content", content.toString())
+                if (reasoning.isNotEmpty()) put("reasoning", reasoning.toString())
+                if (details.isNotEmpty()) put("reasoning_details", JsonArray(details.values.map { JsonObject(it) }))
+                if (calls.isNotEmpty()) putJsonArray("tool_calls") {
+                    calls.values.forEach { c ->
+                        add(buildJsonObject {
+                            if (c.id.isNotBlank()) put("id", c.id)
+                            put("type", "function")
+                            putJsonObject("function") {
+                                put("name", c.name)
+                                put("arguments", c.args.toString())
+                            }
+                        })
+                    }
+                }
+            }
+            finishReason?.let { put("finish_reason", it) }
+        }
+
+        private fun str(el: JsonElement?): String? = (el as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+        private companion object {
+            /** Fields that arrive in pieces and must be concatenated. */
+            val CONCAT = setOf("text", "summary", "data")
+        }
+    }
+
+    private fun open(body: String, accept: String): HttpURLConnection {
+        val conn = URL(endpoint).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.connectTimeout = 20_000
+        conn.readTimeout = 180_000
+        conn.doOutput = true
+        conn.setRequestProperty("Authorization", "Bearer $apiKey")
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Accept", accept)
+        conn.setRequestProperty("HTTP-Referer", "https://github.com/sebialex1/ai-agent-android")
+        conn.setRequestProperty("X-Title", "Agent for Android")
+        conn.outputStream.use { it.write(body.toByteArray()) }
+        return conn
+    }
+
+    private fun httpError(code: Int, text: String): IOException {
+        val detail = runCatching {
+            ((json.parseToJsonElement(text).jsonObject["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.content
+        }.getOrNull()
+        return IOException("HTTP $code" + if (!detail.isNullOrBlank()) ": $detail" else "")
     }
 
     companion object {

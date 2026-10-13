@@ -62,21 +62,53 @@ class AgentOrchestrator(
         while (executed < maxSteps) {
             val ctx = BrainContext(task, history, observations.toList(), workspaceFiles(), thoughts.toMap())
             val requestedAt = now()
-            val decision = brain.next(ctx)
+            // Live reasoning: the thought row is created on the first streamed delta and updated
+            // (throttled) while the model thinks. Every event carries the full step, so a dropped
+            // intermediate update is harmless; the final state below is always sent.
+            val committed = thoughtStep
+            val live = StringBuilder()
+            var liveId: String? = null
+            var lastLive = 0L
+            fun liveStep(): Step {
+                val text = live.toString()
+                return committed?.copy(output = committed.output + "\n\n" + text, status = StepStatus.RUNNING, finishedAt = null)
+                    ?: Step(
+                        id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                        input = "", output = text, status = StepStatus.RUNNING, startedAt = requestedAt,
+                    )
+            }
+            val decision = brain.next(ctx) { delta ->
+                synchronized(live) {
+                    live.append(delta)
+                    val first = liveId == null
+                    if (first) liveId = committed?.id ?: nextId()
+                    val t = now()
+                    if (first || t - lastLive >= LIVE_THROTTLE_MS) {
+                        lastLive = t
+                        val step = liveStep()
+                        trySend(if (first && committed == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
+                    }
+                }
+            }
+            val streamed = synchronized(live) { live.toString() }
             // Reasoning becomes one quiet step at the top of the turn; later reasoning is appended.
-            decision.thought?.takeIf { it.text.isNotBlank() }?.let { t ->
-                val prior = thoughtStep
+            val finalText = decision.thought?.text?.takeIf { it.isNotBlank() } ?: streamed.takeIf { it.isNotBlank() }
+            if (finalText != null) {
+                val prior = committed
                 val step = if (prior == null) {
                     Step(
-                        id = nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
-                        input = "", output = t.text, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
+                        id = liveId ?: nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                        input = "", output = finalText, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
                     )
                 } else {
-                    prior.copy(output = prior.output + "\n\n" + t.text, finishedAt = now())
+                    prior.copy(output = prior.output + "\n\n" + finalText, status = StepStatus.DONE, finishedAt = now())
                 }
                 thoughtStep = step
-                send(if (prior == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
+                send(if (prior == null && liveId == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
                 audit.record(step)
+            } else if (committed != null && liveId != null) {
+                // Only whitespace streamed: restore the committed thought as finished.
+                send(AgentEvent.StepUpdated(committed))
             }
             when (decision) {
                 is BrainDecision.Answer -> {
@@ -154,6 +186,8 @@ class AgentOrchestrator(
     private companion object {
         /** The one neutral word shown on the reasoning row. */
         const val THOUGHT_LABEL = "thought"
+        /** Minimum gap between live reasoning updates, so the UI is not flooded per token. */
+        const val LIVE_THROTTLE_MS = 70L
     }
 
     private fun workspaceFiles(): List<String> =
