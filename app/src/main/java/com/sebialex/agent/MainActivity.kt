@@ -98,6 +98,7 @@ fun AppRoot(container: AppContainer) {
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
                 Screen.Settings -> SettingsScreen(
                     settings = container.settings,
+                    models = container.models,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
                 )

@@ -2,6 +2,7 @@ package com.sebialex.agent.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +42,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.R
+import com.sebialex.agent.data.llm.ModelReasoning
+import com.sebialex.agent.data.llm.OpenRouterModels
+import com.sebialex.agent.data.llm.ReasoningPreference
+import com.sebialex.agent.data.llm.ReasoningRules
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
@@ -49,6 +56,7 @@ import com.sebialex.agent.ui.theme.softSurface
 @Composable
 fun SettingsScreen(
     settings: SecureSettings,
+    models: OpenRouterModels,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
 ) {
@@ -91,6 +99,13 @@ fun SettingsScreen(
                 placeholder = SecureSettings.DEFAULT_MODEL,
                 onSave = settings::setModel,
             )
+            ReasoningSetting(
+                model = snap.model,
+                pref = snap.reasoning,
+                models = models,
+                onEnabled = { settings.setReasoningEnabled(snap.model, it) },
+                onEffort = { settings.setReasoningEffort(snap.model, it) },
+            )
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAskBeforeWeb(!snap.askBeforeWeb) }.padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -115,6 +130,108 @@ fun SettingsScreen(
                 modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClearConversations).padding(vertical = 8.dp),
             )
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+private sealed interface ModelCheck {
+    data object Loading : ModelCheck
+    data class Ready(val info: ModelReasoning) : ModelCheck
+    data object Failed : ModelCheck
+}
+
+/**
+ * Reasoning toggle for the selected model, driven by its live OpenRouter metadata.
+ * Unsupported models get a disabled switch; mandatory models have no off state; effort
+ * choices come from the model's supported_efforts. The choice is stored per model.
+ */
+@Composable
+private fun ReasoningSetting(
+    model: String,
+    pref: ReasoningPreference,
+    models: OpenRouterModels,
+    onEnabled: (Boolean) -> Unit,
+    onEffort: (String) -> Unit,
+) {
+    var check by remember(model) { mutableStateOf<ModelCheck>(ModelCheck.Loading) }
+    var attempt by remember(model) { mutableIntStateOf(0) }
+    LaunchedEffect(model, attempt) {
+        check = ModelCheck.Loading
+        check = try {
+            ModelCheck.Ready(models.reasoning(model, refresh = attempt > 0))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ModelCheck.Failed
+        }
+    }
+    val info = (check as? ModelCheck.Ready)?.info
+    val supported = info?.supported == true
+    val resolved = info?.let { ReasoningRules.resolve(it, pref) }
+    val locked = info != null && supported && !info.canDisable
+    val status = when {
+        check is ModelCheck.Loading -> "checking model"
+        check is ModelCheck.Failed -> "could not check model, tap to retry"
+        !supported -> "not supported"
+        locked -> "always on for this model"
+        else -> null
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(enabled = check is ModelCheck.Failed || (supported && !locked)) {
+                    if (check is ModelCheck.Failed) attempt++ else onEnabled(resolved?.on != true)
+                }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Reasoning",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (supported) Palette.TextPrimary else Palette.TextTertiary,
+                )
+                if (status != null) Text(status, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+            }
+            // Mandatory reasoning has no off option, so no switch is shown at all.
+            if (!locked) Switch(
+                checked = resolved?.on == true,
+                onCheckedChange = onEnabled,
+                enabled = supported,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Palette.OnAccent,
+                    checkedTrackColor = Palette.Accent,
+                    uncheckedThumbColor = Palette.IconMuted,
+                    uncheckedTrackColor = Palette.SurfaceHigh,
+                    uncheckedBorderColor = Palette.SurfaceHighest,
+                    disabledUncheckedThumbColor = Palette.SurfaceHighest,
+                    disabledUncheckedTrackColor = Palette.Surface,
+                    disabledUncheckedBorderColor = Palette.SurfaceHigh,
+                ),
+            )
+        }
+        val choices = info?.effortChoices.orEmpty()
+        if (resolved?.on == true && choices.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                choices.forEach { effort ->
+                    val selected = effort == resolved.effort
+                    Text(
+                        effort,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) Palette.OnAccent else Palette.TextSecondary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (selected) Palette.Accent else Palette.SurfaceHigh)
+                            .clickable { onEffort(effort) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
     }
 }
