@@ -80,11 +80,6 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                "Models that run on this phone's GPU. Chats with them never leave the device and work offline; web tools still need a connection.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Palette.TextSecondary,
-            )
-            Text(
                 "This phone: ${if (ramGb > 0) "$ramGb GB RAM" else "RAM unknown"} \u00b7 ${LocalModels.formatSize(freeBytes)} free",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
@@ -139,7 +134,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
                 onSelect = settings::setLocalBackend,
             )
             Text(
-                "GPU is much faster. If the GPU cannot load the model, the CPU is used automatically. Applies at the next load.",
+                "Falls back to the CPU automatically. Applies at the next load.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
             )
@@ -154,7 +149,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
                 onSelect = settings::setLocalContext,
             )
             Text(
-                "How much of the conversation and tool output the model sees. Larger windows use more memory and load slower. Capped by each model's own limit.",
+                "Larger windows use more memory. Capped by each model.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
             )
@@ -162,7 +157,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
 
         SwitchRow(
             title = "Faster decoding (MTP)",
-            subtitle = "Multi-token prediction for models that include it (Gemma 4), on the GPU. Applies at the next load.",
+            subtitle = "Gemma 4 on the GPU. Applies at the next load.",
             checked = snap.localSpeculative,
             onChange = settings::setLocalSpeculative,
         )
@@ -175,8 +170,8 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
 private fun StorageNote(store: ModelStore, shared: Boolean, onPermission: () -> Unit) {
     val context = LocalContext.current
     Text(
-        if (shared) "Models are saved in ${store.location}, so they stay when app data is cleared or the app is reinstalled."
-        else "Models are saved in ${store.location} and are deleted with the app.",
+        if (shared) "Saved in ${store.location}"
+        else "Saved in ${store.location} (deleted with the app)",
         style = MaterialTheme.typography.labelSmall,
         color = Palette.TextTertiary,
     )

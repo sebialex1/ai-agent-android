@@ -134,13 +134,13 @@ fun SettingsScreen(
                     Group("Permissions") {
                         SwitchRow(
                             title = "Ask before web access",
-                            subtitle = "Every web search and page fetch waits for Allow.",
+                            subtitle = null,
                             checked = snap.askBeforeWeb,
                             onChange = settings::setAskBeforeWeb,
                         )
                         SwitchRow(
                             title = "Auto-approve agent actions",
-                            subtitle = "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
+                            subtitle = "Installs, deletions and network commands run without asking. Blocked actions stay blocked.",
                             checked = snap.autoApprove,
                             onChange = settings::setAutoApprove,
                         )
@@ -153,7 +153,7 @@ fun SettingsScreen(
                             onSave = settings::setTinyFishKey,
                             onClear = { settings.setTinyFishKey(null) },
                         )
-                        Note("Optional. Without it, search and fetch go directly from this phone.")
+                        Note("Optional. Without it, the phone searches directly.")
                     }
                     SandboxSetting(termux)
                 }
@@ -174,7 +174,6 @@ fun SettingsScreen(
                             onSave = settings::setOpenRouterKey,
                             onClear = { settings.setOpenRouterKey(null) },
                         )
-                        Note("Hundreds of hosted models; the list in the picker is pulled live from openrouter.ai.")
                     }
                     Group("Ollama Cloud") {
                         KeyField(
@@ -184,7 +183,7 @@ fun SettingsScreen(
                             onSave = settings::setOllamaKey,
                             onClear = { settings.setOllamaKey(null) },
                         )
-                        Note("Hosted Ollama models at ollama.com (native /api/chat). Create a key at ollama.com/settings/keys. Some large models need a paid Ollama plan; the app shows Ollama's own message if a model is not included.")
+                        Note("Create a key at ollama.com/settings/keys.")
                     }
                 }
                 SettingsTab.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
@@ -193,8 +192,8 @@ fun SettingsScreen(
                     // options (the \u22ef next to a chat in the list).
                     Group("Titles") {
                         SwitchRow(
-                            title = "Model-written titles",
-                            subtitle = "After the first answer, the model names the conversation from what it is about. Renamed chats keep your title.",
+                            title = "Auto-generate titles",
+                            subtitle = null,
                             checked = snap.autoTitles,
                             onChange = settings::setAutoTitles,
                         )
@@ -263,7 +262,7 @@ private fun AboutTab() {
         }
     }
     Group("Agent for Android") {
-        Note("Version $version. A tool-using agent with a private workspace per conversation. Keys are stored encrypted with the Android Keystore and never leave this phone except to the provider they belong to.")
+        Note("Version $version")
     }
     Group("Agent tools") {
         Note(com.sebialex.agent.data.llm.OpenRouterBrain.TOOL_SUMMARY)

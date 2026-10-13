@@ -25,8 +25,8 @@ private enum class OptionsMode { MENU, RENAME, CONFIRM_DELETE }
  * Memory is bound to [SecureSettings.memoryChats], a flow that changes on every switch, so the
  * switch always moves (the old one in the "+" sheet read a snapshot that never changed).
  *
- * This switch is the only memory control in the app. Flipping it also becomes the starting
- * value for new chats ([SecureSettings.setMemoryForNewChats]). Settings has no copy of it.
+ * This switch is the only memory control in the app and only changes this chat; new chats
+ * always start with memory on. Settings has no copy of it.
  */
 @Composable
 fun ChatOptionsSheet(
@@ -55,7 +55,6 @@ fun ChatOptionsSheet(
                     SheetOption(
                         icon = R.drawable.ic_pin,
                         title = if (pinned) "Unpin" else "Pin",
-                        subtitle = if (pinned) null else "Keep it at the top of the list",
                         onClick = { onPin(!pinned); onDismiss() },
                     )
                     SheetOption(R.drawable.ic_edit, "Rename", onClick = { mode = OptionsMode.RENAME })
@@ -64,14 +63,8 @@ fun ChatOptionsSheet(
                 SheetSwitch(
                     icon = R.drawable.ic_history,
                     title = "Memory of past chats",
-                    subtitle = if (memory) "On for this chat \u00b7 the agent can look up earlier conversations (read-only). New chats start on too."
-                    else "Off for this chat \u00b7 earlier conversations stay private. New chats start off too.",
                     checked = memory,
-                    onChange = {
-                        settings.setConversationMemory(sessionId, it)
-                        // One control: the last choice is what the next new chat starts with.
-                        settings.setMemoryForNewChats(it)
-                    },
+                    onChange = { settings.setConversationMemory(sessionId, it) },
                 )
                 if (saved) {
                     SheetDivider()

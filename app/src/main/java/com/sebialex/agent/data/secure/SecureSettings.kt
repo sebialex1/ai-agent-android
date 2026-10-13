@@ -29,6 +29,18 @@ class SecureSettings(context: Context) {
         )
     }
 
+    init {
+        // Memory of past chats and model-written titles are on by default. Installs that saved
+        // "off" before these became the defaults are switched on once; later choices stay.
+        if (!prefs.getBoolean(KEY_DEFAULTS_ON, false)) {
+            prefs.edit()
+                .putBoolean(KEY_MEMORY_NEW_CHATS, true)
+                .putBoolean(KEY_AUTO_TITLES, true)
+                .putBoolean(KEY_DEFAULTS_ON, true)
+                .apply()
+        }
+    }
+
     data class Snapshot(
         val hasTinyFishKey: Boolean,
         val tinyFishHint: String,
@@ -56,8 +68,8 @@ class SecureSettings(context: Context) {
         val localContext: Int,
         /** Multi-token prediction for models that ship it (faster decoding on GPU). */
         val localSpeculative: Boolean,
-        /** What new conversations start with: the last choice made in a chat's options sheet. */
-        val memoryForNewChats: Boolean = false,
+        /** New conversations start with memory of past chats on (default on). */
+        val memoryForNewChats: Boolean = true,
         /** Let the model write conversation titles. */
         val autoTitles: Boolean = true,
     )
@@ -92,7 +104,7 @@ class SecureSettings(context: Context) {
     fun localBackend(): String = prefs.getString(KEY_LOCAL_BACKEND, null)?.takeIf { it == BACKEND_CPU } ?: BACKEND_GPU
     fun localContext(): Int = prefs.getInt(KEY_LOCAL_CONTEXT, DEFAULT_LOCAL_CONTEXT).takeIf { it in LOCAL_CONTEXTS } ?: DEFAULT_LOCAL_CONTEXT
     fun localSpeculative(): Boolean = prefs.getBoolean(KEY_LOCAL_SPECULATIVE, false)
-    fun memoryForNewChats(): Boolean = prefs.getBoolean(KEY_MEMORY_NEW_CHATS, false)
+    fun memoryForNewChats(): Boolean = prefs.getBoolean(KEY_MEMORY_NEW_CHATS, true)
     fun autoTitles(): Boolean = prefs.getBoolean(KEY_AUTO_TITLES, true)
     fun setMemoryForNewChats(value: Boolean) = edit { putBoolean(KEY_MEMORY_NEW_CHATS, value) }
     fun setAutoTitles(value: Boolean) = edit { putBoolean(KEY_AUTO_TITLES, value) }
@@ -137,8 +149,9 @@ class SecureSettings(context: Context) {
     fun setLocalContext(value: Int) = edit { putInt(KEY_LOCAL_CONTEXT, value) }
     fun setLocalSpeculative(value: Boolean) = edit { putBoolean(KEY_LOCAL_SPECULATIVE, value) }
     /**
-     * Memory of earlier conversations, stored per conversation and off by default. When on, the
-     * agent gets the read-only `conversation_memory` tool in that conversation only.
+     * Memory of earlier conversations, stored per conversation. New chats start with it on
+     * ([memoryForNewChats]); when on, the agent gets the read-only `conversation_memory` tool in
+     * that conversation only.
      */
     fun conversationMemory(sessionId: String): Boolean = prefs.getBoolean(KEY_MEMORY_PREFIX + sessionId, false)
     fun setConversationMemory(sessionId: String, value: Boolean) {
@@ -209,6 +222,8 @@ class SecureSettings(context: Context) {
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
+        /** Set once the on-by-default memory and titles were applied to an existing install. */
+        private const val KEY_DEFAULTS_ON = "defaults_memory_titles_on_v1"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"
