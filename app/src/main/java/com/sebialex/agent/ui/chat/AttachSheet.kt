@@ -38,6 +38,8 @@ import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningRules
 import com.sebialex.agent.data.secure.SecureSettings
+import com.sebialex.agent.ui.settings.modelName
+import com.sebialex.agent.ui.settings.sourceLine
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
@@ -124,11 +126,13 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
     val current = info
     val on = current != null && ReasoningRules.resolve(current, snap.reasoning).on
     val enabled = current?.canDisable == true
+    // Readable name plus where it runs, e.g. "Gemma 4 E2B · On this phone · GPU".
+    val name = modelName(snap.model) + " \u00b7 " + sourceLine(snap.model, snap.localBackend)
     val subtitle = when {
-        current == null -> "Checking ${snap.model}\u2026"
-        !current.supported -> "Not available for ${snap.model}"
-        !current.canDisable -> "Always on for ${snap.model}"
-        else -> snap.model
+        current == null -> "Checking $name\u2026"
+        !current.supported -> "Not available for $name"
+        !current.canDisable -> "Always on for $name"
+        else -> name
     }
     Row(
         Modifier
