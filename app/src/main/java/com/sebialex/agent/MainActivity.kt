@@ -102,6 +102,8 @@ fun AppRoot(container: AppContainer) {
                     onClose = ::toConversations,
                     onOpenFile = { path, base -> push(Screen.File(path, base)) },
                     onOpenWorkspace = { push(Screen.Workspace) },
+                    settings = container.settings,
+                    models = container.models,
                 )
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
                 Screen.Settings -> SettingsScreen(

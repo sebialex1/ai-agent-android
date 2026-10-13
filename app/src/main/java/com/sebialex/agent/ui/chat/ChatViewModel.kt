@@ -263,11 +263,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         publish()
     }
 
-    /** Copies a user-picked document into the current conversation's workspace. */
+    /**
+     * Copies a user-picked document, photo or camera capture into the current conversation's
+     * workspace, byte for byte (images and binaries are never re-encoded as text).
+     */
     suspend fun importFile(name: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
         val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
         val path = "imports/$safe"
-        container.runtime(currentId).workspace.write(path, bytes.toString(Charsets.UTF_8))
+        container.runtime(currentId).workspace.writeBytes(path, bytes)
         path
     }
 

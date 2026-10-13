@@ -66,6 +66,15 @@ class Workspace(baseDir: File) {
         return WriteResult(virtualOf(f), snapshotId, previous)
     }
 
+    /** Writes raw bytes (imports, images). No snapshot: binary files have no line diff. */
+    fun writeBytes(path: String, bytes: ByteArray, cwd: String = "/"): String {
+        val f = resolve(path, cwd)
+        if (f.isDirectory) throw WorkspaceException("$path: is a directory")
+        f.parentFile?.mkdirs()
+        f.writeBytes(bytes)
+        return virtualOf(f)
+    }
+
     fun snapshot(id: String): String? = File(snapshots, id).takeIf { it.exists() && !id.contains('/') }?.readText()
 
     fun list(path: String = "/", cwd: String = "/"): List<File> {

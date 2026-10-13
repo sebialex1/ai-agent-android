@@ -44,7 +44,13 @@ class ToolExecutor(
                     cwd = r.cwd
                     ToolResult(call.callId, r.exitCode == 0, r.output, exitCode = r.exitCode)
                 }
-                is ToolCall.ReadFile -> ToolResult(call.callId, true, workspace.read(call.path))
+                is ToolCall.ReadFile -> {
+                    // Imported photos and other binaries would only reach the model as noise.
+                    val f = workspace.resolve(call.path)
+                    if (f.isFile && isBinary(f)) {
+                        ToolResult(call.callId, true, "binary file, ${f.length()} bytes (${call.path}). Use the python tool to inspect it.")
+                    } else ToolResult(call.callId, true, workspace.read(call.path))
+                }
                 is ToolCall.WriteFile -> {
                     val w = workspace.write(call.path, call.content)
                     val (added, removed) = if (w.previous != null) LineDiff.counts(w.previous, call.content)
@@ -67,6 +73,12 @@ class ToolExecutor(
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
         }
+    }
+
+    private fun isBinary(f: java.io.File): Boolean = f.inputStream().use { input ->
+        val buf = ByteArray(8192)
+        val n = input.read(buf)
+        n > 0 && (0 until n).any { buf[it] == 0.toByte() }
     }
 
     /**

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -31,11 +32,15 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sebialex.agent.data.llm.OpenRouterModels
+import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.domain.model.FileAttachment
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.SourceRef
 import com.sebialex.agent.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatScreen(
@@ -43,6 +48,8 @@ fun ChatScreen(
     onClose: () -> Unit,
     onOpenFile: (path: String, baseSnapshot: String?) -> Unit,
     onOpenWorkspace: () -> Unit,
+    settings: SecureSettings,
+    models: OpenRouterModels,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -50,6 +57,7 @@ fun ChatScreen(
     var input by remember { mutableStateOf(TextFieldValue("")) }
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
+    var attachMenu by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     fun openUrl(url: String) {
@@ -69,15 +77,46 @@ fun ChatScreen(
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { insert(it) }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
+    /** Copies a picked document or image into the workspace and mentions it in the input. */
+    fun importUri(uri: Uri, fallbackName: String) {
+        scope.launch {
             val resolver = context.contentResolver
-            val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0) else null
-            } ?: "import.txt"
-            val bytes = runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull() ?: return@launch
+            val name = runCatching {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                }
+            }.getOrNull() ?: fallbackName
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+            } ?: return@launch
             val path = vm.importFile(name, bytes)
             insert("@$path ")
+        }
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importUri(uri, "import.txt")
+    }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) importUri(uri, "image_${System.currentTimeMillis()}.jpg")
+    }
+    // A preview-size capture needs no CAMERA permission and no FileProvider.
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        if (bitmap != null) scope.launch {
+            val bytes = withContext(Dispatchers.Default) {
+                java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray()
+            }
+            val path = vm.importFile("photo_${System.currentTimeMillis()}.jpg", bytes)
+            insert("@$path ")
+        }
+    }
+    fun openPicker(source: AttachSource) {
+        try {
+            when (source) {
+                AttachSource.CAMERA -> camera.launch(null)
+                AttachSource.PHOTOS -> photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                AttachSource.FILES -> filePicker.launch(arrayOf("*/*"))
+            }
+        } catch (_: ActivityNotFoundException) {
         }
     }
 
@@ -132,7 +171,7 @@ fun ChatScreen(
                 scope.launch { listState.animateScrollToItem(0) }
             },
             onStop = vm::stop,
-            onAttach = { picker.launch(arrayOf("text/*", "application/json", "application/octet-stream")) },
+            onAttach = { attachMenu = true },
             onMic = {
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -157,6 +196,14 @@ fun ChatScreen(
                 onOpenPath = { openStepId = null; onOpenFile(it, null) },
             )
         }
+    }
+    if (attachMenu) {
+        AttachSheet(
+            settings = settings,
+            models = models,
+            onPick = { attachMenu = false; openPicker(it) },
+            onDismiss = { attachMenu = false },
+        )
     }
     moreSources?.let { list ->
         SourcesSheet(list, onDismiss = { moreSources = null }, onOpen = { openUrl(it.url) })

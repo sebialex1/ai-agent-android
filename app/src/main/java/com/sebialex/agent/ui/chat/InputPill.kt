@@ -55,7 +55,7 @@ fun InputPill(
         verticalAlignment = Alignment.Bottom,
     ) {
         if (onAttach != null) {
-            QuietIconButton(R.drawable.ic_plus, "Add file", onClick = onAttach, tint = Palette.IconMuted)
+            QuietIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
         } else {
             Spacer(Modifier.width(10.dp))
         }
