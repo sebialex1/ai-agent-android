@@ -43,6 +43,8 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     /** App-specific external storage, the only place DownloadManager can write for us. */
     private val externalDir: File? = context.getExternalFilesDir(DIR)
     val dir: File = (externalDir ?: File(context.filesDir, DIR)).apply { mkdirs() }
+    /** LiteRT-LM's compiled GPU/CPU caches, kept apart from the model files. */
+    val cacheDir: File = File(dir, CACHE_DIR).apply { mkdirs() }
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val dm: DownloadManager? = context.getSystemService(DownloadManager::class.java)
@@ -164,6 +166,9 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     fun delete(model: LocalModel) {
         cancel(model)
         File(dir, model.fileName).delete()
+        // Cache file names are chosen by LiteRT-LM, so clear them all; other models rebuild
+        // theirs on the next load.
+        cacheDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
         refresh()
     }
 
@@ -326,6 +331,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     companion object {
         const val DIR = "models"
         const val MODEL_EXT = ".litertlm"
+        private const val CACHE_DIR = "cache"
         private const val PART = ".part"
         private const val PREFS = "local_model_downloads"
         private const val POLL_MS = 700L

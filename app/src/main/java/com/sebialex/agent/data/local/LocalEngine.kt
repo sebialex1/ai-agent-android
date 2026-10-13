@@ -186,7 +186,7 @@ class LocalEngine(
         // Read once by the Engine constructor/initialize; reset right after, as the flag is global.
         ExperimentalFlags.enableSpeculativeDecoding = speculative
         try {
-            val e = Engine(EngineConfig(modelPath = path, backend = backend, maxNumTokens = context))
+            val e = Engine(EngineConfig(modelPath = path, backend = backend, maxNumTokens = context, cacheDir = store.cacheDir.absolutePath))
             try {
                 e.initialize()
             } catch (t: Throwable) {
