@@ -182,6 +182,7 @@ fun ChatScreen(
                         onApproval = vm::respondToApproval,
                         reveal = turn.id in state.revealing,
                         onRevealed = { vm.markRevealed(turn.id) },
+                        resolveFile = vm::workspaceFile,
                     )
                 }
             }

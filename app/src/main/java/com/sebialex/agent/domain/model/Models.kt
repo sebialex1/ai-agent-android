@@ -65,6 +65,11 @@ data class Turn(
     val text: String,
     val steps: List<Step> = emptyList(),
     val attachments: List<FileAttachment> = emptyList(),
+    /**
+     * Workspace files the agent attached to its answer on purpose (attach_files), shown as
+     * compact chips that open the file viewer. Only references: the files stay in the workspace.
+     */
+    val artifacts: List<FileAttachment> = emptyList(),
     val sources: List<SourceRef> = emptyList(),
     val createdAt: Long,
     val complete: Boolean = true,

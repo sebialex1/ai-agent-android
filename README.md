@@ -6,7 +6,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## Agent tools
 
-`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), `check_tools` (is yt-dlp / ffmpeg / git … installed, and how to install what is missing), `view_image` (look at a workspace image or video frames), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
+`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), `check_tools` (is yt-dlp / ffmpeg / git … installed, and how to install what is missing), `attach_files` (attach produced files to the answer as artifacts), `view_image` (look at a workspace image or video frames), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
 
 ## Chats, settings and files
 
@@ -135,8 +135,9 @@ Every assistant turn renders in this fixed order:
 
 1. Execution row: `8 steps >`. Tap it to expand compact one-line actions (search icon + query, favicon + hostname, terminal icon + command, file icon + filename, shield icon for approvals). Long rows fade at the right edge. Tapping a row opens its raw audit sheet: input, output, URL/path, exit code, and timing.
 2. The answer, rendered as Markdown.
-3. File pills: document icon, filename, and "Updated now" or a `+n −m` diff count.
-4. Source cluster: up to three favicon + domain chips, then `+N` for the rest. Tapping a chip opens a compact preview (favicon, title, domain, excerpt of what was read) with an **Open website** button; nothing opens until you tap it.
+3. Artifacts: files the agent attached on purpose with `attach_files` (a downloaded video, a converted image, a report), as compact chips with a tiny thumbnail or type icon, the name and size. No big inline preview; tapping one opens the file viewer (image viewer, media player, text). Several files can be attached; they are only references to workspace files, and an ugly auto-generated name is renamed to the friendly `name` the model gives. They also appear in the workspace's Artifacts group.
+4. File pills: document icon, filename, and "Updated now" or a `+n −m` diff count.
+5. Source cluster: up to three favicon + domain chips, then `+N` for the rest. Tapping a chip opens a compact preview (favicon, title, domain, excerpt of what was read) with an **Open website** button; nothing opens until you tap it.
 
 When a turn has both thinking and tool calls, the thinking is not mixed into the steps: the tool calls keep their `8 steps >` group and the reasoning gets its own collapsible **Thinking / Thought for 12s** section right below it (live one-line window while it streams, full text when expanded, tap the text for the raw audit sheet). A turn with thinking only, or plain text with tool calls and no thinking, renders as before.
 

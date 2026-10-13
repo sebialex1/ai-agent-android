@@ -77,6 +77,14 @@ sealed interface ToolCall {
     data class DeviceInfo(override val callId: String) : ToolCall
 
     /**
+     * Attaches workspace files to the answer as artifacts. Each [files] entry is a path and an
+     * optional human-readable name; with a name the file is renamed in place first.
+     */
+    data class AttachFiles(override val callId: String, val files: List<AttachSpec>) : ToolCall
+
+    data class AttachSpec(val path: String, val name: String? = null)
+
+    /**
      * Checks whether command-line programs are installed where commands run (Termux), with the
      * path of each one found and the install command for each one missing.
      */
@@ -97,6 +105,8 @@ data class ToolResult(
     val exitCode: Int? = null,
     val sources: List<SourceRef> = emptyList(),
     val attachment: FileAttachment? = null,
+    /** Files attached to the answer as artifacts (attach_files). */
+    val artifacts: List<FileAttachment> = emptyList(),
     val searchHits: List<SearchHit> = emptyList(),
     /** Pictures for the model to look at (from view_image); sent right after the tool results. */
     val images: List<ImageInput> = emptyList(),

@@ -273,12 +273,56 @@ private fun PendingTile(file: File, onRemove: () -> Unit, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * A small square thumbnail for lists and chips: the picture itself for images, the first frame
+ * for videos (with a tiny play mark), otherwise the file type's icon on a soft tile.
+ */
+@Composable
+internal fun MediaThumb(file: File, size: Dp, modifier: Modifier = Modifier, corner: Dp = 8.dp) {
+    val kind = FileKind.of(file.name)
+    val shape = RoundedCornerShape(corner)
+    val thumb by produceState<Thumb?>(thumbs.get(thumbKey(file)), file.path, file.lastModified()) {
+        if (value == null && kind == FileKind.VIDEO) value = loadThumb(file, kind)
+    }
+    Box(
+        modifier.size(size).clip(shape).background(Palette.SurfaceHighest),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            kind == FileKind.IMAGE -> AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(file).size(256).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            kind == FileKind.VIDEO && thumb?.frame != null -> Image(
+                bitmap = thumb!!.frame!!,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            else -> AppIcon(fileIcon(kind), null, tint = Palette.IconMuted, size = size * 0.5f)
+        }
+        if (kind == FileKind.VIDEO && thumb?.frame != null) {
+            AppIcon(R.drawable.ic_play, null, tint = Palette.IconActive, size = size * 0.42f)
+        }
+    }
+}
+
+/** Icon for a file kind (no thumbnail). */
+internal fun fileIcon(kind: FileKind): Int = when (kind) {
+    FileKind.IMAGE -> R.drawable.ic_image
+    FileKind.VIDEO -> R.drawable.ic_play
+    FileKind.AUDIO -> R.drawable.ic_audio
+    FileKind.TEXT -> R.drawable.ic_file
+}
+
 private fun formatDuration(ms: Long): String {
     val s = ms / 1000
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
-private fun formatBytes(n: Long): String = when {
+internal fun formatBytes(n: Long): String = when {
     n < 1024 -> "$n B"
     n < 1024 * 1024 -> "${n / 1024} KB"
     else -> "%.1f MB".format(n / (1024.0 * 1024.0))

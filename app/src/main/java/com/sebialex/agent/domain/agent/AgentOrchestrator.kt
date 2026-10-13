@@ -19,7 +19,13 @@ import kotlinx.coroutines.flow.channelFlow
 sealed interface AgentEvent {
     data class StepAdded(val step: Step) : AgentEvent
     data class StepUpdated(val step: Step) : AgentEvent
-    data class Finished(val text: String, val attachments: List<FileAttachment>, val sources: List<SourceRef>) : AgentEvent
+    data class Finished(
+        val text: String,
+        val attachments: List<FileAttachment>,
+        val sources: List<SourceRef>,
+        /** Files the agent attached to the answer (attach_files). */
+        val artifacts: List<FileAttachment> = emptyList(),
+    ) : AgentEvent
 }
 
 data class ApprovalRequest(val stepId: String, val summary: String, val reason: String)
@@ -55,6 +61,7 @@ class AgentOrchestrator(
     fun run(task: String, history: List<Turn>, gate: ApprovalGate): Flow<AgentEvent> = channelFlow {
         val observations = mutableListOf<Observation>()
         val attachments = linkedMapOf<String, FileAttachment>()
+        val artifacts = linkedMapOf<String, FileAttachment>()
         val sources = linkedMapOf<String, SourceRef>()
         val thoughts = mutableMapOf<Int, Thought>()
         var thoughtStep: Step? = null
@@ -135,7 +142,7 @@ class AgentOrchestrator(
             }
             when (decision) {
                 is BrainDecision.Answer -> {
-                    send(AgentEvent.Finished(decision.text, attachments.values.toList(), sources.values.toList()))
+                    send(AgentEvent.Finished(decision.text, attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
                     return@channelFlow
                 }
                 is BrainDecision.Act -> {
@@ -207,6 +214,7 @@ class AgentOrchestrator(
                             val prior = attachments[a.path]
                             attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
                         }
+                        result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
                         // Only pages that were actually fetched and read become website sources.
                         if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
                         observations += Observation(call, result, batch)
@@ -214,7 +222,7 @@ class AgentOrchestrator(
                 }
             }
         }
-        send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList()))
+        send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
     }
 
     private companion object {
@@ -281,6 +289,10 @@ class AgentOrchestrator(
         )
     }
 
+    /** Attached files that still exist when the turn ends (one was deleted or moved meanwhile: dropped). */
+    private fun liveArtifacts(artifacts: Map<String, FileAttachment>): List<FileAttachment> =
+        artifacts.values.filter { a -> runCatching { workspace.resolve(a.path).isFile }.getOrDefault(false) }
+
     private fun workspaceFiles(): List<String> =
         workspace.walk().map { workspace.virtualOf(it) }.filterNot { it.startsWith("/.") }.sorted()
 
@@ -341,6 +353,10 @@ class AgentOrchestrator(
         is ToolCall.DeleteFile -> Step(nextId(), StepKind.FILE_WRITE, "delete ${call.path.substringAfterLast('/')}", "delete_file", args(call), startedAt = now())
         is ToolCall.DownloadFile -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "download_file", args(call), url = call.url, path = call.path, startedAt = now())
         is ToolCall.HttpRequest -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "http_request", "${call.method} ${call.url}" + (call.body?.let { "\n\n$it" } ?: ""), url = call.url, startedAt = now())
+        is ToolCall.AttachFiles -> Step(
+            nextId(), StepKind.FILE_READ, "attach " + call.files.joinToString(", ") { (it.name ?: it.path).substringAfterLast('/') },
+            "attach_files", args(call), path = call.files.singleOrNull()?.path, startedAt = now(),
+        )
         is ToolCall.CheckTools -> Step(nextId(), StepKind.SHELL, "check " + call.tools.joinToString(", "), "check_tools", args(call), startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())

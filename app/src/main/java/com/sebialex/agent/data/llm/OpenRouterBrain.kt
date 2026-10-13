@@ -225,9 +225,10 @@ class OpenRouterBrain(
     /** Short record of what an earlier answer actually did, so follow-ups have real context. */
     private fun actionsNote(t: com.sebialex.agent.domain.model.Turn): String {
         val done = t.steps.filter { it.status == StepStatus.DONE && it.tool != "permission" && it.tool != "reasoning" }
-        if (done.isEmpty() && t.attachments.isEmpty()) return ""
+        if (done.isEmpty() && t.attachments.isEmpty() && t.artifacts.isEmpty()) return ""
         val lines = done.takeLast(12).map { "- ${it.tool}: ${it.payload.take(160)}" } +
-            t.attachments.map { "- file: ${it.path}" }
+            t.attachments.map { "- file: ${it.path}" } +
+            t.artifacts.map { "- attached: ${it.path}" }
         return "\n\n[actions taken in this turn]\n" + lines.joinToString("\n")
     }
 
@@ -413,6 +414,7 @@ class OpenRouterBrain(
             is ToolCall.HttpRequest -> "http_request"
             is ToolCall.DeviceInfo -> "device_info"
             is ToolCall.CheckTools -> "check_tools"
+            is ToolCall.AttachFiles -> "attach_files"
             is ToolCall.ViewImage -> "view_image"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
@@ -450,6 +452,11 @@ class OpenRouterBrain(
                 c.body?.let { put("body", it) }
             }.toString()
             is ToolCall.DeviceInfo -> "{}"
+            is ToolCall.AttachFiles -> buildJsonObject {
+                putJsonArray("files") {
+                    c.files.forEach { f -> add(buildJsonObject { put("path", f.path); f.name?.let { put("name", it) } }) }
+                }
+            }.toString()
             is ToolCall.CheckTools -> buildJsonObject { putJsonArray("tools") { c.tools.forEach { add(it) } } }.toString()
             is ToolCall.ViewImage -> buildJsonObject { put("path", c.path) }.toString()
             is ToolCall.Invalid -> c.arguments
@@ -523,6 +530,23 @@ class OpenRouterBrain(
                     ToolCall.HttpRequest(id, (arg("method") ?: "GET").trim().uppercase(), url, headers, body)
                 }
                 "device_info" -> ToolCall.DeviceInfo(id)
+                "attach_files", "attach_file" -> {
+                    // files: [{path, name?}] or plain path strings; a single `path` (+ `name`) works too.
+                    val specs = when (val f = args["files"] ?: args["paths"]) {
+                        is JsonArray -> f.mapNotNull { el ->
+                            when (el) {
+                                is JsonObject -> (el["path"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }?.let { p ->
+                                    ToolCall.AttachSpec(p, (el["name"] as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content?.takeIf { it.isNotBlank() })
+                                }
+                                is JsonPrimitive -> el.content.takeIf { it.isNotBlank() }?.let { ToolCall.AttachSpec(it) }
+                                else -> null
+                            }
+                        }
+                        is JsonPrimitive -> stringList(f).map { ToolCall.AttachSpec(it) }
+                        else -> emptyList()
+                    }.ifEmpty { arg("path")?.takeIf { it.isNotBlank() }?.let { listOf(ToolCall.AttachSpec(it, arg("name")?.takeIf { n -> n.isNotBlank() })) }.orEmpty() }
+                    if (specs.isEmpty()) missing("files") else ToolCall.AttachFiles(id, specs)
+                }
                 "check_tools" -> {
                     val tools = stringList(args["tools"]).ifEmpty { stringList(args["tool"]) }
                     if (tools.isEmpty()) missing("tools") else ToolCall.CheckTools(id, tools)
@@ -565,6 +589,7 @@ class OpenRouterBrain(
             - http_request: call a web API (GET, POST, PUT, PATCH, DELETE) with headers and a body; returns status,
               headers and the response text. Non-GET requests ask the user first.
             - device_info: current date, time, time zone, locale and Android version.
+            - attach_files: attach files you produced to your answer (see "Artifacts" below).
             - check_tools: check that programs (yt-dlp, ffmpeg, git, node, ...) are installed before relying on them.
               A shell command whose program is missing is not run; you get the install command instead. Offer to
               install it, or install it right away when the task clearly needs it.
@@ -577,6 +602,12 @@ class OpenRouterBrain(
               (Settings > General > Sandbox) instead of pretending it worked.
             - Only cite websites you actually fetched in this conversation.
             - Keep the final answer short and direct. Do not narrate the tools you used; the app shows them.
+            Artifacts:
+            - When you produce a file the user asked for (a downloaded video, a converted image, a PDF, a report),
+              call attach_files with it before answering, so it appears under your answer as a tappable chip. You can
+              attach several files at once. Do not paste the file's content or a code block instead.
+            - Files often get ugly auto-generated names (`video_7312345678.mp4`, `out.mp4`, `tmpa8f3.png`). Give each
+              attached file a short, human-readable `name` (e.g. "Funny cat compilation.mp4"); it is renamed in place.
         """.trimIndent()
 
         private fun fn(name: String, description: String, vararg params: Pair<String, String>): JsonElement = buildJsonObject {
@@ -624,10 +655,10 @@ class OpenRouterBrain(
 
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
-            "search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, view_image"
+            "search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, attach_files, view_image"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
-            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, view_image, " +
+            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, attach_files, view_image, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -678,7 +709,7 @@ class OpenRouterBrain(
         private fun toolNameOf(t: JsonElement): String? =
             (((t as? JsonObject)?.get("function") as? JsonObject)?.get("name") as? JsonPrimitive)?.content
 
-        private val COMPACT_TOOLS = setOf("web_search", "web_fetch", "shell", "python", "read_file", "write_file", "edit_file", "list_files", "device_info", "check_tools")
+        private val COMPACT_TOOLS = setOf("web_search", "web_fetch", "shell", "python", "read_file", "write_file", "edit_file", "list_files", "device_info", "check_tools", "attach_files")
 
         /** A function schema with typed parameters: (name, type, description, required). */
         private fun typedFn(name: String, description: String, vararg params: Param): JsonElement = buildJsonObject {
@@ -699,6 +730,38 @@ class OpenRouterBrain(
                         }
                     }
                     putJsonArray("required") { params.filter { it.required }.forEach { add(it.name) } }
+                }
+            }
+        }
+
+        /** attach_files: files: [{path, name?}]. */
+        private val ATTACH_TOOL: JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", "attach_files")
+                put(
+                    "description",
+                    "Attach workspace files you produced (video, image, audio, PDF, document, archive) to your answer. " +
+                        "The user sees each one as a compact chip that opens the built-in viewer/player. Give a short, " +
+                        "human-readable `name` when the file has an ugly auto-generated one; the file is renamed in place.",
+                )
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("files") {
+                            put("type", "array")
+                            put("description", "Files to attach")
+                            putJsonObject("items") {
+                                put("type", "object")
+                                putJsonObject("properties") {
+                                    putJsonObject("path") { put("type", "string"); put("description", "Path relative to /workspace") }
+                                    putJsonObject("name") { put("type", "string"); put("description", "Optional friendly file name, e.g. \"Cat jumping.mp4\"") }
+                                }
+                                putJsonArray("required") { add("path") }
+                            }
+                        }
+                    }
+                    putJsonArray("required") { add("files") }
                 }
             }
         }
@@ -770,6 +833,7 @@ class OpenRouterBrain(
                     Param("body", "string", "Request body, e.g. JSON text", required = false),
                 ),
                 typedFn("device_info", "Current date, time, time zone, locale and Android version of this phone."),
+                ATTACH_TOOL,
                 arrayFn(
                     "check_tools",
                     "Check whether command-line programs (yt-dlp, ffmpeg, git, node, ...) are installed in the sandbox. " +

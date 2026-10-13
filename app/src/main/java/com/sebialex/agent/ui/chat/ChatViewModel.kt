@@ -276,7 +276,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
-                mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }
+                mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, artifacts = event.artifacts, sources = event.sources, complete = true) }
                 persist(sessionId)
                 maybeWriteTitle(sessionId)
             }

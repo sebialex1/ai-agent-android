@@ -72,7 +72,7 @@ class ConversationMemoryReader(
             if (failed > 0) out.append(" ($failed failed)")
             out.append('\n')
         }
-        val files = s.turns.flatMap { it.attachments }.map { it.path }.distinct()
+        val files = s.turns.flatMap { it.attachments + it.artifacts }.map { it.path }.distinct()
         if (files.isNotEmpty()) out.append("Files written: ").append(files.take(20).joinToString(", ")).append(if (files.size > 20) ", \u2026" else "").append('\n')
         val sources = s.turns.flatMap { it.sources }.distinctBy { it.url }
         if (sources.isNotEmpty()) out.append("Sources read: ").append(sources.take(8).joinToString(", ") { it.title.ifBlank { it.host } }).append('\n')

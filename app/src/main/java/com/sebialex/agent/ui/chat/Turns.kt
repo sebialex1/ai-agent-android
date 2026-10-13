@@ -118,6 +118,8 @@ fun AssistantTurn(
     onApproval: (Boolean) -> Unit,
     reveal: Boolean = false,
     onRevealed: () -> Unit = {},
+    /** Resolves a workspace path to its file (for artifact chips); null when it no longer exists. */
+    resolveFile: (String) -> java.io.File? = { null },
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         val actions = turn.steps.filter { it.kind != StepKind.REASONING }
@@ -139,8 +141,10 @@ fun AssistantTurn(
             if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
         }
         // Files and sources follow the answer once it has been revealed.
-        if (turn.attachments.isNotEmpty() || turn.sources.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
+        if (turn.attachments.isNotEmpty() || turn.sources.isNotEmpty() || turn.artifacts.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Attached artifacts first: what the agent produced for you, one tap away.
+                if (turn.artifacts.isNotEmpty()) ArtifactChips(turn.artifacts, resolveFile, onOpen = onOpenFile)
                 if (turn.attachments.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         turn.attachments.forEach { FilePill(it, onClick = { onOpenFile(it) }) }
@@ -481,6 +485,52 @@ fun PillButton(label: String, primary: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 9.dp),
     )
+}
+
+/**
+ * Files the agent attached to its answer: compact chips (tiny thumbnail or type icon, name,
+ * size) that wrap onto more lines, never a big inline preview. Tapping opens the file viewer
+ * with its image viewer / media player. A file deleted since then shows as unavailable.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ArtifactChips(artifacts: List<FileAttachment>, resolveFile: (String) -> java.io.File?, onOpen: (FileAttachment) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        artifacts.forEach { a ->
+            val file = remember(a.path, a.updatedAt) { resolveFile(a.path) }
+            val shape = RoundedCornerShape(14.dp)
+            Row(
+                Modifier
+                    .widthIn(max = 260.dp)
+                    .softSurface(shape, Palette.SurfaceHigh, elevation = 2.dp)
+                    .clip(shape)
+                    .clickable(enabled = file != null) { onOpen(a.copy(baseSnapshot = null)) }
+                    .padding(start = 6.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (file != null) {
+                    MediaThumb(file, 28.dp)
+                } else {
+                    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                        AppIcon(R.drawable.ic_file, null, tint = Palette.TextTertiary, size = 16.dp)
+                    }
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f, fill = false)) {
+                    FadingText(a.name, MaterialTheme.typography.labelLarge, if (file != null) Palette.TextPrimary else Palette.TextTertiary)
+                    Text(
+                        file?.let { formatBytes(it.length()) } ?: "No longer in the workspace",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.TextTertiary,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

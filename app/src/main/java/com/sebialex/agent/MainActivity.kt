@@ -148,7 +148,7 @@ fun AppRoot(container: AppContainer) {
                     policy = container.policy,
                     workspace = runtime.workspace,
                     sources = chat.session.turns.flatMap { it.sources },
-                    artifacts = chat.session.turns.flatMap { it.attachments },
+                    artifacts = chat.session.turns.flatMap { it.attachments + it.artifacts },
                     onBack = ::pop,
                     onOpenFile = { path, base -> push(Screen.File(path, base)) },
                     onOpenUrl = { url ->

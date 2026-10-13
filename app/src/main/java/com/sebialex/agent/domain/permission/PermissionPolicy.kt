@@ -72,6 +72,9 @@ class PermissionPolicy(
         is ToolCall.DeviceInfo -> PermissionDecision.Allow
         // Only runs `command -v` lookups; changes nothing.
         is ToolCall.CheckTools -> PermissionDecision.Allow
+        // Attaching only references (and may rename) files inside the workspace.
+        is ToolCall.AttachFiles -> call.files.firstOrNull { isOutside(it.path) }?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it.path) }
+            ?: PermissionDecision.Allow
         is ToolCall.ViewImage -> outsideOr(call.path)
         is ToolCall.Invalid -> PermissionDecision.Allow
     }

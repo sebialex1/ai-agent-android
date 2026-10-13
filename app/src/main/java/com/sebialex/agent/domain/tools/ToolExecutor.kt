@@ -54,6 +54,7 @@ class ToolExecutor(
                         ToolResult(call.callId, r.exitCode == 0, r.output, exitCode = r.exitCode)
                     }
                 }
+                is ToolCall.AttachFiles -> attach(call)
                 is ToolCall.CheckTools -> {
                     val names = call.tools.map { it.trim() }.filter { it.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) }.distinct()
                     if (names.isEmpty()) ToolResult(call.callId, false, "No valid program names given.")
@@ -108,6 +109,51 @@ class ToolExecutor(
     }
 
     /**
+     * Resolves each file to attach; a requested human-readable name renames the file in its
+     * folder first (keeping its extension, never overwriting another file). Missing files fail
+     * the call with the reason, the others are still attached.
+     */
+    private fun attach(call: ToolCall.AttachFiles): ToolResult {
+        val done = mutableListOf<FileAttachment>()
+        val lines = mutableListOf<String>()
+        for (spec in call.files.take(MAX_ARTIFACTS)) {
+            val f = runCatching { workspace.resolve(spec.path) }.getOrNull()
+            if (f == null || !f.isFile) {
+                lines += "${spec.path}: no such file (not attached)"
+                continue
+            }
+            var file: java.io.File = f
+            val wanted = spec.name?.let { friendlyName(it, f) }
+            if (wanted != null && wanted != f.name) {
+                val stem = wanted.substringBeforeLast('.', wanted)
+                val dotExt = if ('.' in wanted) "." + wanted.substringAfterLast('.') else ""
+                var target = java.io.File(f.parentFile, wanted)
+                var n = 2
+                // Never overwrite another file: "Name (2).mp4", "Name (3).mp4", ...
+                while (target.exists()) target = java.io.File(f.parentFile, "$stem (${n++})$dotExt")
+                runCatching { workspace.move(workspace.virtualOf(f), workspace.virtualOf(f.parentFile!!).trimEnd('/') + "/" + target.name) }
+                    .onSuccess { file = target }
+                    .onFailure { lines += "${spec.path}: could not rename to \"$wanted\" (${it.message}); attached as ${f.name}" }
+            }
+            val path = workspace.virtualOf(file)
+            done += FileAttachment(path = path, name = file.name, updatedAt = file.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis())
+            lines += "attached $path (${file.length()} bytes)"
+        }
+        if (call.files.size > MAX_ARTIFACTS) lines += "only the first $MAX_ARTIFACTS files were attached"
+        return ToolResult(call.callId, done.isNotEmpty(), lines.joinToString("\n").ifEmpty { "nothing to attach" }, artifacts = done)
+    }
+
+    /** A safe file name from what the model asked for, keeping the original extension. */
+    private fun friendlyName(requested: String, original: java.io.File): String? {
+        var name = requested.trim().substringAfterLast('/').replace(Regex("[\\\\:*?\"<>|\\u0000-\\u001f]"), " ")
+            .replace(Regex("\\s+"), " ").trim().trim('.').take(120)
+        if (name.isEmpty()) return null
+        val ext = original.extension
+        if (ext.isNotEmpty() && !name.endsWith(".$ext", ignoreCase = true)) name = "$name.$ext"
+        return name
+    }
+
+    /**
      * Programs used by [command] that are not installed, or null when the command can just run
      * (nothing to check, it installs something itself, or the lookup could not answer).
      */
@@ -153,6 +199,7 @@ class ToolExecutor(
 
     private companion object {
         const val SNIPPET_CHARS = 280
+        const val MAX_ARTIFACTS = 12
         const val MISSING_PYTHON = "Python is not installed in Termux. Run `pkg install -y python` with the shell tool, then retry."
     }
 
