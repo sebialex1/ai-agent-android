@@ -66,27 +66,29 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 expanded = setOf(assistant.id),
             )
         }
-        val gate = ApprovalGate { request ->
-            val deferred = CompletableDeferred<Boolean>()
-            approval = deferred
-            _state.update { it.copy(pendingApproval = request) }
-            try {
-                deferred.await()
-            } finally {
-                approval = null
-                _state.update { it.copy(pendingApproval = null) }
+        val gate = object : ApprovalGate {
+            override suspend fun request(request: ApprovalRequest): Boolean {
+                val deferred = CompletableDeferred<Boolean>()
+                approval = deferred
+                _state.update { it.copy(pendingApproval = request) }
+                return try {
+                    deferred.await()
+                } finally {
+                    approval = null
+                    _state.update { it.copy(pendingApproval = null) }
+                }
             }
         }
         job = viewModelScope.launch {
             try {
-                container.newOrchestrator().run(task, history, gate).collect { event -> apply(assistant.id, event) }
+                container.newOrchestrator().run(task, history, gate).collect { event -> handle(assistant.id, event) }
             } finally {
                 finishIfIncomplete(assistant.id)
             }
         }
     }
 
-    private fun apply(turnId: String, event: AgentEvent) {
+    private fun handle(turnId: String, event: AgentEvent) {
         when (event) {
             is AgentEvent.StepAdded -> mutateTurn(turnId) { it.copy(steps = it.steps + event.step) }
             is AgentEvent.StepUpdated -> mutateTurn(turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }

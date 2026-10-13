@@ -26,7 +26,7 @@ sealed interface AgentEvent {
 data class ApprovalRequest(val stepId: String, val summary: String, val reason: String)
 
 /** Suspends the loop until the user allows or denies a risky action. */
-fun interface ApprovalGate {
+interface ApprovalGate {
     suspend fun request(request: ApprovalRequest): Boolean
 }
 

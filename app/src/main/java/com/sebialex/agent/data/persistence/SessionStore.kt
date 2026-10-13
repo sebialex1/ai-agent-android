@@ -3,6 +3,7 @@ package com.sebialex.agent.data.persistence
 import com.sebialex.agent.domain.agent.AuditSink
 import com.sebialex.agent.domain.model.Session
 import com.sebialex.agent.domain.model.Step
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
