@@ -82,7 +82,7 @@ fun ConversationsScreen(
             input = TextFieldValue(next, TextRange(next.length))
         }
     }
-    val items = remember(state.items, query) {
+    val filtered = remember(state.items, query) {
         val q = query.trim()
         if (q.isEmpty()) state.items else state.items.filter { it.title.contains(q, ignoreCase = true) }
     }
@@ -106,7 +106,7 @@ fun ConversationsScreen(
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (items.isEmpty()) {
+            if (filtered.isEmpty()) {
                 Text(
                     if (query.isBlank()) "No conversations yet" else "No matches",
                     style = MaterialTheme.typography.bodyMedium,
@@ -127,7 +127,7 @@ fun ConversationsScreen(
                             modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 6.dp),
                         )
                     }
-                    items(items, key = { it.id }) { item ->
+                    items(filtered, key = { it.id }) { item ->
                         ConversationRow(
                             item = item,
                             running = item.id in state.runningIds,

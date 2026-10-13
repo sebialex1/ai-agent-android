@@ -109,7 +109,7 @@ fun SettingsScreen(
                 )
             }
             Text(
-                "Clear conversations",
+                "Delete all conversations and workspaces",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Palette.Danger,
                 modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClearConversations).padding(vertical = 8.dp),
