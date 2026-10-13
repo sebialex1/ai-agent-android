@@ -71,6 +71,10 @@ fun ChatScreen(
         vm.setDraft(sessionId, value.text)
     }
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Long-pressed own message (its actions sheet) and the message being edited, per conversation.
+    var actionsFor by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var editingId by rememberSaveable(sessionId, key = "editing:$sessionId") { mutableStateOf<String?>(null) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
     var previewSource by remember { mutableStateOf<SourceRef?>(null) }
@@ -168,7 +172,12 @@ fun ChatScreen(
         ) {
             items(turns.asReversed(), key = { it.id }) { turn ->
                 if (turn.role == Role.USER) {
-                    UserMessage(turn, resolveFile = vm::workspaceFile, onOpenFile = { onOpenFile(it, null) })
+                    UserMessage(
+                        turn,
+                        resolveFile = vm::workspaceFile,
+                        onOpenFile = { onOpenFile(it, null) },
+                        onLongPress = { actionsFor = turn.id },
+                    )
                 } else {
                     AssistantTurn(
                         turn = turn,
@@ -196,13 +205,31 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
             )
         }
+        editingId?.let { id ->
+            val preview = remember(id, state.session.turns) { vm.copyText(id).orEmpty() }
+            EditingBanner(
+                preview = preview,
+                onCancel = {
+                    editingId = null
+                    vm.cancelEdit()
+                    updateInput(TextFieldValue(""))
+                },
+                modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp),
+            )
+        }
         InputPill(
             value = input,
             onValueChange = { updateInput(it) },
             running = state.running,
             hasAttachments = pending.isNotEmpty(),
             onSend = {
-                vm.send(input.text)
+                val editing = editingId
+                if (editing != null) {
+                    editingId = null
+                    vm.resendEdited(editing, input.text)
+                } else {
+                    vm.send(input.text)
+                }
                 updateInput(TextFieldValue(""))
                 scope.launch { listState.animateScrollToItem(0) }
             },
@@ -230,6 +257,35 @@ fun ChatScreen(
                 onDismiss = { openStepId = null },
                 onOpenUrl = { openUrl(it) },
                 onOpenPath = { openStepId = null; onOpenFile(it, null) },
+            )
+        }
+    }
+    actionsFor?.let { id ->
+        val text = remember(id) { vm.copyText(id) }
+        if (text == null) {
+            actionsFor = null
+        } else {
+            MessageActionsSheet(
+                preview = text,
+                canModify = !state.running && vm.canModifyMessages(),
+                onCopy = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                    actionsFor = null
+                },
+                onEdit = {
+                    actionsFor = null
+                    val body = vm.beginEdit(id)
+                    if (body != null) {
+                        editingId = id
+                        updateInput(TextFieldValue(body, TextRange(body.length)))
+                    }
+                },
+                onDelete = {
+                    actionsFor = null
+                    if (editingId == id) { editingId = null; updateInput(TextFieldValue("")) }
+                    vm.deleteMessage(id)
+                },
+                onDismiss = { actionsFor = null },
             )
         }
     }

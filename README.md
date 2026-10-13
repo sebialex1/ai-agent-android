@@ -149,6 +149,8 @@ The folder button in the chat top bar opens the workspace: a segmented switch fo
 
 Settings live on the conversations screen. System Back walks up: file viewer, workspace or settings, then the chat, then the conversations list, and only leaves the app from there.
 
+**Long-press one of your messages** for a themed sheet with a quoted preview and **Copy message**, **Edit message** and **Delete message**. Edit puts the text back into the input (its imports back above it) with a slim *Editing* strip and a cancel button; sending replaces that message and everything after it in the history, then runs it again. Delete removes the message and its reply. Edit and Delete wait while an answer is running; Copy always works.
+
 When you send a new message, all earlier step groups collapse. Answers, files, and sources stay visible. Only pages the agent actually fetched become website sources.
 
 A newly received answer types out with a fast typewriter that speeds up as the answer grows. Each answer is revealed once. Reopening a conversation, restarting the app, or coming back from another screen shows the saved text immediately.

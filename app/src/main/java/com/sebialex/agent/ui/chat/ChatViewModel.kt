@@ -323,6 +323,73 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         runs[currentId]?.approval?.complete(allow)
     }
 
+    // ---- Editing, copying and deleting own messages ------------------------------------------
+
+    /** Own messages can be edited or deleted while nothing is running in this conversation. */
+    fun canModifyMessages(): Boolean = !runs.containsKey(currentId)
+
+    /**
+     * Starts editing a sent message: returns its typed text (without the import mentions) and
+     * puts its imports back above the input, so re-sending keeps them unless removed.
+     */
+    fun beginEdit(turnId: String): String? {
+        val t = cache[currentId]?.turns?.firstOrNull { it.id == turnId && it.role == Role.USER } ?: return null
+        val imports = com.sebialex.agent.domain.agent.Mentions.paths(t.text).filter { it.startsWith("imports/") && workspaceFile(it) != null }
+        pendingBySession[currentId] = imports
+        publish()
+        return com.sebialex.agent.domain.agent.Mentions.strip(t.text, imports)
+    }
+
+    /** Leaves edit mode without sending; the restored imports are put away again. */
+    fun cancelEdit() {
+        pendingBySession.remove(currentId)
+        publish()
+    }
+
+    /**
+     * Replaces a sent message: the message and everything after it leave the history, then the
+     * edited text is sent as a new turn (the model sees the conversation as if it had been typed
+     * that way). Files the agent already wrote stay in the workspace.
+     */
+    fun resendEdited(turnId: String, text: String) {
+        val sessionId = currentId
+        if (runs.containsKey(sessionId)) return
+        val imports = pendingBySession[sessionId].orEmpty()
+        if (text.isBlank() && imports.isEmpty()) return
+        val s = cache[sessionId] ?: return
+        val idx = s.turns.indexOfFirst { it.id == turnId }
+        if (idx >= 0) {
+            cache[sessionId] = s.copy(turns = s.turns.take(idx), updatedAt = System.currentTimeMillis())
+            revealing = revealing - s.turns.drop(idx).map { it.id }.toSet()
+        }
+        send(text)
+    }
+
+    /** Deletes one of your messages and the answer that followed it (up to your next message). */
+    fun deleteMessage(turnId: String) {
+        val sessionId = currentId
+        if (runs.containsKey(sessionId)) return
+        val s = cache[sessionId] ?: return
+        val idx = s.turns.indexOfFirst { it.id == turnId && it.role == Role.USER }
+        if (idx < 0) return
+        var end = idx + 1
+        while (end < s.turns.size && s.turns[end].role != Role.USER) end++
+        val next = s.copy(turns = s.turns.take(idx) + s.turns.drop(end), updatedAt = System.currentTimeMillis())
+        cache[sessionId] = next
+        publish()
+        // Saved even when it is now empty, so the deleted message does not come back on reopen.
+        io.trySend { container.sessions.save(next) }
+    }
+
+    /** The full text of a message, as typed (imports as their file names), for copying. */
+    fun copyText(turnId: String): String? {
+        val t = cache[currentId]?.turns?.firstOrNull { it.id == turnId } ?: return null
+        if (t.role != Role.USER) return t.text
+        val paths = com.sebialex.agent.domain.agent.Mentions.paths(t.text).filter { it.startsWith("imports/") }
+        val body = com.sebialex.agent.domain.agent.Mentions.strip(t.text, paths)
+        return body.ifBlank { paths.joinToString(" ") { it.substringAfterLast('/') } }
+    }
+
     fun toggleSteps(turnId: String) {
         expanded = if (turnId in expanded) expanded - turnId else expanded + turnId
         publish()

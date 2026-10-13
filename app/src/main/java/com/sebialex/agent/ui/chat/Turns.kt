@@ -53,6 +53,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
@@ -77,7 +79,11 @@ fun UserMessage(
     /** Resolves an `@path` mention to its workspace file; null when it is not an existing file. */
     resolveFile: (String) -> java.io.File? = { null },
     onOpenFile: (String) -> Unit = {},
+    /** Long-press on the message: the Copy / Edit / Delete sheet. */
+    onLongPress: (() -> Unit)? = null,
 ) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val press = rememberUpdatedState(onLongPress)
     // Mentioned workspace files (imports) become previews; their @path text is not repeated.
     val files = remember(turn.text) {
         com.sebialex.agent.domain.agent.Mentions.paths(turn.text).mapNotNull { p -> resolveFile(p)?.let { p to it } }
@@ -97,6 +103,16 @@ fun UserMessage(
             color = Palette.TextPrimary,
             modifier = Modifier
                 .softSurface(RoundedCornerShape(22.dp), Palette.SurfaceHigh, elevation = 2.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .then(
+                    if (onLongPress == null) Modifier
+                    else Modifier.pointerInput(Unit) {
+                        detectTapGestures(onLongPress = {
+                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            press.value?.invoke()
+                        })
+                    },
+                )
                 .padding(horizontal = 16.dp, vertical = 11.dp),
         )
     }
