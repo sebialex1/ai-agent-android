@@ -69,6 +69,20 @@ class ToolExecutor(
                 }
                 is ToolCall.Python -> runPython(call)
                 is ToolCall.Memory -> runMemory(call)
+                is ToolCall.ListFiles -> FileTools.list(workspace, call)
+                is ToolCall.SearchFiles -> FileTools.search(workspace, call)
+                is ToolCall.EditFile -> FileTools.edit(workspace, call)
+                is ToolCall.MoveFile -> {
+                    workspace.move(call.from, call.to)
+                    ToolResult(call.callId, true, "moved ${workspace.toVirtual(call.from)} to ${workspace.toVirtual(call.to)}")
+                }
+                is ToolCall.DeleteFile -> {
+                    workspace.delete(call.path, recursive = true)
+                    ToolResult(call.callId, true, "deleted ${workspace.toVirtual(call.path)}")
+                }
+                is ToolCall.DownloadFile -> NetTools.download(workspace, call)
+                is ToolCall.HttpRequest -> NetTools.request(call)
+                is ToolCall.DeviceInfo -> ToolResult(call.callId, true, NetTools.deviceInfo())
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

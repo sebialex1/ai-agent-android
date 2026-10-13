@@ -4,6 +4,17 @@ A minimal, dark, local AI agent for Android. Give it a task in natural language;
 
 Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk` 34, `minSdk` 26.
 
+## Agent tools
+
+`web_search`, `web_fetch`, `shell` (Termux: bash, apt, pkg, pip), `python`, `read_file`, `write_file`, `edit_file` (exact-text replace), `list_files`, `search_files` (grep across the workspace), `move_file`, `delete_file` (asks first), `download_file` (any URL into the workspace), `http_request` (API calls; non-GET asks first), `device_info` (date, time zone, locale, Android version), plus the read-only `conversation_memory` when memory of past chats is on for that conversation.
+
+## Chats, settings and files
+
+- Conversations can be **pinned** (own section on top) and renamed from the themed options sheet (\u22ef on a row or in the chat's top bar). After the first answer the model writes a short **title** from the conversation; a renamed chat keeps its title.
+- **Memory of past chats** is per conversation, switched in that chat's options sheet; Settings > Chats sets whether new chats start with it on.
+- **Settings** is split into tabs: General (permissions, web search key, Termux sandbox), Models (model, reasoning, OpenRouter and Ollama Cloud keys), On-device, Chats and About.
+- The workspace **Files** tab is a small file manager: breadcrumbs, folders, sizes and ages; open, download to `Download/AgentForAndroid`, rename and delete per item; download a folder as zip, clear it, or show hidden files.
+
 ## API keys
 
 All keys go in **Settings** (overflow menu, top right). They are stored with `EncryptedSharedPreferences`, using an AES-256-GCM master key held in the **Android Keystore**. Keys never show up in the chat, the logs, or backups (`allowBackup=false`, and the data extraction rules exclude them).
@@ -18,7 +29,7 @@ The model is picked in Settings and defaults to `openrouter/auto`; it is not har
 
 ## Models: three separate sources
 
-Settings > General has a **Model** row that shows the current model and where it runs. Tapping it opens a picker with a segmented switch, so the sources never mix in one list:
+The model is chosen from the chat's **+** sheet (one row showing the current model; tapping it opens a clean searchable list) or from Settings > Models. The list shows downloaded on-device models, then Ollama Cloud and OpenRouter models, each pulled live from the provider (`/api/tags`, `/api/v1/models`). A manual model-id field only appears for a provider whose list failed or came back empty:
 
 | Source | Runs on | Model ids | Needs |
 | --- | --- | --- | --- |
@@ -26,7 +37,7 @@ Settings > General has a **Model** row that shows the current model and where it
 | Ollama Cloud | ollama.com's cloud (not this phone) | `ollama/<name>`, e.g. `ollama/gpt-oss:120b`; the list is read live from `/api/tags` | Ollama Cloud key (create one at https://ollama.com/settings/keys) |
 | On this phone | This phone's GPU (CPU fallback), offline | `local/gemma-4-e2b-it`, `local/gemma-4-e4b-it`, `local/lfm2.5-1.2b-instruct`, `local/file/<name>.litertlm` | A downloaded model file |
 
-The **Cloud provider** switch (OpenRouter / Ollama Cloud) in General shows that provider's key field and makes its last used model active. Without an Ollama key the provider can still be selected; the picker then shows a short note instead of a model list, and a chat answers with a notice without running anything. Ollama Cloud uses Ollama's native `/api/chat` endpoint as documented at https://docs.ollama.com/cloud: NDJSON streaming, native tool calls, and the `think` field (`true`/`false` or a named level). Model names are the exact tags from `/api/tags` (e.g. `gemma4:31b`; `-cloud` names only work through the local Ollama app). Tools are only offered to models whose `/api/show` capabilities include `tools`; Gemma 4 and other known thinking families always get the Reasoning switch. Errors show the server's own message, e.g. a 403 "this model requires a subscription" or an invalid key.
+Both provider keys live in Settings > Models; whichever provider the picked model belongs to answers. Without an Ollama key the provider can still be selected; the picker then shows a short note instead of a model list, and a chat answers with a notice without running anything. Ollama Cloud uses Ollama's native `/api/chat` endpoint as documented at https://docs.ollama.com/cloud: NDJSON streaming, native tool calls, and the `think` field (`true`/`false` or a named level). Model names are the exact tags from `/api/tags` (e.g. `gemma4:31b`; `-cloud` names only work through the local Ollama app). Tools are only offered to models whose `/api/show` capabilities include `tools`; Gemma 4 and other known thinking families always get the Reasoning switch. Errors show the server's own message, e.g. a 403 "this model requires a subscription" or an invalid key.
 
 **Custom Ollama model ID.** The Ollama tab of the picker always has a *Custom model ID* field, for models the live list does not show (or when `/api/tags` fails or comes back empty). Type the name as listed on ollama.com, e.g. `gpt-oss:120b`; an `ollama/` prefix and the local-app `-cloud` / `:cloud` suffix are stripped. Once saved it gets its own row ("Custom model ID") and is used as `ollama/<name>`. Clearing the field and saving removes it; with the field empty the picker behaves as before. Names unknown to `/api/show` simply get no Reasoning control.
 
@@ -46,7 +57,7 @@ The "2B/4B" Gemma models are Gemma 4 E2B / E4B (effective 2B / 4B parameters), t
 - **Loading**: one model is in memory at a time. It loads on first use (or on "Use"/"Load") on the GPU; if the GPU path is unavailable (no OpenCL, driver error) it falls back to the CPU and says why. Picking a cloud model unloads it to free memory.
 - **Context window**: 2K to 32K tokens (default 4K), capped by each model. Long histories and tool outputs are trimmed to fit.
 - **Faster decoding (MTP)**: optional multi-token prediction for models that include it (Gemma 4) on the GPU.
-- **Agent behaviour** is the same as with cloud models: the same system prompt and six tools, tool calls returned to the app (LiteRT-LM never runs them), approvals and the audit log unchanged. Gemma 4's thinking mode is off by default and can be switched on with the Reasoning/Thinking toggle.
+- **Agent behaviour** is the same as with cloud models: the same system prompt and a compact tool set (web, shell, python, read/write/edit/list files, device info), tool calls returned to the app (LiteRT-LM never runs them), approvals and the audit log unchanged. Gemma 4's thinking mode is off by default and can be switched on with the Reasoning/Thinking toggle.
 
 Build notes: LiteRT-LM 0.18.0 is compiled with a newer Kotlin than earlier versions of this project, so the build uses Kotlin 2.2.21, AGP 8.8.2 and Gradle 8.10.2, with `-Xskip-metadata-version-check` (as the AI Edge Gallery does). The manifest declares `libOpenCL.so` and `libvndksupport.so` as optional native libraries for GPU access. Native code ships for `arm64-v8a` (and `x86_64` emulators).
 

@@ -49,8 +49,33 @@ class PermissionPolicy(
         } else PermissionDecision.Allow
         // Read-only view of the user's own earlier chats, only offered when the user enabled it.
         is ToolCall.Memory -> PermissionDecision.Allow
+        is ToolCall.ListFiles -> outsideOr(call.path)
+        is ToolCall.SearchFiles -> outsideOr(call.path)
+        is ToolCall.EditFile -> outsideOr(call.path)
+        is ToolCall.MoveFile -> if (isOutside(call.from) || isOutside(call.to)) {
+            PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, "${call.from} \u2192 ${call.to}")
+        } else PermissionDecision.Allow
+        // Deleting always asks, like `rm` in the shell.
+        is ToolCall.DeleteFile -> if (isOutside(call.path)) PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, call.path)
+        else PermissionDecision.Ask(RiskReason.DESTRUCTIVE, "delete ${call.path}")
+        is ToolCall.DownloadFile -> when {
+            call.path != null && isOutside(call.path) -> PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, call.path)
+            askBeforeWebAccess() -> PermissionDecision.Ask(RiskReason.NETWORK, call.url)
+            else -> PermissionDecision.Allow
+        }
+        // Reading an API follows the web setting; anything that can change remote state asks.
+        is ToolCall.HttpRequest -> when {
+            call.method !in setOf("GET", "HEAD") -> PermissionDecision.Ask(RiskReason.NETWORK, "${call.method} ${call.url}")
+            askBeforeWebAccess() -> PermissionDecision.Ask(RiskReason.NETWORK, "${call.method} ${call.url}")
+            else -> PermissionDecision.Allow
+        }
+        is ToolCall.DeviceInfo -> PermissionDecision.Allow
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
+
+    /** "/" (and empty) means the workspace root for the file tools. */
+    private fun outsideOr(path: String): PermissionDecision =
+        if (path.trim() !in setOf("", "/", ".") && isOutside(path)) PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, path) else PermissionDecision.Allow
 
     fun evaluateShell(command: String): PermissionDecision {
         val segments = command.split("&&", "||", ";", "|").map { it.trim() }.filter { it.isNotEmpty() }

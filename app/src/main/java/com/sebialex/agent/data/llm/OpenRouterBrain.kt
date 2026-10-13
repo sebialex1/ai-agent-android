@@ -372,6 +372,14 @@ class OpenRouterBrain(
             is ToolCall.WriteFile -> "write_file"
             is ToolCall.Python -> "python"
             is ToolCall.Memory -> MEMORY_TOOL_NAME
+            is ToolCall.ListFiles -> "list_files"
+            is ToolCall.SearchFiles -> "search_files"
+            is ToolCall.EditFile -> "edit_file"
+            is ToolCall.MoveFile -> "move_file"
+            is ToolCall.DeleteFile -> "delete_file"
+            is ToolCall.DownloadFile -> "download_file"
+            is ToolCall.HttpRequest -> "http_request"
+            is ToolCall.DeviceInfo -> "device_info"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -393,6 +401,21 @@ class OpenRouterBrain(
                 if (c.offset > 0) put("offset", c.offset)
                 c.query?.let { put("query", it) }
             }.toString()
+            is ToolCall.ListFiles -> buildJsonObject { put("path", c.path); if (c.recursive) put("recursive", true) }.toString()
+            is ToolCall.SearchFiles -> buildJsonObject { put("query", c.query); put("path", c.path); if (c.regex) put("regex", true) }.toString()
+            is ToolCall.EditFile -> buildJsonObject {
+                put("path", c.path); put("old_text", c.oldText); put("new_text", c.newText)
+                if (c.replaceAll) put("replace_all", true)
+            }.toString()
+            is ToolCall.MoveFile -> buildJsonObject { put("from", c.from); put("to", c.to) }.toString()
+            is ToolCall.DeleteFile -> buildJsonObject { put("path", c.path) }.toString()
+            is ToolCall.DownloadFile -> buildJsonObject { put("url", c.url); c.path?.let { put("path", it) } }.toString()
+            is ToolCall.HttpRequest -> buildJsonObject {
+                put("method", c.method); put("url", c.url)
+                if (c.headers.isNotEmpty()) putJsonObject("headers") { c.headers.forEach { (k, v) -> put(k, v) } }
+                c.body?.let { put("body", it) }
+            }.toString()
+            is ToolCall.DeviceInfo -> "{}"
             is ToolCall.Invalid -> c.arguments
         }
 
@@ -403,7 +426,8 @@ class OpenRouterBrain(
         fun parseToolCall(id: String, name: String, rawArgs: String): ToolCall {
             val args = runCatching { ARGS_JSON.parseToJsonElement(rawArgs.ifBlank { "{}" }).jsonObject }.getOrNull()
                 ?: return ToolCall.Invalid(id, name, rawArgs, "Arguments were not valid JSON: $rawArgs")
-            fun arg(k: String) = (args[k] as? JsonPrimitive)?.content
+            fun arg(k: String) = (args[k] as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+            fun flag(k: String) = arg(k)?.trim()?.lowercase() in setOf("true", "1", "yes")
             fun missing(k: String) = ToolCall.Invalid(id, name, rawArgs, "Missing required argument \"$k\" for $name")
             return when (name) {
                 "web_search" -> arg("query")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebSearch(id, it) } ?: missing("query")
@@ -431,7 +455,39 @@ class OpenRouterBrain(
                     val offset = arg("offset")?.trim()?.toDoubleOrNull()?.toInt()?.coerceAtLeast(0) ?: 0
                     ToolCall.Memory(id, action, arg("conversation_id")?.takeIf { it.isNotBlank() }, offset, arg("query")?.takeIf { it.isNotBlank() })
                 }
-                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file, conversation_memory (only when enabled).")
+                "list_files" -> ToolCall.ListFiles(id, arg("path")?.takeIf { it.isNotBlank() } ?: "/", flag("recursive"))
+                "search_files" -> arg("query")?.takeIf { it.isNotEmpty() }?.let {
+                    ToolCall.SearchFiles(id, it, arg("path")?.takeIf { p -> p.isNotBlank() } ?: "/", flag("regex"))
+                } ?: missing("query")
+                "edit_file" -> {
+                    val path = arg("path")?.takeIf { it.isNotBlank() } ?: return missing("path")
+                    val old = arg("old_text") ?: return missing("old_text")
+                    val new = arg("new_text") ?: return missing("new_text")
+                    ToolCall.EditFile(id, path, old, new, flag("replace_all"))
+                }
+                "move_file" -> {
+                    val from = arg("from")?.takeIf { it.isNotBlank() } ?: return missing("from")
+                    val to = arg("to")?.takeIf { it.isNotBlank() } ?: return missing("to")
+                    ToolCall.MoveFile(id, from, to)
+                }
+                "delete_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.DeleteFile(id, it) } ?: missing("path")
+                "download_file" -> arg("url")?.takeIf { it.isNotBlank() }?.let { ToolCall.DownloadFile(id, it, arg("path")?.takeIf { p -> p.isNotBlank() }) } ?: missing("url")
+                "http_request" -> {
+                    val url = arg("url")?.takeIf { it.isNotBlank() } ?: return missing("url")
+                    val headers = when (val h = args["headers"]) {
+                        is JsonObject -> h.mapValues { (_, v) -> (v as? JsonPrimitive)?.content.orEmpty() }
+                        is JsonPrimitive -> runCatching { ARGS_JSON.parseToJsonElement(h.content).jsonObject.mapValues { (_, v) -> (v as? JsonPrimitive)?.content.orEmpty() } }.getOrDefault(emptyMap())
+                        else -> emptyMap()
+                    }
+                    val body = when (val b = args["body"]) {
+                        null, is kotlinx.serialization.json.JsonNull -> null
+                        is JsonPrimitive -> b.content
+                        else -> b.toString()
+                    }
+                    ToolCall.HttpRequest(id, (arg("method") ?: "GET").trim().uppercase(), url, headers, body)
+                }
+                "device_info" -> ToolCall.DeviceInfo(id)
+                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
             }
         }
 
@@ -454,6 +510,13 @@ class OpenRouterBrain(
             - python: runs Python code with Termux's Python in the workspace; list pip packages in `packages` to install
               them first. Real imports, file I/O and subprocess. Files it writes land in the workspace.
             - read_file / write_file: read and write workspace files. Write documents as Markdown.
+            - edit_file: replace an exact snippet in a file (prefer it over rewriting a whole file for small changes).
+            - list_files / search_files: list a folder (optionally recursive) and grep text across workspace files.
+            - move_file / delete_file: rename, move or delete workspace files and folders (deleting asks the user).
+            - download_file: save any URL (PDF, image, archive, dataset) into the workspace.
+            - http_request: call a web API (GET, POST, PUT, PATCH, DELETE) with headers and a body; returns status,
+              headers and the response text. Non-GET requests ask the user first.
+            - device_info: current date, time, time zone, locale and Android version.
             Rules:
             - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
             - If a command reports that Termux is not available or permission is denied, tell the user what to set up
@@ -506,7 +569,11 @@ class OpenRouterBrain(
         }
 
         /** One-line list of the agent's tools, shown in Settings > About. */
+        const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
+            "search_files, move_file, delete_file, download_file, http_request, device_info"
+
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
+            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -545,8 +612,44 @@ class OpenRouterBrain(
                 "previous chat or earlier work. Start from list_conversations or a summary; read full messages only " +
                 "when needed. It is read-only.\n"
 
-        /** The tools to send: the six agent tools, plus conversation memory when it is on. */
-        fun toolsFor(memory: Boolean): JsonArray = if (memory) JsonArray(TOOLS + MEMORY_TOOL) else TOOLS
+        /**
+         * The tools to send, plus conversation memory when it is on. [compact] is the smaller set for
+         * on-device models with a short context window (the core tools plus list/edit/device info).
+         */
+        fun toolsFor(memory: Boolean, compact: Boolean = false): JsonArray {
+            val base = if (compact) TOOLS.filter { t -> toolNameOf(t) in COMPACT_TOOLS } else TOOLS
+            return JsonArray(if (memory) base + MEMORY_TOOL else base)
+        }
+
+        private fun toolNameOf(t: JsonElement): String? =
+            (((t as? JsonObject)?.get("function") as? JsonObject)?.get("name") as? JsonPrimitive)?.content
+
+        private val COMPACT_TOOLS = setOf("web_search", "web_fetch", "shell", "python", "read_file", "write_file", "edit_file", "list_files", "device_info")
+
+        /** A function schema with typed parameters: (name, type, description, required). */
+        private fun typedFn(name: String, description: String, vararg params: Param): JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", name)
+                put("description", description)
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        params.forEach { p ->
+                            putJsonObject(p.name) {
+                                put("type", p.type)
+                                put("description", p.description)
+                                if (p.type == "object") putJsonObject("additionalProperties") { put("type", "string") }
+                                p.enum?.let { values -> putJsonArray("enum") { values.forEach { add(it) } } }
+                            }
+                        }
+                    }
+                    putJsonArray("required") { params.filter { it.required }.forEach { add(it.name) } }
+                }
+            }
+        }
+
+        private class Param(val name: String, val type: String, val description: String, val required: Boolean = true, val enum: List<String>? = null)
 
         val TOOLS: JsonArray = JsonArray(
             listOf(
@@ -556,6 +659,43 @@ class OpenRouterBrain(
                 PYTHON_TOOL,
                 fn("read_file", "Read a text file from the workspace.", "path" to "Path relative to /workspace"),
                 fn("write_file", "Create or overwrite a workspace file with the full content.", "path" to "Path relative to /workspace", "content" to "Full file content"),
+                typedFn(
+                    "edit_file", "Replace an exact piece of text in a workspace file. old_text must match exactly once unless replace_all is true.",
+                    Param("path", "string", "Path relative to /workspace"),
+                    Param("old_text", "string", "Exact text to find (include enough context to be unique)"),
+                    Param("new_text", "string", "Replacement text"),
+                    Param("replace_all", "boolean", "Replace every occurrence", required = false),
+                ),
+                typedFn(
+                    "list_files", "List files and folders in the workspace with sizes.",
+                    Param("path", "string", "Folder relative to /workspace, default /", required = false),
+                    Param("recursive", "boolean", "Include subfolders", required = false),
+                ),
+                typedFn(
+                    "search_files", "Search text inside workspace files. Returns matching lines as path:line: text.",
+                    Param("query", "string", "Text to find (case-insensitive), or a regular expression when regex is true"),
+                    Param("path", "string", "Folder to search, default /", required = false),
+                    Param("regex", "boolean", "Treat query as a regular expression", required = false),
+                ),
+                typedFn(
+                    "move_file", "Move or rename a workspace file or folder.",
+                    Param("from", "string", "Current path relative to /workspace"),
+                    Param("to", "string", "New path relative to /workspace"),
+                ),
+                typedFn("delete_file", "Delete a workspace file or folder (the user is asked first).", Param("path", "string", "Path relative to /workspace")),
+                typedFn(
+                    "download_file", "Download a URL (any file type) into the workspace.",
+                    Param("url", "string", "Absolute http(s) URL"),
+                    Param("path", "string", "Target path relative to /workspace; default downloads/<file name>", required = false),
+                ),
+                typedFn(
+                    "http_request", "Send an HTTP request to an API and return status, headers and body text.",
+                    Param("method", "string", "HTTP method", enum = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")),
+                    Param("url", "string", "Absolute http(s) URL"),
+                    Param("headers", "object", "Request headers", required = false),
+                    Param("body", "string", "Request body, e.g. JSON text", required = false),
+                ),
+                typedFn("device_info", "Current date, time, time zone, locale and Android version of this phone."),
             ),
         )
     }

@@ -257,8 +257,8 @@ class LocalBrain(
         private const val MAX_HISTORY_TURNS = 12
         private const val MAX_FILES = 60
         private const val CANCEL_WAIT_MS = 5_000L
-        /** Approximate size of the six tool schemas once rendered into the prompt. */
-        private const val TOOL_SCHEMA_CHARS = 2_400
+        /** Approximate size of the compact tool schemas once rendered into the prompt. */
+        private const val TOOL_SCHEMA_CHARS = 3_600
         private const val MEMORY_SCHEMA_CHARS = 700
         private val STRICT = Json
 
@@ -269,11 +269,11 @@ class LocalBrain(
         """.trimIndent()
 
         /**
-         * The agent's six tools (plus conversation memory when it is on), described to LiteRT-LM with
+         * The agent's compact tool set (plus conversation memory when it is on), described to LiteRT-LM with
          * the exact OpenRouter schemas. They are never executed by LiteRT-LM (automatic tool calling
          * is off).
          */
-        private fun toolProviders(memory: Boolean): List<ToolProvider> = OpenRouterBrain.toolsFor(memory).mapNotNull { el ->
+        private fun toolProviders(memory: Boolean): List<ToolProvider> = OpenRouterBrain.toolsFor(memory, compact = true).mapNotNull { el ->
             val fn = (el as? JsonObject)?.get("function") as? JsonObject ?: return@mapNotNull null
             tool(SchemaTool(fn.toString()))
         }

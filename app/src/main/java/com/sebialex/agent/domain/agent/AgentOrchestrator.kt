@@ -246,8 +246,24 @@ class AgentOrchestrator(
             },
             startedAt = now(),
         )
+        is ToolCall.ListFiles -> Step(
+            nextId(), StepKind.FILE_READ, if (call.path.trim() in setOf("", "/")) "workspace" else call.path.trimEnd('/').substringAfterLast('/') + "/",
+            "list_files", args(call), path = null, startedAt = now(),
+        )
+        is ToolCall.SearchFiles -> Step(nextId(), StepKind.FILE_READ, "\u201c${call.query}\u201d in files", "search_files", args(call), startedAt = now())
+        is ToolCall.EditFile -> Step(
+            nextId(), StepKind.FILE_WRITE, call.path.substringAfterLast('/'), "edit_file",
+            "{\"path\": \"${esc(call.path)}\"}\n\n--- old\n${call.oldText}\n+++ new\n${call.newText}", path = call.path, startedAt = now(),
+        )
+        is ToolCall.MoveFile -> Step(nextId(), StepKind.FILE_WRITE, "${call.from.substringAfterLast('/')} \u2192 ${call.to}", "move_file", args(call), path = call.to, startedAt = now())
+        is ToolCall.DeleteFile -> Step(nextId(), StepKind.FILE_WRITE, "delete ${call.path.substringAfterLast('/')}", "delete_file", args(call), startedAt = now())
+        is ToolCall.DownloadFile -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "download_file", args(call), url = call.url, path = call.path, startedAt = now())
+        is ToolCall.HttpRequest -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "http_request", "${call.method} ${call.url}" + (call.body?.let { "\n\n$it" } ?: ""), url = call.url, startedAt = now())
+        is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
+
+    private fun args(call: ToolCall) = com.sebialex.agent.data.llm.OpenRouterBrain.arguments(call)
 
     private fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
 }

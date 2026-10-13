@@ -40,6 +40,42 @@ sealed interface ToolCall {
         val query: String? = null,
     ) : ToolCall
 
+    /** Lists a workspace folder (sizes, kinds), optionally recursively. */
+    data class ListFiles(override val callId: String, val path: String = "/", val recursive: Boolean = false) : ToolCall
+
+    /** Searches text in workspace files (case-insensitive substring or regex), optionally under [path]. */
+    data class SearchFiles(override val callId: String, val query: String, val path: String = "/", val regex: Boolean = false) : ToolCall
+
+    /** Replaces [oldText] with [newText] in a workspace file: exactly one match unless [replaceAll]. */
+    data class EditFile(
+        override val callId: String,
+        val path: String,
+        val oldText: String,
+        val newText: String,
+        val replaceAll: Boolean = false,
+    ) : ToolCall
+
+    /** Moves or renames a workspace file or folder. */
+    data class MoveFile(override val callId: String, val from: String, val to: String) : ToolCall
+
+    /** Deletes a workspace file or folder (asks first). */
+    data class DeleteFile(override val callId: String, val path: String) : ToolCall
+
+    /** Downloads a URL's bytes into the workspace (any file type). */
+    data class DownloadFile(override val callId: String, val url: String, val path: String? = null) : ToolCall
+
+    /** A raw HTTP request (APIs, JSON). GET/HEAD follow the web setting; other methods ask first. */
+    data class HttpRequest(
+        override val callId: String,
+        val method: String,
+        val url: String,
+        val headers: Map<String, String> = emptyMap(),
+        val body: String? = null,
+    ) : ToolCall
+
+    /** Current date, time, time zone and basic device facts. */
+    data class DeviceInfo(override val callId: String) : ToolCall
+
     /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
     data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
