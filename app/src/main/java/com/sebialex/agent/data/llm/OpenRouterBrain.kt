@@ -404,6 +404,8 @@ class OpenRouterBrain(
               Install system tools with `pkg install -y <pkg>` (or `apt install -y <pkg>`) and Python packages with
               `pip install <pkg>`, e.g. `pip install yt-dlp` then `yt-dlp -o "%(title)s.%(ext)s" <url>`.
               Always pass -y to apt/pkg; there is no interactive input. Commands time out after 60 s (installs 300 s).
+              If python or pip is missing, install it with `pkg install -y python` first. Do not claim that packages
+              cannot be installed unless a real command failed; quote the real error if it did.
             - python: runs Python code with Termux's Python in the workspace; list pip packages in `packages` to install
               them first. Real imports, file I/O and subprocess. Files it writes land in the workspace.
             - read_file / write_file: read and write workspace files. Write documents as Markdown.

@@ -85,6 +85,7 @@ class ToolExecutor(
 
     private companion object {
         const val SNIPPET_CHARS = 280
+        const val MISSING_PYTHON = "Python is not installed in Termux. Run `pkg install -y python` with the shell tool, then retry."
     }
 
     private fun isBinary(f: java.io.File): Boolean = f.inputStream().use { input ->
@@ -106,6 +107,7 @@ class ToolExecutor(
             val install = shell.execute("python -m pip install $pkgs", cwd)
             out.append("$ pip install ").append(call.packages.joinToString(" ")).append('\n')
             if (install.output.isNotEmpty()) out.append(install.output).append('\n')
+            if (install.exitCode == 127) out.append(MISSING_PYTHON).append('\n')
             if (install.exitCode != 0) {
                 return ToolResult(call.callId, false, out.toString().trimEnd(), exitCode = install.exitCode)
             }
@@ -114,6 +116,8 @@ class ToolExecutor(
         val r = shell.execute("python ${SandboxShell.shellQuote("/workspace$script")}", cwd)
         if (call.packages.isNotEmpty()) out.append("$ python ").append(call.scriptName).append('\n')
         out.append(r.output)
+        // 127 from Termux's bash = command not found: Python itself is not installed yet.
+        if (r.exitCode == 127 && "not found" in r.output) out.append('\n').append(MISSING_PYTHON)
         return ToolResult(call.callId, r.exitCode == 0, out.toString().trimEnd(), exitCode = r.exitCode)
     }
 }

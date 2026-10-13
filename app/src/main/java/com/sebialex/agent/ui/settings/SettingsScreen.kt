@@ -128,7 +128,15 @@ fun SettingsScreen(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAutoApprove(!snap.autoApprove) }.padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+                    Text(
+                        "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.TextTertiary,
+                        modifier = Modifier.padding(top = 2.dp, end = 12.dp),
+                    )
+                }
                 Switch(
                     checked = snap.autoApprove,
                     onCheckedChange = settings::setAutoApprove,

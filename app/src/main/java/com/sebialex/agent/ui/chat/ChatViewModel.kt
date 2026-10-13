@@ -77,6 +77,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             for (op in io) runCatching { op() }
         }
+        // Turning auto-approve on while an Allow/Deny card is waiting releases that card too,
+        // so the setting takes effect immediately rather than from the next action.
+        viewModelScope.launch {
+            container.settings.state.collect { snap ->
+                if (snap.autoApprove) runs.values.forEach { it.approval?.complete(true) }
+            }
+        }
         viewModelScope.launch {
             val (list, active) = withContext(Dispatchers.IO) {
                 container.sessions.migrateLegacy()

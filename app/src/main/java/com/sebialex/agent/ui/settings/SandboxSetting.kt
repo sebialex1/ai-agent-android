@@ -47,9 +47,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** One-time commands the user runs inside Termux so this app may use it. */
+/**
+ * One-time commands the user runs inside Termux so this app may use it. Idempotent: enables allow-external-apps once (and reloads Termux's settings so it applies
+ * without a restart), installs Python (which ships pip), then grants Termux shared storage so
+ * it can reach the mirrored workspace under /storage/emulated/0/AgentSandbox.
+ */
 private const val TERMUX_SETUP =
-    "mkdir -p ~/.termux && echo \"allow-external-apps = true\" >> ~/.termux/termux.properties && termux-setup-storage"
+    "mkdir -p ~/.termux && (grep -qx 'allow-external-apps = true' ~/.termux/termux.properties 2>/dev/null || " +
+        "echo 'allow-external-apps = true' >> ~/.termux/termux.properties) && termux-reload-settings; " +
+        "pkg install -y python; termux-setup-storage"
 
 /**
  * Status of the Termux environment that runs apt, pkg, pip and python, with one tap per
@@ -134,8 +140,14 @@ fun SandboxSetting(termux: TermuxBridge) {
                     scope.launch {
                         check = withContext(Dispatchers.IO) {
                             try {
+                                // Also proves Termux can write the shared workspace root, which is
+                                // what every mirrored command needs (termux-setup-storage).
+                                val shared = termux.sharedRoot.apply { mkdirs() }.absolutePath
+                                val q = SandboxShell.shellQuote(shared)
                                 val r = termux.run(
-                                    "echo \"termux ok\"; for p in bash apt dpkg pkg python pip; do printf '%s: ' \"\$p\"; command -v \"\$p\" || echo missing; done",
+                                    "echo \"termux ok\"; for p in bash apt dpkg pkg python pip; do printf '%s: ' \"\$p\"; command -v \"\$p\" || echo missing; done; " +
+                                        "if touch $q/.agent-check 2>/dev/null && rm -f $q/.agent-check; then echo 'shared workspace: ok'; " +
+                                        "else echo 'shared workspace: not writable from Termux (run termux-setup-storage in Termux)'; fi",
                                     workdir = "~/",
                                     timeoutSeconds = SandboxShell.TIMEOUT_SECONDS,
                                     label = "agent environment check",
