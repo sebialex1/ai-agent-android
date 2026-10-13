@@ -35,6 +35,13 @@ data class TermuxStatus(
     val installed: Boolean,
     val runPermission: Boolean,
     val storage: Boolean,
+    /**
+     * Termux's own `allow-external-apps` setting. This app cannot read Termux's private files,
+     * so it is only known after Termux has answered a command: true once a command ran, false
+     * when Termux rejected one for this reason, null while unknown. Not part of [problem] so a
+     * stale "false" never stops the next attempt (the user may have just fixed it).
+     */
+    val externalApps: Boolean? = null,
 ) {
     val problem: TermuxProblem? = when {
         !installed -> TermuxProblem.NOT_INSTALLED
@@ -76,7 +83,13 @@ class TermuxBridge(private val context: Context) {
         installed = isInstalled(),
         runPermission = context.checkSelfPermission(PERMISSION_RUN_COMMAND) == PackageManager.PERMISSION_GRANTED,
         storage = hasStorageAccess(),
+        externalApps = externalAppsAllowed,
     )
+
+    /** Last thing Termux told us about `allow-external-apps`; see [TermuxStatus.externalApps]. */
+    @Volatile
+    var externalAppsAllowed: Boolean? = null
+        private set
 
     fun isInstalled(): Boolean = try {
         context.packageManager.getPackageInfo(TERMUX_PACKAGE, 0)
@@ -143,12 +156,23 @@ class TermuxBridge(private val context: Context) {
             }
             val stdoutOriginal = bundle.getString(RESULT_STDOUT_ORIGINAL_LENGTH)?.toIntOrNull()
             val stdout = bundle.getString(RESULT_STDOUT).orEmpty()
+            val err = bundle.getInt(RESULT_ERR, -1)
+            var errmsg = bundle.getString(RESULT_ERRMSG).orEmpty()
+            // RunCommandService checks allow-external-apps against the properties Termux loaded
+            // in memory (TermuxAppSharedProperties), not the file on disk. Editing the file is
+            // not enough until Termux reloads it, so say exactly how to get past this.
+            if (err != -1 && errmsg.contains(PROP_ALLOW_EXTERNAL_APPS)) {
+                externalAppsAllowed = false
+                errmsg = errmsg.trim() + "\n" + EXTERNAL_APPS_HINT
+            } else if (err == -1) {
+                externalAppsAllowed = true
+            }
             return TermuxResult(
                 stdout = stdout,
                 stderr = bundle.getString(RESULT_STDERR).orEmpty(),
                 exitCode = bundle.getInt(RESULT_EXIT_CODE, -1),
-                err = bundle.getInt(RESULT_ERR, -1),
-                errmsg = bundle.getString(RESULT_ERRMSG).orEmpty(),
+                err = err,
+                errmsg = errmsg,
                 stdoutTruncated = stdoutOriginal != null && stdoutOriginal > stdout.length,
             )
         } finally {
@@ -163,6 +187,11 @@ class TermuxBridge(private val context: Context) {
         const val TERMUX_PREFIX = "/data/data/com.termux/files/usr"
         const val BASH = "$TERMUX_PREFIX/bin/bash"
         const val SHARED_DIR_NAME = "AgentSandbox"
+        const val PROP_ALLOW_EXTERNAL_APPS = "allow-external-apps"
+        const val EXTERNAL_APPS_HINT =
+            "Fix: open Termux and run the setup command from Settings > Sandbox. If it was already run, Termux " +
+                "is still using its old settings: run termux-reload-settings in Termux, or force stop Termux " +
+                "(App info > Force stop), open it again, then tap Check."
 
         const val ACTION_RUN_COMMAND = "com.termux.RUN_COMMAND"
         const val EXTRA_COMMAND_PATH = "com.termux.RUN_COMMAND_PATH"
