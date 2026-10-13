@@ -62,8 +62,20 @@ class AgentOrchestrator(
         var batch = 0
         // Imported images: shown with the message when the user asked to look (or wrote nothing
         // else); otherwise the model is only told they exist and may call view_image itself.
-        val (images, imageNote) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
-        val modelTask = task + imageNote
+        val vision = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
+        val images = vision.images
+        val modelTask = task + vision.note
+        // The decision goes to the audit log only (no row in the chat), with its distinct intent.
+        vision.intent?.let { intent ->
+            audit.record(
+                Step(
+                    id = nextId(), kind = StepKind.FILE_READ, payload = "vision: ${intent.name.lowercase()}", tool = "vision_intent",
+                    input = vision.paths.joinToString(", "), output = if (intent.shown) "shown with the message" else "not shown; view_image " +
+                        (if (intent == VisionIntent.Intent.REFUSED) "refused for this turn" else "refused for these imports"),
+                    status = StepStatus.DONE, startedAt = now(), finishedAt = now(),
+                ),
+            )
+        }
 
         while (executed < maxSteps) {
             val memory = memoryEnabled()
@@ -130,6 +142,12 @@ class AgentOrchestrator(
                         executed++
                         if (call is ToolCall.Invalid) {
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
+                            continue
+                        }
+                        // The user said not to look (REFUSED) or only to use the file (USE_ONLY).
+                        val visionRefusal = vision.refusal(call)
+                        if (visionRefusal != null) {
+                            observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
                             continue
                         }
                         // The tool is not advertised when memory is off; a call anyway is refused.
@@ -206,27 +224,61 @@ class AgentOrchestrator(
     }
 
     /**
-     * Images and videos mentioned as `@path` in [task] that exist in the workspace. When
-     * [VisionIntent] says to look, they are loaded (videos as a few frames) and a short note
-     * names them; otherwise only the note goes along, pointing at view_image.
+     * The imports of one message and what the user asked for them. [intent] is null when the
+     * message has no image or video import. [note] is appended to the message for the model.
      */
-    private fun attachedImages(task: String): Pair<List<com.sebialex.agent.domain.model.ImageInput>, String> {
+    private inner class Vision(
+        val intent: VisionIntent.Intent?,
+        val paths: List<String>,
+        val images: List<com.sebialex.agent.domain.model.ImageInput>,
+        val note: String,
+    ) {
+        /** Why a view_image call must be refused under [intent], or null when it may run. */
+        fun refusal(call: ToolCall): String? {
+            if (call !is ToolCall.ViewImage || intent == null || intent.viewImage) return null
+            return when (intent) {
+                VisionIntent.Intent.REFUSED -> "Refused: the user asked you not to look at images in this message."
+                else -> {
+                    val target = runCatching { workspace.virtualOf(workspace.resolve(call.path)) }.getOrNull()
+                    if (target != null && target in paths) "Refused: the user only asked you to use this file, not to look at it." else null
+                }
+            }
+        }
+    }
+
+    /**
+     * Images and videos mentioned as `@path` in [task] that exist in the workspace. When
+     * [VisionIntent] says to show them, they are loaded (videos as a few frames) and a short note
+     * names them; otherwise only a note goes along, saying why they are not shown.
+     */
+    private fun attachedImages(task: String): Vision {
         val media = Mentions.paths(task)
             .filter { Mentions.isImage(it) || com.sebialex.agent.data.workspace.ImageEncoder.isVideo(it) }
             .mapNotNull { p -> runCatching { workspace.resolve(p) }.getOrNull()?.takeIf { it.isFile }?.let { workspace.virtualOf(it) to it } }
             .take(MAX_IMAGES)
-        if (media.isEmpty()) return emptyList<com.sebialex.agent.domain.model.ImageInput>() to ""
-        val names = media.joinToString(", ") { it.first }
-        if (!VisionIntent.shouldLook(task)) {
-            return emptyList<com.sebialex.agent.domain.model.ImageInput>() to
-                "\n\n[Attached: $names. Not shown to you, because the user did not ask you to look at it. " +
-                "Call view_image only if the task really needs to see it.]"
+        if (media.isEmpty()) return Vision(null, emptyList(), emptyList(), "")
+        val paths = media.map { it.first }
+        val names = paths.joinToString(", ")
+        val intent = VisionIntent.classify(task)
+        when (intent) {
+            VisionIntent.Intent.REFUSED -> return Vision(
+                intent, paths, emptyList(),
+                "\n\n[Attached: $names. Not shown to you: the user asked you not to look at it. Do not call view_image.]",
+            )
+            VisionIntent.Intent.USE_ONLY -> return Vision(
+                intent, paths, emptyList(),
+                "\n\n[Attached: $names. Not shown to you: the user only asked you to use the file. Work with it by path; " +
+                    "view_image is not available for it.]",
+            )
+            else -> Unit
         }
         val images = media.flatMap { (label, file) -> com.sebialex.agent.data.workspace.ImageEncoder.load(file, label) }
-        if (images.isEmpty()) return images to "\n\n[Attached: $names (could not be decoded as an image).]"
-        val onlyMedia = Mentions.strip(task, Mentions.paths(task)).isBlank()
-        return images to "\n\n[Attached and shown below: ${images.joinToString(", ") { it.label }}." +
-            (if (onlyMedia) " The user sent it without any text: describe what it shows." else "") + "]"
+        if (images.isEmpty()) return Vision(intent, paths, images, "\n\n[Attached: $names (could not be decoded as an image).]")
+        return Vision(
+            intent, paths, images,
+            "\n\n[Attached and shown below: ${images.joinToString(", ") { it.label }}." +
+                (if (intent == VisionIntent.Intent.ONLY_MEDIA) " The user sent it without any text: describe what it shows." else "") + "]",
+        )
     }
 
     private fun workspaceFiles(): List<String> =

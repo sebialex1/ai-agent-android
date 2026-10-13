@@ -4,17 +4,34 @@ package com.sebialex.agent.domain.agent
  * Decides whether an imported image is shown to the model with the message (vision), from what
  * the user wrote next to it:
  *
- * - nothing but the import, or an ask to look at it ("what's this", "describe", "read the
- *   text", a question about it) -> look;
- * - an explicit "don't look", or only an instruction to use or handle the file ("use this as
- *   the background", "upload it", "convert to png", "rename it") -> don't look. The model is told
- *   the file exists and can still call `view_image` if it decides it needs to see it;
- * - anything else -> look, since a message about an attached image almost always needs it.
+ * - nothing but the import ([Intent.ONLY_MEDIA]), an ask to look at it ("what's this",
+ *   "describe", "read the text": [Intent.ASKED_TO_LOOK]) or any other request about it
+ *   ([Intent.IMPLICIT]) -> shown with the message;
+ * - only an instruction to use or handle the file ("use this as the background", "upload it",
+ *   "convert to png": [Intent.USE_ONLY]) -> not shown, and `view_image` on that import is refused;
+ * - an explicit refusal ("don't look", "don't describe it", "ignore the image":
+ *   [Intent.REFUSED]) -> not shown, and `view_image` is refused for the whole turn.
+ *
+ * The two "not shown" cases are kept apart so the audit log and the note to the model say which
+ * one applied.
  */
 object VisionIntent {
 
+    /** What the user's words ask for. [shown]: sent with the message; [viewImage]: the model may call view_image on the import. */
+    enum class Intent(val shown: Boolean, val viewImage: Boolean) {
+        ONLY_MEDIA(shown = true, viewImage = true),
+        ASKED_TO_LOOK(shown = true, viewImage = true),
+        IMPLICIT(shown = true, viewImage = true),
+        USE_ONLY(shown = false, viewImage = false),
+        REFUSED(shown = false, viewImage = false),
+    }
+
     private val DONT_LOOK = Regex(
         "\\b(don['’]?t|do not|no need to|without|never|no)\\s+(look|looking|see|seeing|view|viewing|open|opening|analy[sz]e|analy[sz]ing|describe|describing)\\b",
+    )
+
+    private val IGNORE = Regex(
+        "\\b(ignore|disregard|skip)\\s+(it|this|that|them|the\\s+(image|images|picture|pictures|photo|photos|video|videos|file|files|attachment|attachments))\\b",
     )
 
     private val LOOK = Regex(
@@ -29,14 +46,20 @@ object VisionIntent {
             "folose[sș]te|pune|trimite|salveaz[aă]|mut[aă])\\b",
     )
 
-    /** True when the images mentioned in [task] should be shown to the model with it. */
-    fun shouldLook(task: String): Boolean {
+    /** What [task] (a message with `@path` imports) asks for, by the rules above. */
+    fun classify(task: String): Intent {
         val text = Mentions.strip(task, Mentions.paths(task)).lowercase().trim()
-        if (text.isEmpty()) return true
-        if (DONT_LOOK.containsMatchIn(text)) return false
-        if (LOOK.containsMatchIn(text)) return true
-        if (USE_ONLY.containsMatchIn(text)) return false
-        // Any other text (a question about it, "make a caption", "is this ok?") needs the picture.
-        return true
+        return when {
+            text.isEmpty() -> Intent.ONLY_MEDIA
+            // A refusal wins over everything else, even "look" in "don't look".
+            DONT_LOOK.containsMatchIn(text) || IGNORE.containsMatchIn(text) -> Intent.REFUSED
+            LOOK.containsMatchIn(text) -> Intent.ASKED_TO_LOOK
+            USE_ONLY.containsMatchIn(text) -> Intent.USE_ONLY
+            // Any other text (a question about it, "make a caption", "is this ok?") needs the picture.
+            else -> Intent.IMPLICIT
+        }
     }
+
+    /** True when the images mentioned in [task] should be shown to the model with it. */
+    fun shouldLook(task: String): Boolean = classify(task).shown
 }
