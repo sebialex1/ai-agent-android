@@ -238,7 +238,7 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
 }
 
 /**
- * The quiet "thought >" row. While the model is thinking, its raw reasoning streams into the row
+ * The quiet reasoning row, with no label in front. While the model is thinking, its raw reasoning streams into the row
  * as words: a window about one line tall, pinned to the newest text, with the older line fading
  * out at the top and the right edge fading when a line runs long. When thinking ends the row
  * keeps a single line of the reasoning, fading out at its tail. Tapping opens the full text.
@@ -266,19 +266,15 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
             .padding(start = 2.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-            Text("\u2026", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            if (live) "thinking" else "thought",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Palette.TextTertiary,
-            modifier = if (live) Modifier.alpha(alpha) else Modifier,
-        )
-        Spacer(Modifier.width(10.dp))
+        // Nothing in front (no "thought" label, no icon): the row is only the thinking words.
         if (flowing.isEmpty()) {
-            Spacer(Modifier.weight(1f))
+            // Nothing readable yet (or encrypted reasoning only): a quiet pulsing placeholder.
+            Text(
+                "\u2026",
+                style = style,
+                color = Palette.TextTertiary,
+                modifier = Modifier.weight(1f).then(if (live) Modifier.alpha(alpha) else Modifier),
+            )
         } else if (live) {
             // Newest words at the bottom of a ~1.4 line window; whatever overflows fades away.
             Box(
