@@ -101,13 +101,12 @@ fun SettingsScreen(
             QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
             Text("Settings", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(start = 8.dp))
         }
-        SegmentedText(
+        SettingsTabs(
             options = SettingsTab.entries,
             selected = tab,
             label = { it.label },
             onSelect = { tab = it },
-            modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp),
-            scrollable = true,
+            modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 4.dp),
         )
         val scroll = scrolls.getValue(tab)
         Column(
