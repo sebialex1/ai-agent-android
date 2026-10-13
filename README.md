@@ -14,6 +14,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 - **Memory of past chats** is per conversation, switched in that chat's options sheet (the only switch for it). New chats start with the last choice made there; Settings > Chats just shows it.
 - **Settings** is split into tabs: General (permissions, web search key, Termux sandbox), Models (model, reasoning, OpenRouter and Ollama Cloud keys), On-device, Chats and About.
 - The workspace **Files** tab is a small file manager: breadcrumbs, folders, sizes and ages; open, download to `Download/AgentForAndroid`, rename and delete per item; download a folder as zip, clear it, or show hidden files.
+- The **file viewer** shows type and size under the name. Images (png, jpg, gif, webp, bmp) open in-app with Coil (pinch or double-tap to zoom, GIFs animate). Video (mp4, webm, mkv, mov, m4v) and audio (mp3, ogg, wav, m4a) play in a small built-in player on the platform `MediaPlayer` (play/pause, seek, time; no ExoPlayer). Everything else opens as text or rendered Markdown.
 
 ## API keys
 

@@ -167,6 +167,8 @@ fun FileViewerScreen(
                 Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
             }
             kind == FileKind.IMAGE -> file?.let { ImagePreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
+            kind == FileKind.VIDEO -> file?.let { VideoPreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
+            kind == FileKind.AUDIO -> file?.let { AudioPreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
             text == null -> Spacer(Modifier.fillMaxSize())
             else -> AnimatedContent(
                 targetState = mode,

@@ -34,13 +34,17 @@ import java.io.File
 
 /** What the file viewer shows for a file, picked by extension. Anything unknown is text. */
 internal enum class FileKind {
-    IMAGE, TEXT;
+    IMAGE, VIDEO, AUDIO, TEXT;
 
     companion object {
         private val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+        private val VIDEOS = setOf("mp4", "webm", "mkv", "mov", "m4v")
+        private val AUDIO_FILES = setOf("mp3", "ogg", "wav", "m4a")
 
         fun of(name: String): FileKind = when (name.substringAfterLast('.', "").lowercase()) {
             in IMAGES -> IMAGE
+            in VIDEOS -> VIDEO
+            in AUDIO_FILES -> AUDIO
             else -> TEXT
         }
     }
@@ -51,6 +55,8 @@ internal fun typeLabel(name: String, kind: FileKind): String {
     val ext = name.substringAfterLast('.', "").lowercase()
     return when {
         kind == FileKind.IMAGE -> "${if (ext == "jpg") "JPEG" else ext.uppercase()} image"
+        kind == FileKind.VIDEO -> "${ext.uppercase()} video"
+        kind == FileKind.AUDIO -> "${ext.uppercase()} audio"
         ext == "md" || ext == "markdown" -> "Markdown"
         ext == "txt" || ext.isEmpty() -> "Text"
         else -> "${ext.uppercase()} file"
