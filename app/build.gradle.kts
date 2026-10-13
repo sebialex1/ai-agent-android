@@ -36,6 +36,7 @@ android {
     }
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        jniLibs { pickFirsts += "**/liblitertlm_jni.so" }
     }
     lint {
         abortOnError = false
@@ -47,6 +48,10 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+        // LiteRT-LM (and the kotlin-stdlib/kotlin-reflect it pulls in) is built with a newer
+        // Kotlin than this project. Its metadata is read fine with this flag, exactly as Google's
+        // own AI Edge Gallery app does with the same library version.
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
 }
 
@@ -65,6 +70,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.litertlm.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }

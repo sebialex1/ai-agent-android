@@ -38,6 +38,14 @@
         android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Agent">
+        <!-- On-device models run on the GPU through OpenCL. Both libraries are optional so the
+             app still installs on phones without them; the model then falls back to the CPU. -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libvndksupport.so"
+            android:required="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
