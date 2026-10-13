@@ -5,6 +5,7 @@ import android.content.Intent
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -41,9 +42,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -254,22 +262,19 @@ private fun ConversationRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-            when {
-                running -> RunningDot()
-                item.pinned -> AppIcon(R.drawable.ic_pin, null, tint = Palette.IconMuted, size = 17.dp)
-                else -> AppIcon(R.drawable.ic_check, null, tint = Palette.IconMuted, size = 17.dp)
-            }
+            AppIcon(if (item.pinned) R.drawable.ic_pin else R.drawable.ic_check, null, tint = Palette.IconMuted, size = 17.dp)
         }
         Spacer(Modifier.width(14.dp))
+        // A chat that is still generating gets a soft moving shimmer on its title (no dot, no label).
         FadingText(
             item.title.ifBlank { "Untitled" },
             MaterialTheme.typography.bodyMedium,
             Palette.TextPrimary,
-            Modifier.weight(1f),
+            if (running) Modifier.weight(1f).processingShimmer() else Modifier.weight(1f),
         )
         Spacer(Modifier.width(10.dp))
         Text(
-            if (running) "Working" else relativeTime(item.updatedAt),
+            relativeTime(item.updatedAt),
             style = MaterialTheme.typography.labelSmall,
             color = Palette.TextTertiary,
             maxLines = 1,
@@ -278,12 +283,44 @@ private fun ConversationRow(
     }
 }
 
+/**
+ * Title shimmer for a conversation that is generating: the glyphs are recolored (SrcIn on an
+ * offscreen layer) with a gray gradient whose lighter band drifts slowly from left to right.
+ * Gray enough to read as "busy", light enough to stay legible. Only used in this list.
+ */
 @Composable
-private fun RunningDot() {
-    val t = rememberInfiniteTransition(label = "running")
-    val a by t.animateFloat(0.35f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "dot")
-    Box(Modifier.size(7.dp).alpha(a).clip(CircleShape).background(Palette.TextSecondary))
+private fun Modifier.processingShimmer(): Modifier {
+    val t = rememberInfiniteTransition(label = "processing")
+    val progress by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
+        label = "shimmer",
+    )
+    return this
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            val band = (size.width * 0.55f).coerceAtLeast(80.dp.toPx())
+            // Read in the draw phase only, so the animation never recomposes the row.
+            val x = -band + (size.width + band * 2f) * progress
+            drawRect(
+                brush = Brush.linearGradient(
+                    0f to ShimmerBase,
+                    0.5f to ShimmerPeak,
+                    1f to ShimmerBase,
+                    start = Offset(x, 0f),
+                    end = Offset(x + band, 0f),
+                    tileMode = TileMode.Clamp,
+                ),
+                blendMode = BlendMode.SrcIn,
+            )
+        }
 }
+
+/** Resting gray of a busy title, and the lighter band that moves across it. */
+private val ShimmerBase = Color(0xFF8C877F)
+private val ShimmerPeak = Color(0xFFE6E1DA)
 
 private fun relativeTime(at: Long): String {
     val age = (System.currentTimeMillis() - at).coerceAtLeast(0)
