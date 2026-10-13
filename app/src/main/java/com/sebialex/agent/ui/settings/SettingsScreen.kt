@@ -192,6 +192,7 @@ fun SettingsScreen(
     if (picking) {
         ModelPickerSheet(
             settings = settings,
+            models = models,
             ollama = ollama,
             store = modelStore,
             engine = localEngine,

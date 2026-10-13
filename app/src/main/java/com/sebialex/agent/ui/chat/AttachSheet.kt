@@ -38,6 +38,12 @@ import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningRules
 import com.sebialex.agent.data.secure.SecureSettings
+import com.sebialex.agent.data.llm.OllamaCloud
+import com.sebialex.agent.data.local.LocalEngine
+import com.sebialex.agent.data.local.ModelStore
+import com.sebialex.agent.ui.components.AppSheet
+import com.sebialex.agent.ui.components.SheetOption
+import com.sebialex.agent.ui.settings.ModelList
 import com.sebialex.agent.ui.settings.modelName
 import com.sebialex.agent.ui.settings.sourceLine
 import com.sebialex.agent.ui.components.AppIcon
@@ -48,46 +54,58 @@ import com.sebialex.agent.ui.theme.softSurface
 enum class AttachSource { CAMERA, PHOTOS, FILES }
 
 /**
- * The "+" sheet, modelled on Claude mobile's attachment flow: three large tiles for camera,
- * photos and files across the top, then quick toggles for the next message (thinking).
- * Nothing opens until the user picks a tile.
+ * The "+" sheet: camera, photos and files tiles, then the model for this chat (one quiet row
+ * that opens a clean searchable list in place) and the thinking switch for that model.
+ * Per-conversation options such as memory of past chats live in the chat's options sheet.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttachSheet(
     settings: SecureSettings,
     models: OpenRouterModels,
-    /** The open conversation; memory of past chats is switched per conversation. */
-    sessionId: String,
+    ollama: OllamaCloud,
+    store: ModelStore,
+    engine: LocalEngine,
     onPick: (AttachSource) -> Unit,
+    onOpenOnDevice: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Palette.Surface,
-        scrimColor = Palette.Ink.copy(alpha = 0.6f),
-        dragHandle = {
-            Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(width = 32.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.SurfaceHighest))
-            }
-        },
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    var choosingModel by remember { mutableStateOf(false) }
+    AppSheet(onDismiss = onDismiss, title = if (choosingModel) "Model" else null) {
+        if (choosingModel) {
+            ModelList(
+                settings = settings,
+                models = models,
+                ollama = ollama,
+                store = store,
+                engine = engine,
+                onPicked = { choosingModel = false },
+                onOpenOnDevice = { onDismiss(); onOpenOnDevice() },
+                maxHeight = 460.dp,
+            )
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 AttachTile(R.drawable.ic_camera, "Camera", Modifier.weight(1f)) { onPick(AttachSource.CAMERA) }
                 AttachTile(R.drawable.ic_image, "Photos", Modifier.weight(1f)) { onPick(AttachSource.PHOTOS) }
                 AttachTile(R.drawable.ic_file, "Files", Modifier.weight(1f)) { onPick(AttachSource.FILES) }
             }
+            Spacer(Modifier.height(10.dp))
+            ModelRow(settings, onClick = { choosingModel = true })
             ThinkingToggle(settings, models)
         }
+    }
+}
+
+/** Current model and where it runs; tapping opens the list inside the same sheet. */
+@Composable
+private fun ModelRow(settings: SecureSettings, onClick: () -> Unit) {
+    val snap by settings.state.collectAsStateWithLifecycle()
+    SheetOption(
+        icon = R.drawable.ic_code,
+        title = modelName(snap.model),
+        subtitle = sourceLine(snap.model, snap.localBackend),
+        onClick = onClick,
+    ) {
+        AppIcon(R.drawable.ic_chevron_right, "Choose model", tint = Palette.IconMuted, size = 16.dp)
     }
 }
 
@@ -141,7 +159,7 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .clickable(enabled = enabled) { settings.setReasoningEnabled(snap.model, !on) }
-            .padding(horizontal = 6.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(R.drawable.ic_lightbulb, null, tint = Palette.IconMuted, size = 20.dp)

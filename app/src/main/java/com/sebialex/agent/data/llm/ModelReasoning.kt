@@ -160,6 +160,19 @@ object ReasoningRules {
     }
 }
 
+/** One model of the live OpenRouter catalog, for the model picker. */
+data class CatalogModel(
+    val id: String,
+    /** Display name without the "Provider: " prefix, e.g. "Claude Sonnet 4.5". */
+    val name: String,
+    /** Provider part of the name or id, e.g. "Anthropic". */
+    val vendor: String,
+    val contextLength: Long?,
+    val thinking: Boolean,
+    val tools: Boolean,
+    val free: Boolean,
+)
+
 /**
  * Live model metadata from OpenRouter (`GET /api/v1/models`). The list is cached briefly so each
  * chat request reads current metadata without refetching the whole catalog every tool step.
@@ -177,7 +190,14 @@ class OpenRouterModels(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val lock = Mutex()
     private var cache: Map<String, ModelReasoning> = emptyMap()
+    private var listed: List<CatalogModel> = emptyList()
     private var fetchedAt = 0L
+
+    /** The live OpenRouter model list (public endpoint, cached like the reasoning metadata). */
+    suspend fun list(refresh: Boolean = false): List<CatalogModel> {
+        catalog(refresh)
+        return lock.withLock { listed }
+    }
 
     /** Reasoning metadata for [model]. Unknown models and routers come back as unsupported. */
     suspend fun reasoning(model: String, refresh: Boolean = false): ModelReasoning {
@@ -189,13 +209,14 @@ class OpenRouterModels(
     private suspend fun catalog(refresh: Boolean): Map<String, ModelReasoning> = lock.withLock {
         val fresh = System.currentTimeMillis() - fetchedAt < ttlMs
         if (!refresh && fresh && cache.isNotEmpty()) return@withLock cache
-        val parsed = withContext(Dispatchers.IO) { fetch() }
+        val (parsed, models) = withContext(Dispatchers.IO) { fetch() }
         cache = parsed
+        listed = models
         fetchedAt = System.currentTimeMillis()
         parsed
     }
 
-    private fun fetch(): Map<String, ModelReasoning> {
+    private fun fetch(): Pair<Map<String, ModelReasoning>, List<CatalogModel>> {
         val conn = URL(endpoint).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "GET"
@@ -209,13 +230,31 @@ class OpenRouterModels(
             val data = json.parseToJsonElement(text).jsonObject["data"] as? JsonArray
                 ?: throw IOException("the model list had no data")
             val out = HashMap<String, ModelReasoning>(data.size * 2)
+            val models = ArrayList<CatalogModel>(data.size)
             data.forEach { el ->
                 val entry = el as? JsonObject ?: return@forEach
                 val info = ModelReasoning.parse(entry)
                 if (info.modelId.isNotEmpty()) out[info.modelId] = info
                 (entry["canonical_slug"] as? JsonPrimitive)?.content?.let { slug -> out.putIfAbsent(slug, info) }
+                if (info.modelId.isNotEmpty()) {
+                    val full = (entry["name"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: info.modelId
+                    val vendor = full.substringBefore(": ", "").ifBlank { info.modelId.substringBefore('/').replaceFirstChar { it.uppercase() } }
+                    val params = (entry["supported_parameters"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }.toSet()
+                    val pricing = entry["pricing"] as? JsonObject
+                    val free = info.modelId.endsWith(":free") ||
+                        listOf("prompt", "completion").all { k -> (pricing?.get(k) as? JsonPrimitive)?.content?.toDoubleOrNull() == 0.0 }
+                    models += CatalogModel(
+                        id = info.modelId,
+                        name = full.substringAfter(": ", full),
+                        vendor = vendor,
+                        contextLength = (entry["context_length"] as? JsonPrimitive)?.content?.toLongOrNull(),
+                        thinking = info.supported,
+                        tools = "tools" in params,
+                        free = free,
+                    )
+                }
             }
-            return out
+            return out to models.sortedWith(compareBy({ it.vendor.lowercase() }, { it.name.lowercase() }))
         } finally {
             conn.disconnect()
         }

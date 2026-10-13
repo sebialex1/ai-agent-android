@@ -50,6 +50,10 @@ fun ChatScreen(
     onOpenWorkspace: () -> Unit,
     settings: SecureSettings,
     models: OpenRouterModels,
+    ollama: com.sebialex.agent.data.llm.OllamaCloud,
+    store: com.sebialex.agent.data.local.ModelStore,
+    engine: com.sebialex.agent.data.local.LocalEngine,
+    onOpenOnDevice: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -204,8 +208,11 @@ fun ChatScreen(
         AttachSheet(
             settings = settings,
             models = models,
-            sessionId = state.session.id,
+            ollama = ollama,
+            store = store,
+            engine = engine,
             onPick = { attachMenu = false; openPicker(it) },
+            onOpenOnDevice = onOpenOnDevice,
             onDismiss = { attachMenu = false },
         )
     }

@@ -105,6 +105,10 @@ fun AppRoot(container: AppContainer) {
                     onOpenWorkspace = { push(Screen.Workspace) },
                     settings = container.settings,
                     models = container.models,
+                    ollama = container.ollama,
+                    store = container.modelStore,
+                    engine = container.localEngine,
+                    onOpenOnDevice = { push(Screen.Settings) },
                 )
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
                 Screen.Settings -> SettingsScreen(

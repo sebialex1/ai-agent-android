@@ -1,5 +1,6 @@
 package com.sebialex.agent.ui.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,20 +9,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,21 +28,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.R
+import com.sebialex.agent.data.llm.CatalogModel
 import com.sebialex.agent.data.llm.OllamaCloud
 import com.sebialex.agent.data.llm.OllamaModel
+import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModels
 import com.sebialex.agent.data.local.ModelStatus
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
+import com.sebialex.agent.ui.components.AppSheet
+import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
@@ -101,208 +100,255 @@ internal fun ModelPickerRow(model: String, backend: String, onClick: () -> Unit)
     }
 }
 
-private sealed interface OllamaList {
-    data object Loading : OllamaList
-    data class Ready(val models: List<OllamaModel>) : OllamaList
-    data class Failed(val message: String) : OllamaList
+private sealed interface Listing<out T> {
+    data object Loading : Listing<Nothing>
+    data class Ready<T>(val items: List<T>) : Listing<T>
+    data class Failed(val message: String) : Listing<Nothing>
 }
 
+/** True when the provider returned no usable list, so typing an id is the only way in. */
+private fun Listing<*>.needsManualInput(): Boolean = this is Listing.Failed || (this is Listing.Ready<*> && items.isEmpty())
+
 /**
- * Model picker grouped by source with a segmented switch (OpenRouter / Ollama Cloud / On this
- * phone), so the three never mix in one long list. Picking a cloud model frees the on-device
- * model's memory; picking an on-device model starts loading it right away.
+ * The model picker as a standalone sheet (Settings > Models). The "+" sheet in the chat embeds
+ * the same [ModelList].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ModelPickerSheet(
+fun ModelPickerSheet(
     settings: SecureSettings,
+    models: OpenRouterModels,
     ollama: OllamaCloud,
     store: ModelStore,
     engine: LocalEngine,
     onOpenOnDevice: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val snap by settings.state.collectAsStateWithLifecycle()
-    var source by remember { mutableStateOf(ModelSource.of(snap.model)) }
-    fun pickCloud(id: String) {
-        settings.setModel(id)
-        engine.unloadAsync()
-        onDismiss()
-    }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Palette.Surface,
-        scrimColor = Palette.Ink.copy(alpha = 0.6f),
-        dragHandle = {
-            Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(width = 32.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.SurfaceHighest))
-            }
-        },
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("Choose a model", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(horizontal = 4.dp))
-            SegmentedText(
-                options = ModelSource.entries,
-                selected = source,
-                label = { it.label },
-                onSelect = { source = it },
-                modifier = Modifier.fillMaxWidth(),
-                fill = true,
-            )
-            Column(
-                Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                when (source) {
-                    ModelSource.OPENROUTER -> OpenRouterSection(snap, onPick = ::pickCloud)
-                    ModelSource.OLLAMA -> OllamaSection(snap, ollama, onPick = ::pickCloud, onSaveCustom = settings::setOllamaCustomModel)
-                    ModelSource.DEVICE -> DeviceSection(
-                        snap = snap,
-                        store = store,
-                        onPick = { m ->
-                            settings.setModel(m.id)
-                            engine.preload(m)
-                            onDismiss()
-                        },
-                        onOpenOnDevice = { onDismiss(); onOpenOnDevice() },
-                    )
-                }
-            }
-        }
+    AppSheet(onDismiss = onDismiss, title = "Model") {
+        ModelList(settings, models, ollama, store, engine, onPicked = onDismiss, onOpenOnDevice = { onDismiss(); onOpenOnDevice() })
     }
 }
 
+/**
+ * One clean, searchable list of every model that can answer right now: downloaded on-device
+ * models, then Ollama Cloud and OpenRouter, each pulled live from the provider (`/api/tags`,
+ * `/api/v1/models`). Providers are quiet section labels, not pill buttons. A manual model-id
+ * field only appears for a provider whose live list failed or came back empty.
+ */
 @Composable
-private fun OpenRouterSection(snap: SecureSettings.Snapshot, onPick: (String) -> Unit) {
-    if (!snap.hasOpenRouterKey) EmptyNote("Add your OpenRouter API key in General to use these models.")
-    val suggestions = listOf(SecureSettings.DEFAULT_MODEL, snap.remoteModel).distinct()
-    suggestions.forEach { id ->
-        PickRow(
-            title = id,
-            subtitle = if (id == SecureSettings.DEFAULT_MODEL) "Picks a suitable model per request" else "Last used",
-            selected = snap.model == id,
-            onClick = { onPick(id) },
-        )
-    }
-    Spacer(Modifier.size(6.dp))
-    ModelIdField(
-        placeholder = "Any OpenRouter model id, e.g. anthropic/claude-sonnet-4.5",
-        onSubmit = { id -> if (id.isNotBlank() && !LocalModels.isLocal(id) && !OllamaCloud.isOllama(id)) onPick(id) },
-    )
-}
-
-@Composable
-private fun OllamaSection(
-    snap: SecureSettings.Snapshot,
+fun ModelList(
+    settings: SecureSettings,
+    models: OpenRouterModels,
     ollama: OllamaCloud,
-    onPick: (String) -> Unit,
-    onSaveCustom: (String) -> Unit,
+    store: ModelStore,
+    engine: LocalEngine,
+    onPicked: () -> Unit,
+    onOpenOnDevice: () -> Unit,
+    maxHeight: androidx.compose.ui.unit.Dp = 520.dp,
 ) {
-    if (!snap.hasOllamaKey) {
-        EmptyNote("Add your Ollama Cloud API key in General to use these models. Keys are created at ollama.com/settings/keys.")
-    }
-    // A hand-typed model id always works, even when the live list fails, is empty or misses it.
-    val custom = snap.ollamaCustomModel.takeIf { it.isNotBlank() }?.let { OllamaCloud.PREFIX + it }
-    if (custom != null) {
-        PickRow(
-            title = OllamaCloud.wireName(custom),
-            subtitle = "Custom model ID",
-            selected = snap.model == custom,
-            onClick = { onPick(custom) },
-        )
-    }
-    ModelIdField(
-        placeholder = "Custom model ID, e.g. gpt-oss:120b",
-        initial = snap.ollamaCustomModel,
-        onSubmit = { raw ->
-            val name = OllamaCloud.normalizeName(raw)
-            onSaveCustom(name)
-            if (name.isNotEmpty()) onPick(OllamaCloud.PREFIX + name)
-        },
-    )
-    Text(
-        "Use the exact name from ollama.com (without the -cloud suffix). Leave empty to use only the list below.",
-        style = MaterialTheme.typography.labelSmall,
-        color = Palette.TextTertiary,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-    )
-    if (!snap.hasOllamaKey) return
-
+    val snap by settings.state.collectAsStateWithLifecycle()
+    val statuses by store.statuses.collectAsStateWithLifecycle()
+    val imported by store.imported.collectAsStateWithLifecycle()
+    var query by remember { mutableStateOf("") }
     var attempt by remember { mutableIntStateOf(0) }
-    var list by remember { mutableStateOf<OllamaList>(OllamaList.Loading) }
-    var filter by remember { mutableStateOf("") }
-    LaunchedEffect(attempt, snap.ollamaHint) {
-        list = OllamaList.Loading
-        list = try {
-            OllamaList.Ready(ollama.models(refresh = attempt > 0))
+    var router by remember { mutableStateOf<Listing<CatalogModel>>(Listing.Loading) }
+    var hosted by remember { mutableStateOf<Listing<OllamaModel>>(Listing.Loading) }
+
+    LaunchedEffect(attempt, snap.hasOpenRouterKey) {
+        if (!snap.hasOpenRouterKey) return@LaunchedEffect
+        router = Listing.Loading
+        router = try {
+            Listing.Ready(models.list(refresh = attempt > 0))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            OllamaList.Failed(e.message ?: e.javaClass.simpleName)
+            Listing.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
-    when (val l = list) {
-        OllamaList.Loading -> EmptyNote("Loading Ollama Cloud models\u2026")
-        is OllamaList.Failed -> {
-            EmptyNote("Could not load the model list: ${l.message}. You can still enter a model ID above.")
-            PickRow(title = "Try again", subtitle = null, selected = false, onClick = { attempt++ })
+    LaunchedEffect(attempt, snap.ollamaHint) {
+        if (!snap.hasOllamaKey) return@LaunchedEffect
+        hosted = Listing.Loading
+        hosted = try {
+            Listing.Ready(ollama.models(refresh = attempt > 0))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Listing.Failed(e.message ?: e.javaClass.simpleName)
         }
-        is OllamaList.Ready -> {
-            if (l.models.isEmpty()) EmptyNote("The list came back empty. Enter a model ID above.")
-            // The last used model stays reachable even when the list does not include it.
-            val last = snap.ollamaModel.takeIf { it.isNotEmpty() && it != custom && l.models.none { m -> m.id == it } }
-            if (last != null) PickRow(title = OllamaCloud.wireName(last), subtitle = "Last used", selected = snap.model == last, onClick = { onPick(last) })
-            if (l.models.size > 8) {
-                ModelIdField(placeholder = "Filter models", onSubmit = {}, onChange = { filter = it }, submit = false)
-                Spacer(Modifier.size(4.dp))
+    }
+
+    fun pickCloud(id: String) {
+        settings.setModel(id)
+        engine.unloadAsync()
+        onPicked()
+    }
+    val q = query.trim()
+    fun matches(vararg texts: String) = q.isEmpty() || texts.any { it.contains(q, ignoreCase = true) }
+
+    val device = (LocalModels.catalog + imported).filter { statuses[it.id] is ModelStatus.Ready && matches(it.name, it.id) }
+    val routerItems = (router as? Listing.Ready)?.items.orEmpty()
+    val hostedItems = (hosted as? Listing.Ready)?.items.orEmpty()
+    val total = device.size + routerItems.size + hostedItems.size
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (total > 8) SearchField(query, { query = it })
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+            // ---- On this phone: only models that are ready to run.
+            item(key = "h:device") { Header("On this phone", action = "Manage", onAction = onOpenOnDevice) }
+            if (device.isEmpty() && q.isEmpty()) item(key = "device:none") {
+                Note("No downloaded models. Get Gemma 4 and others under Manage.")
             }
-            l.models.filter { filter.isBlank() || it.name.contains(filter, ignoreCase = true) }.forEach { m ->
+            items(device, key = { "d:" + it.id }) { m ->
                 PickRow(
                     title = m.name,
-                    subtitle = if (snap.ollamaModel == m.id && snap.model != m.id) "Last used" else null,
+                    subtitle = listOfNotNull(
+                        if (snap.localBackend == SecureSettings.BACKEND_CPU) "CPU" else "GPU",
+                        if (m.thinking) "thinking" else null,
+                    ).joinToString(" \u00b7 "),
                     selected = snap.model == m.id,
-                    onClick = { onPick(m.id) },
+                    onClick = { settings.setModel(m.id); engine.preload(m); onPicked() },
                 )
             }
+
+            // ---- Ollama Cloud
+            if (snap.hasOllamaKey) {
+                item(key = "h:ollama") { Header("Ollama Cloud") }
+                val custom = snap.ollamaCustomModel.takeIf { it.isNotBlank() }?.let { OllamaCloud.PREFIX + it }
+                val extra = listOfNotNull(custom, snap.ollamaModel.takeIf { it.isNotEmpty() })
+                    .distinct().filter { id -> hostedItems.none { it.id == id } && matches(id) }
+                items(extra, key = { "ox:$it" }) { id ->
+                    PickRow(OllamaCloud.wireName(id), if (id == custom) "Custom model ID" else "Last used", snap.model == id, onClick = { pickCloud(id) })
+                }
+                when (val l = hosted) {
+                    Listing.Loading -> item(key = "o:loading") { Note("Loading models\u2026") }
+                    is Listing.Failed -> item(key = "o:failed") { Retry("Could not load the list: ${l.message}") { attempt++ } }
+                    is Listing.Ready -> items(l.items.filter { matches(it.name) }, key = { "o:" + it.id }) { m ->
+                        PickRow(
+                            title = m.name,
+                            subtitle = if (OllamaCloud.knownThinking(m.name) || OllamaCloud.alwaysThinking(m.name)) "thinking" else null,
+                            selected = snap.model == m.id,
+                            onClick = { pickCloud(m.id) },
+                        )
+                    }
+                }
+                if (hosted.needsManualInput()) item(key = "o:manual") {
+                    ModelIdField(
+                        placeholder = "Model name, e.g. gemma4:31b",
+                        initial = snap.ollamaCustomModel,
+                        onSubmit = { raw ->
+                            val name = OllamaCloud.normalizeName(raw)
+                            settings.setOllamaCustomModel(name)
+                            if (name.isNotEmpty()) pickCloud(OllamaCloud.PREFIX + name)
+                        },
+                    )
+                }
+            }
+
+            // ---- OpenRouter
+            if (snap.hasOpenRouterKey) {
+                item(key = "h:openrouter") { Header("OpenRouter") }
+                val pinnedIds = listOf(SecureSettings.DEFAULT_MODEL, snap.remoteModel).distinct()
+                    .filter { id -> routerItems.none { it.id == id } && matches(id, "auto") }
+                items(pinnedIds, key = { "rx:$it" }) { id ->
+                    PickRow(
+                        title = if (id == SecureSettings.DEFAULT_MODEL) "Auto" else id,
+                        subtitle = if (id == SecureSettings.DEFAULT_MODEL) "Picks a suitable model per request" else "Last used",
+                        selected = snap.model == id,
+                        onClick = { pickCloud(id) },
+                    )
+                }
+                when (val l = router) {
+                    Listing.Loading -> item(key = "r:loading") { Note("Loading models\u2026") }
+                    is Listing.Failed -> item(key = "r:failed") { Retry("Could not load the list: ${l.message}") { attempt++ } }
+                    is Listing.Ready -> items(l.items.filter { matches(it.name, it.id, it.vendor) }, key = { "r:" + it.id }) { m ->
+                        PickRow(
+                            title = m.name,
+                            subtitle = listOfNotNull(
+                                m.vendor.takeIf { it.isNotBlank() },
+                                m.contextLength?.let { formatContext(it) },
+                                if (m.thinking) "thinking" else null,
+                                if (m.free) "free" else null,
+                            ).joinToString(" \u00b7 "),
+                            selected = snap.model == m.id,
+                            onClick = { pickCloud(m.id) },
+                        )
+                    }
+                }
+                if (router.needsManualInput()) item(key = "r:manual") {
+                    ModelIdField(
+                        placeholder = "Model id, e.g. anthropic/claude-sonnet-4.5",
+                        onSubmit = { id -> if (id.isNotBlank() && !LocalModels.isLocal(id) && !OllamaCloud.isOllama(id)) pickCloud(id) },
+                    )
+                }
+            }
+
+            if (!snap.hasOpenRouterKey && !snap.hasOllamaKey) item(key = "nokeys") {
+                Note("Add an OpenRouter or Ollama Cloud API key in Settings \u203a Models to use cloud models.")
+            }
+            if (q.isNotEmpty() && total == 0) item(key = "nomatch") { Note("No models match \u201c$q\u201d") }
         }
     }
 }
 
+private fun formatContext(tokens: Long): String = when {
+    tokens >= 1_000_000 -> "${tokens / 1_000_000}M ctx"
+    tokens >= 1_000 -> "${tokens / 1_000}K ctx"
+    else -> "$tokens ctx"
+}
+
 @Composable
-private fun DeviceSection(
-    snap: SecureSettings.Snapshot,
-    store: ModelStore,
-    onPick: (com.sebialex.agent.data.local.LocalModel) -> Unit,
-    onOpenOnDevice: () -> Unit,
-) {
-    val statuses by store.statuses.collectAsStateWithLifecycle()
-    val imported by store.imported.collectAsStateWithLifecycle()
-    (LocalModels.catalog + imported).forEach { m ->
-        val status = statuses[m.id] ?: ModelStatus.Missing
-        val ready = status is ModelStatus.Ready
-        PickRow(
-            title = m.name,
-            subtitle = when (status) {
-                is ModelStatus.Ready -> "Downloaded \u00b7 runs on the ${if (snap.localBackend == SecureSettings.BACKEND_CPU) "CPU" else "GPU"}"
-                is ModelStatus.Downloading -> "Downloading \u00b7 ${(status.fraction * 100).toInt()}%"
-                is ModelStatus.Importing -> if (status.moving) "Moving to Downloads\u2026" else "Importing\u2026"
-                is ModelStatus.Failed -> "Download failed \u00b7 open the On-device tab"
-                ModelStatus.Missing -> "Not downloaded \u00b7 ${LocalModels.formatSize(m.sizeBytes)} \u00b7 get it in the On-device tab"
-            },
-            selected = snap.model == m.id,
-            enabled = ready,
-            onClick = { if (ready) onPick(m) else onOpenOnDevice() },
+private fun Header(text: String, action: String? = null, onAction: () -> Unit = {}) {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.weight(1f))
+        if (action != null) Text(
+            action,
+            style = MaterialTheme.typography.labelMedium,
+            color = Palette.TextSecondary,
+            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onAction).padding(horizontal = 10.dp, vertical = 4.dp),
         )
     }
-    PickRow(title = "Manage on-device models", subtitle = "Download, import, accelerator and memory", selected = false, onClick = onOpenOnDevice)
+}
+
+@Composable
+private fun Note(text: String) {
+    Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+}
+
+@Composable
+private fun Retry(text: String, onRetry: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.weight(1f).padding(vertical = 8.dp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+        QuietIconButton(R.drawable.ic_refresh, "Try again", onClick = onRetry, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
+    }
+}
+
+@Composable
+private fun SearchField(value: String, onChange: (String) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
+            .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 2.dp)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(R.drawable.ic_search, null, tint = Palette.IconMuted, size = 18.dp)
+        Spacer(Modifier.width(10.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.TextPrimary),
+            cursorBrush = SolidColor(Palette.TextPrimary),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, autoCorrectEnabled = false),
+            modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+            decorationBox = { inner ->
+                if (value.isEmpty()) Text("Search models", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
+                inner()
+            },
+        )
+        if (value.isNotEmpty()) QuietIconButton(R.drawable.ic_close, "Clear", onClick = { onChange("") }, tint = Palette.IconMuted, size = 36.dp, iconSize = 16.dp)
+    }
 }
 
 @Composable
@@ -312,7 +358,7 @@ private fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(if (selected) Palette.SurfaceHigh else Palette.Surface)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -324,7 +370,7 @@ private fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 2)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (selected) {
             Spacer(Modifier.width(8.dp))
@@ -334,45 +380,45 @@ private fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick
 }
 
 @Composable
-private fun EmptyNote(text: String) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-}
-
-@Composable
 private fun ModelIdField(
     placeholder: String,
     onSubmit: (String) -> Unit,
-    onChange: (String) -> Unit = {},
-    submit: Boolean = true,
     initial: String = "",
 ) {
     var draft by remember(initial) { mutableStateOf(initial) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
-            .heightIn(min = 48.dp)
-            .padding(start = 14.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
-            BasicTextField(
-                value = draft,
-                onValueChange = { draft = it.trim(); onChange(draft) },
-                singleLine = true,
-                textStyle = MonoSmall.copy(color = Palette.TextPrimary),
-                cursorBrush = SolidColor(Palette.TextPrimary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, autoCorrectEnabled = false),
-                modifier = Modifier.fillMaxWidth(),
-                decorationBox = { inner ->
-                    if (draft.isEmpty()) Text(placeholder, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    inner()
-                },
-            )
-        }
-        // A prefilled value can be cleared and saved empty, which removes it.
-        if (submit && (draft.isNotEmpty() || initial.isNotEmpty()) && draft != initial) {
-            com.sebialex.agent.ui.components.QuietIconButton(R.drawable.ic_check, "Use $draft", onClick = { onSubmit(draft) })
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
+        Text(
+            "No models were listed. Enter one by hand:",
+            style = MaterialTheme.typography.labelSmall,
+            color = Palette.TextTertiary,
+            modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
+                .heightIn(min = 48.dp)
+                .padding(start = 14.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
+                BasicTextField(
+                    value = draft,
+                    onValueChange = { draft = it.trim() },
+                    singleLine = true,
+                    textStyle = MonoSmall.copy(color = Palette.TextPrimary),
+                    cursorBrush = SolidColor(Palette.TextPrimary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, autoCorrectEnabled = false),
+                    modifier = Modifier.fillMaxWidth(),
+                    decorationBox = { inner ->
+                        if (draft.isEmpty()) Text(placeholder, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        inner()
+                    },
+                )
+            }
+            if ((draft.isNotEmpty() || initial.isNotEmpty()) && draft != initial) {
+                QuietIconButton(R.drawable.ic_check, "Use $draft", onClick = { onSubmit(draft) })
+            }
         }
     }
 }
