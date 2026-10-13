@@ -4,6 +4,7 @@ import com.sebialex.agent.domain.agent.AgentBrain
 import com.sebialex.agent.domain.agent.BrainContext
 import com.sebialex.agent.domain.agent.BrainDecision
 import com.sebialex.agent.domain.agent.Observation
+import com.sebialex.agent.domain.agent.Thought
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.ToolCall
@@ -41,17 +42,32 @@ class OpenRouterBrain(
     private val apiKey: String,
     private val model: String,
     private val endpoint: String = "https://openrouter.ai/api/v1/chat/completions",
+    /**
+     * Reasoning fields for this request (`reasoning`, `reasoning_effort` or `include_reasoning`),
+     * built from the model's live metadata and the user's per-model setting. Empty when the
+     * model has no controllable reasoning.
+     */
+    private val reasoningFields: suspend () -> JsonObject = { JsonObject(emptyMap()) },
 ) : AgentBrain {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     override suspend fun next(ctx: BrainContext): BrainDecision = withContext(Dispatchers.IO) {
+        // A metadata failure must never block the chat: send no reasoning fields in that case.
+        val reasoning = try {
+            reasoningFields()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            JsonObject(emptyMap())
+        }
         val body = buildJsonObject {
             put("model", model)
             put("messages", messages(ctx))
             put("tools", TOOLS)
             put("tool_choice", "auto")
             put("parallel_tool_calls", true)
+            reasoning.forEach { (k, v) -> put(k, v) }
         }.toString()
         val root = json.parseToJsonElement(post(body)).jsonObject
         (root["error"] as? JsonObject)?.let { err ->
@@ -65,14 +81,35 @@ class OpenRouterBrain(
             val o = el as? JsonObject ?: return@mapIndexedNotNull null
             parseCall(o, fallbackId = "call_${ctx.observations.size + i + 1}")
         }
-        if (calls.isNotEmpty()) return@withContext BrainDecision.Act(calls)
+        val thought = thoughtOf(message)
+        if (calls.isNotEmpty()) return@withContext BrainDecision.Act(calls, thought)
 
         val text = contentText(message["content"]).trim()
         if (text.isEmpty()) {
             val reason = (choice["finish_reason"] as? JsonPrimitive)?.content
             throw IOException("the model returned an empty answer" + if (reason != null) " ($reason)" else "")
         }
-        BrainDecision.Answer(text)
+        BrainDecision.Answer(text, thought)
+    }
+
+    /**
+     * Reasoning from `message.reasoning` (or its alias `reasoning_content`); when only
+     * `reasoning_details` is present, its text and summary parts are joined. Encrypted parts
+     * have no readable text but are still kept for replay.
+     */
+    private fun thoughtOf(message: JsonObject): Thought? {
+        val details = message["reasoning_details"] as? JsonArray
+        val plain = listOf("reasoning", "reasoning_content").firstNotNullOfOrNull { k ->
+            (message[k] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        }
+        val fromDetails = details.orEmpty().mapNotNull { d ->
+            val o = d as? JsonObject ?: return@mapNotNull null
+            listOf("text", "summary").firstNotNullOfOrNull { k -> (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.content }
+        }.joinToString("\n").takeIf { it.isNotBlank() }
+        val text = (plain ?: fromDetails)?.trim().orEmpty()
+        val raw = details?.takeIf { it.isNotEmpty() }?.toString()
+        if (text.isEmpty() && raw == null) return null
+        return Thought(text, raw)
     }
 
     private fun parseCall(o: JsonObject, fallbackId: String): ToolCall {
@@ -121,13 +158,18 @@ class OpenRouterBrain(
             })
         }
         add(buildJsonObject { put("role", "user"); put("content", ctx.task) })
-        ctx.observations.groupBy { it.batch }.toSortedMap().values.forEach { group -> addBatch(group) }
+        ctx.observations.groupBy { it.batch }.toSortedMap().forEach { (batch, group) -> addBatch(group, ctx.thoughts[batch]) }
     }
 
-    private fun kotlinx.serialization.json.JsonArrayBuilder.addBatch(group: List<Observation>) {
+    private fun kotlinx.serialization.json.JsonArrayBuilder.addBatch(group: List<Observation>, thought: Thought?) {
         add(buildJsonObject {
             put("role", "assistant")
             put("content", "")
+            // Replay the model's own reasoning for this step so it keeps its chain of thought.
+            if (thought != null && thought.text.isNotBlank()) put("reasoning", thought.text)
+            thought?.details?.let { raw ->
+                runCatching { json.parseToJsonElement(raw) as? JsonArray }.getOrNull()?.let { put("reasoning_details", it) }
+            }
             putJsonArray("tool_calls") {
                 group.forEach { o ->
                     add(buildJsonObject {
@@ -154,7 +196,7 @@ class OpenRouterBrain(
 
     /** Short record of what an earlier answer actually did, so follow-ups have real context. */
     private fun actionsNote(t: com.sebialex.agent.domain.model.Turn): String {
-        val done = t.steps.filter { it.status == StepStatus.DONE && it.tool != "permission" }
+        val done = t.steps.filter { it.status == StepStatus.DONE && it.tool != "permission" && it.tool != "reasoning" }
         if (done.isEmpty() && t.attachments.isEmpty()) return ""
         val lines = done.takeLast(12).map { "- ${it.tool}: ${it.payload.take(160)}" } +
             t.attachments.map { "- file: ${it.path}" }

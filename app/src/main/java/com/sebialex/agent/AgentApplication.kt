@@ -2,6 +2,8 @@ package com.sebialex.agent
 
 import android.app.Application
 import com.sebialex.agent.data.llm.OpenRouterBrain
+import com.sebialex.agent.data.llm.OpenRouterModels
+import com.sebialex.agent.data.llm.ReasoningRules
 import com.sebialex.agent.data.persistence.FileAuditLog
 import com.sebialex.agent.data.persistence.SessionStore
 import com.sebialex.agent.data.secure.SecureSettings
@@ -33,10 +35,18 @@ class AppContainer(app: Application) {
     val policy = PermissionPolicy(askBeforeWebAccess = { settings.askBeforeWeb() })
     private val runtimes = HashMap<String, SessionRuntime>()
 
+    /** Live OpenRouter model metadata, used for per-model reasoning support. */
+    val models = OpenRouterModels(apiKey = { settings.openRouterKey() })
+
     private val brain = RoutingBrain(
         openRouterKey = { settings.openRouterKey() },
         model = { settings.model() },
-        remote = { key, model -> OpenRouterBrain(key, model) },
+        remote = { key, model ->
+            OpenRouterBrain(key, model, reasoningFields = {
+                // Read the model's live reasoning metadata before every chat request.
+                ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model))
+            })
+        },
     )
 
     @Synchronized
