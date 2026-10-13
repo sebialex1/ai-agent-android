@@ -322,10 +322,25 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
      * workspace, byte for byte (images and binaries are never re-encoded as text).
      */
     suspend fun importFile(name: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
-        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
-        val path = "imports/$safe"
+        val path = importPath(name)
         container.runtime(currentId).workspace.writeBytes(path, bytes)
         path
+    }
+
+    /**
+     * Where an import is stored: its own folder `imports/<id>/<name>`. Re-importing a file with
+     * the same name never overwrites an earlier one, so older messages keep their preview and
+     * what the agent saw; the file itself keeps the user's original (sanitized) name for display.
+     */
+    private fun importPath(name: String): String {
+        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
+        val ws = container.runtime(currentId).workspace
+        while (true) {
+            val id = java.lang.Long.toString(System.currentTimeMillis(), 36) +
+                java.lang.Long.toString((Math.random() * 1296).toLong(), 36).padStart(2, '0')
+            val path = "imports/$id/$safe"
+            if (!ws.exists(path)) return path
+        }
     }
 
     fun addPendingImport(path: String) {
@@ -345,8 +360,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Like [importFile], streaming from [input] so large videos are copied without loading them whole. */
     suspend fun importStream(name: String, input: java.io.InputStream): String = withContext(Dispatchers.IO) {
-        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
-        val path = "imports/$safe"
+        val path = importPath(name)
         container.runtime(currentId).workspace.writeStream(path, input)
         path
     }
