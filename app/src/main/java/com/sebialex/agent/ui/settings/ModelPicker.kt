@@ -163,7 +163,7 @@ internal fun ModelPickerSheet(
             ) {
                 when (source) {
                     ModelSource.OPENROUTER -> OpenRouterSection(snap, onPick = ::pickCloud)
-                    ModelSource.OLLAMA -> OllamaSection(snap, ollama, onPick = ::pickCloud)
+                    ModelSource.OLLAMA -> OllamaSection(snap, ollama, onPick = ::pickCloud, onSaveCustom = settings::setOllamaCustomModel)
                     ModelSource.DEVICE -> DeviceSection(
                         snap = snap,
                         store = store,
@@ -200,11 +200,42 @@ private fun OpenRouterSection(snap: SecureSettings.Snapshot, onPick: (String) ->
 }
 
 @Composable
-private fun OllamaSection(snap: SecureSettings.Snapshot, ollama: OllamaCloud, onPick: (String) -> Unit) {
+private fun OllamaSection(
+    snap: SecureSettings.Snapshot,
+    ollama: OllamaCloud,
+    onPick: (String) -> Unit,
+    onSaveCustom: (String) -> Unit,
+) {
     if (!snap.hasOllamaKey) {
-        EmptyNote("Add your Ollama Cloud API key in General to see its models. Keys are created at ollama.com/settings/keys.")
-        return
+        EmptyNote("Add your Ollama Cloud API key in General to use these models. Keys are created at ollama.com/settings/keys.")
     }
+    // A hand-typed model id always works, even when the live list fails, is empty or misses it.
+    val custom = snap.ollamaCustomModel.takeIf { it.isNotBlank() }?.let { OllamaCloud.PREFIX + it }
+    if (custom != null) {
+        PickRow(
+            title = OllamaCloud.wireName(custom),
+            subtitle = "Custom model ID",
+            selected = snap.model == custom,
+            onClick = { onPick(custom) },
+        )
+    }
+    ModelIdField(
+        placeholder = "Custom model ID, e.g. gpt-oss:120b",
+        initial = snap.ollamaCustomModel,
+        onSubmit = { raw ->
+            val name = OllamaCloud.normalizeName(raw)
+            onSaveCustom(name)
+            if (name.isNotEmpty()) onPick(OllamaCloud.PREFIX + name)
+        },
+    )
+    Text(
+        "Use the exact name from ollama.com (without the -cloud suffix). Leave empty to use only the list below.",
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.TextTertiary,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+    )
+    if (!snap.hasOllamaKey) return
+
     var attempt by remember { mutableIntStateOf(0) }
     var list by remember { mutableStateOf<OllamaList>(OllamaList.Loading) }
     var filter by remember { mutableStateOf("") }
@@ -221,11 +252,14 @@ private fun OllamaSection(snap: SecureSettings.Snapshot, ollama: OllamaCloud, on
     when (val l = list) {
         OllamaList.Loading -> EmptyNote("Loading Ollama Cloud models\u2026")
         is OllamaList.Failed -> {
-            EmptyNote("Could not load the model list: ${l.message}")
+            EmptyNote("Could not load the model list: ${l.message}. You can still enter a model ID above.")
             PickRow(title = "Try again", subtitle = null, selected = false, onClick = { attempt++ })
         }
         is OllamaList.Ready -> {
-            if (l.models.isEmpty()) EmptyNote("No models are available for this key.")
+            if (l.models.isEmpty()) EmptyNote("The list came back empty. Enter a model ID above.")
+            // The last used model stays reachable even when the list does not include it.
+            val last = snap.ollamaModel.takeIf { it.isNotEmpty() && it != custom && l.models.none { m -> m.id == it } }
+            if (last != null) PickRow(title = OllamaCloud.wireName(last), subtitle = "Last used", selected = snap.model == last, onClick = { onPick(last) })
             if (l.models.size > 8) {
                 ModelIdField(placeholder = "Filter models", onSubmit = {}, onChange = { filter = it }, submit = false)
                 Spacer(Modifier.size(4.dp))
@@ -305,8 +339,14 @@ private fun EmptyNote(text: String) {
 }
 
 @Composable
-private fun ModelIdField(placeholder: String, onSubmit: (String) -> Unit, onChange: (String) -> Unit = {}, submit: Boolean = true) {
-    var draft by remember { mutableStateOf("") }
+private fun ModelIdField(
+    placeholder: String,
+    onSubmit: (String) -> Unit,
+    onChange: (String) -> Unit = {},
+    submit: Boolean = true,
+    initial: String = "",
+) {
+    var draft by remember(initial) { mutableStateOf(initial) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -330,7 +370,8 @@ private fun ModelIdField(placeholder: String, onSubmit: (String) -> Unit, onChan
                 },
             )
         }
-        if (submit && draft.isNotEmpty()) {
+        // A prefilled value can be cleared and saved empty, which removes it.
+        if (submit && (draft.isNotEmpty() || initial.isNotEmpty()) && draft != initial) {
             com.sebialex.agent.ui.components.QuietIconButton(R.drawable.ic_check, "Use $draft", onClick = { onSubmit(draft) })
         }
     }

@@ -84,7 +84,14 @@ class OllamaCloud(
 
     /** Reasoning controls for an Ollama model, from its `thinking` metadata. */
     suspend fun reasoning(id: String): ModelReasoning {
-        val info = info(wireName(id))
+        // Hand-typed ids may be unknown to /api/show; they simply get no reasoning control.
+        val info = try {
+            info(wireName(id))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return ModelReasoning.unsupported(id)
+        }
         if (!info.thinking) return ModelReasoning.unsupported(id)
         val values = info.thinkingValues
         val levels = values.filter { it != "true" && it != "false" }
@@ -178,6 +185,18 @@ class OllamaCloud(
 
         /** API model name for an app model id. */
         fun wireName(model: String): String = model.removePrefix(PREFIX)
+
+        /**
+         * Cleans a model name the user typed: trims it, drops an `ollama/` prefix and the
+         * `-cloud` / `:cloud` suffix that only the local Ollama app uses (the direct cloud API
+         * takes `gpt-oss:120b`, not `gpt-oss:120b-cloud`).
+         */
+        fun normalizeName(raw: String): String {
+            var n = raw.trim().removePrefix(PREFIX).trim()
+            if (n.endsWith(":cloud")) n = n.removeSuffix(":cloud")
+            else if (n.endsWith("-cloud")) n = n.removeSuffix("-cloud")
+            return n
+        }
     }
 }
 

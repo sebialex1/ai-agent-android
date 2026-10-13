@@ -40,6 +40,8 @@ class SecureSettings(context: Context) {
         val cloudProvider: String,
         /** Last Ollama Cloud model id (with its `ollama/` prefix), empty when none was picked yet. */
         val ollamaModel: String,
+        /** Ollama model name typed by hand (no prefix), for models the live list does not show. Empty when unset. */
+        val ollamaCustomModel: String,
         val model: String,
         val askBeforeWeb: Boolean,
         /** Skip the Allow/Deny card and run risky agent actions immediately. Default off. */
@@ -63,6 +65,7 @@ class SecureSettings(context: Context) {
     fun openRouterKey(): String? = prefs.getString(KEY_OPENROUTER, null)?.takeIf { it.isNotBlank() }
     fun ollamaKey(): String? = prefs.getString(KEY_OLLAMA, null)?.takeIf { it.isNotBlank() }
     fun cloudProvider(): String = prefs.getString(KEY_PROVIDER, null)?.takeIf { it == PROVIDER_OLLAMA } ?: PROVIDER_OPENROUTER
+    fun ollamaCustomModel(): String = prefs.getString(KEY_OLLAMA_CUSTOM, null)?.trim().orEmpty()
     fun ollamaModel(): String = prefs.getString(KEY_OLLAMA_MODEL, null)?.takeIf { it.startsWith(OLLAMA_PREFIX) }.orEmpty()
     fun model(): String = prefs.getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
     fun askBeforeWeb(): Boolean = prefs.getBoolean(KEY_ASK_WEB, false)
@@ -84,6 +87,8 @@ class SecureSettings(context: Context) {
     fun setTinyFishKey(value: String?) = edit { putOrRemove(KEY_TINYFISH, value) }
     fun setOpenRouterKey(value: String?) = edit { putOrRemove(KEY_OPENROUTER, value) }
     fun setOllamaKey(value: String?) = edit { putOrRemove(KEY_OLLAMA, value) }
+    /** Stores a hand-typed Ollama model name (already normalized, no prefix); empty clears it. */
+    fun setOllamaCustomModel(value: String?) = edit { putOrRemove(KEY_OLLAMA_CUSTOM, value) }
 
     /**
      * Switches the cloud provider. When the active model belongs to the other cloud provider,
@@ -139,6 +144,7 @@ class SecureSettings(context: Context) {
         ollamaHint = hint(ollamaKey()),
         cloudProvider = cloudProvider(),
         ollamaModel = ollamaModel(),
+        ollamaCustomModel = ollamaCustomModel(),
         model = model(),
         askBeforeWeb = askBeforeWeb(),
         autoApprove = autoApprove(),
@@ -164,6 +170,7 @@ class SecureSettings(context: Context) {
         private const val KEY_OLLAMA = "ollama_api_key"
         private const val KEY_PROVIDER = "cloud_provider"
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"
+        private const val KEY_OLLAMA_CUSTOM = "ollama_model_custom"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"
