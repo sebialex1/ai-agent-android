@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -120,8 +121,14 @@ fun AssistantTurn(
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         val actions = turn.steps.filter { it.kind != StepKind.REASONING }
+        val reasoning = turn.steps.filter { it.kind == StepKind.REASONING }
         when {
-            actions.isNotEmpty() -> StepsGroup(turn.steps, actions.size, expanded, onToggle, onOpenStep)
+            // Thinking and tool calls: the tool calls keep their own group, and the model's
+            // thinking gets a separate collapsible section below it instead of being mixed in.
+            actions.isNotEmpty() -> {
+                StepsGroup(actions, actions.size, expanded, onToggle, onOpenStep)
+                reasoning.forEach { ThinkingSection(it, onOpen = { onOpenStep(it) }) }
+            }
             // Reasoning alone needs no group: the quiet thought row is the whole action list.
             turn.steps.isNotEmpty() -> turn.steps.forEach { StepRow(it, onClick = { onOpenStep(it) }) }
         }
@@ -345,6 +352,69 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(8.dp))
         AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
+    }
+}
+
+/**
+ * The model's thinking for a turn that also called tools, as its own section under the tool
+ * calls: a quiet "Thinking" / "Thought for 12s" header with a chevron. While the model is still
+ * thinking the live one-line window shows under the header; once done it is collapsed, and
+ * expanding it shows the full reasoning text (tap the text for the raw audit sheet).
+ */
+@Composable
+private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
+    val live = step.status == StepStatus.RUNNING
+    var open by androidx.compose.runtime.saveable.rememberSaveable(step.id) { androidx.compose.runtime.mutableStateOf(false) }
+    val rotation by animateFloatAsState(if (open) 90f else 0f, animationSpec = tween(180), label = "thinkingChevron")
+    val seconds = step.finishedAt?.let { ((it - step.startedAt) / 1000).coerceAtLeast(1) }
+    val label = when {
+        live -> "Thinking"
+        seconds != null -> "Thought for ${seconds}s"
+        else -> "Thought"
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { open = !open }
+                .padding(start = 2.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(R.drawable.ic_lightbulb, null, tint = Palette.TextTertiary, size = 14.dp)
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary)
+            Spacer(Modifier.width(4.dp))
+            AppIcon(R.drawable.ic_chevron_right, if (open) "Hide thinking" else "Show thinking", tint = Palette.TextTertiary, size = 15.dp, modifier = Modifier.rotate(rotation))
+        }
+        // Live and collapsed: the moving one-line window, so thinking is still visible as it streams.
+        if (live && !open) ThoughtRow(step, onOpen)
+        AnimatedVisibility(
+            visible = open,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+        ) {
+            val text = remember(step.output) { step.output.trim() }
+            Box(
+                Modifier
+                    .padding(start = 8.dp, top = 2.dp, bottom = 4.dp)
+                    .fillMaxWidth()
+                    .drawWithContent {
+                        drawContent()
+                        // A thin rule on the left marks the block as the model's own thinking.
+                        drawRect(Palette.SurfaceHighest, size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height))
+                    }
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState())
+                    .clickable(onClick = onOpen)
+                    .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            ) {
+                Text(
+                    text.ifEmpty { "\u2026" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Palette.TextTertiary,
+                )
+            }
+        }
     }
 }
 
