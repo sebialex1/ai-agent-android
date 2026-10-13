@@ -75,6 +75,15 @@ class Workspace(baseDir: File) {
         return virtualOf(f)
     }
 
+    /** Streams [input] into a workspace file (large videos never sit in memory at once). */
+    fun writeStream(path: String, input: java.io.InputStream, cwd: String = "/"): String {
+        val f = resolve(path, cwd)
+        if (f.isDirectory) throw WorkspaceException("$path: is a directory")
+        f.parentFile?.mkdirs()
+        f.outputStream().use { out -> input.copyTo(out) }
+        return virtualOf(f)
+    }
+
     fun snapshot(id: String): String? = File(snapshots, id).takeIf { it.exists() && !id.contains('/') }?.readText()
 
     fun list(path: String = "/", cwd: String = "/"): List<File> {

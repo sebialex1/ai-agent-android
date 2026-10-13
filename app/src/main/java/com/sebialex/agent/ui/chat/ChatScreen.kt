@@ -63,6 +63,9 @@ fun ChatScreen(
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
     var previewSource by remember { mutableStateOf<SourceRef?>(null) }
+    // Imported files waiting to be sent; shown as thumbnails above the input, not as @path text.
+    // Held by the view model per conversation, so opening one in the viewer keeps them.
+    val pending by vm.pendingImports.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
     fun openUrl(url: String) {
@@ -82,7 +85,7 @@ fun ChatScreen(
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { insert(it) }
     }
-    /** Copies a picked document or image into the workspace and mentions it in the input. */
+    /** Copies a picked document, photo or video into the workspace and adds it to the message. */
     fun importUri(uri: Uri, fallbackName: String) {
         scope.launch {
             val resolver = context.contentResolver
@@ -90,12 +93,18 @@ fun ChatScreen(
                 resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null
                 }
-            }.getOrNull() ?: fallbackName
-            val bytes = withContext(Dispatchers.IO) {
-                runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
-            } ?: return@launch
-            val path = vm.importFile(name, bytes)
-            insert("@$path ")
+            }.getOrNull() ?: resolver.getType(uri)?.let { type ->
+                // Media without a display name still gets a name its type can be read from.
+                when {
+                    type.startsWith("video/") -> "video_${System.currentTimeMillis()}." + (type.substringAfter('/').takeIf { it in setOf("mp4", "webm", "quicktime") }?.replace("quicktime", "mov") ?: "mp4")
+                    type.startsWith("image/") -> "image_${System.currentTimeMillis()}." + (type.substringAfter('/').replace("jpeg", "jpg").takeIf { it.length in 3..4 } ?: "jpg")
+                    else -> null
+                }
+            } ?: fallbackName
+            val path = runCatching {
+                withContext(Dispatchers.IO) { resolver.openInputStream(uri) }?.use { vm.importStream(name, it) }
+            }.getOrNull() ?: return@launch
+            vm.addPendingImport(path)
         }
     }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -110,15 +119,14 @@ fun ChatScreen(
             val bytes = withContext(Dispatchers.Default) {
                 java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray()
             }
-            val path = vm.importFile("photo_${System.currentTimeMillis()}.jpg", bytes)
-            insert("@$path ")
+            vm.addPendingImport(vm.importFile("photo_${System.currentTimeMillis()}.jpg", bytes))
         }
     }
     fun openPicker(source: AttachSource) {
         try {
             when (source) {
                 AttachSource.CAMERA -> camera.launch(null)
-                AttachSource.PHOTOS -> photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                AttachSource.PHOTOS -> photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                 AttachSource.FILES -> filePicker.launch(arrayOf("*/*"))
             }
         } catch (_: ActivityNotFoundException) {
@@ -148,7 +156,7 @@ fun ChatScreen(
         ) {
             items(turns.asReversed(), key = { it.id }) { turn ->
                 if (turn.role == Role.USER) {
-                    UserMessage(turn)
+                    UserMessage(turn, resolveFile = vm::workspaceFile, onOpenFile = { onOpenFile(it, null) })
                 } else {
                     AssistantTurn(
                         turn = turn,
@@ -166,10 +174,20 @@ fun ChatScreen(
                 }
             }
         }
+        if (pending.isNotEmpty()) {
+            val items = remember(pending) { pending.mapNotNull { p -> vm.workspaceFile(p)?.let { p to it } } }
+            PendingImports(
+                items = items,
+                onRemove = vm::removePendingImport,
+                onOpen = { p -> onOpenFile(p, null) },
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
+            )
+        }
         InputPill(
             value = input,
             onValueChange = { input = it },
             running = state.running,
+            hasAttachments = pending.isNotEmpty(),
             onSend = {
                 vm.send(input.text)
                 input = TextFieldValue("")

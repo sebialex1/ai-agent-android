@@ -71,10 +71,27 @@ import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
 @Composable
-fun UserMessage(turn: Turn) {
-    Box(Modifier.fillMaxWidth().padding(start = 56.dp), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            turn.text,
+fun UserMessage(
+    turn: Turn,
+    /** Resolves an `@path` mention to its workspace file; null when it is not an existing file. */
+    resolveFile: (String) -> java.io.File? = { null },
+    onOpenFile: (String) -> Unit = {},
+) {
+    // Mentioned workspace files (imports) become previews; their @path text is not repeated.
+    val files = remember(turn.text) {
+        com.sebialex.agent.domain.agent.Mentions.paths(turn.text).mapNotNull { p -> resolveFile(p)?.let { p to it } }
+    }
+    val body = remember(turn.text, files) {
+        if (files.isEmpty()) turn.text else com.sebialex.agent.domain.agent.Mentions.strip(turn.text, files.map { it.first })
+    }
+    Column(
+        Modifier.fillMaxWidth().padding(start = 56.dp),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        files.forEach { (path, file) -> ImportCard(path, file, onClick = { onOpenFile(path) }) }
+        if (body.isNotBlank()) Text(
+            body,
             style = MaterialTheme.typography.bodyLarge,
             color = Palette.TextPrimary,
             modifier = Modifier

@@ -69,6 +69,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     /** All disk writes go through one ordered queue so saves and deletes never race. */
     private val io = Channel<() -> Unit>(Channel.UNLIMITED)
 
+    /** Imports waiting to be sent, per conversation; [pendingImports] is the current one's. */
+    private val pendingBySession = HashMap<String, List<String>>()
+    private val _pendingImports = MutableStateFlow<List<String>>(emptyList())
+    val pendingImports: StateFlow<List<String>> = _pendingImports.asStateFlow()
+
     private val _conversations = MutableStateFlow(ConversationsUiState())
     val conversations: StateFlow<ConversationsUiState> = _conversations.asStateFlow()
 
@@ -137,6 +142,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         runs.remove(id)?.let { it.approval?.complete(false); it.job.cancel() }
         cache.remove(id)
         summaries.remove(id)
+        pendingBySession.remove(id)
         container.forget(id)
         if (id == currentId) {
             val fresh = freshSession()
@@ -178,6 +184,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         runs.clear()
         cache.clear()
         summaries.clear()
+        pendingBySession.clear()
         container.forgetAll()
         val fresh = freshSession()
         cache[fresh.id] = fresh
@@ -190,9 +197,14 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     // ---- Agent turn ---------------------------------------------------------------------
 
     fun send(text: String) {
-        val task = text.trim()
         val sessionId = currentId
-        if (task.isEmpty() || runs.containsKey(sessionId)) return
+        if (runs.containsKey(sessionId)) return
+        // Imports travel as @path mentions at the start of the message (the bubble shows them
+        // as previews). A message may be only imports.
+        val imports = pendingBySession[sessionId].orEmpty()
+        val task = (imports.joinToString(" ") { "@$it" } + " " + text.trim()).trim()
+        if (task.isEmpty()) return
+        pendingBySession.remove(sessionId)
         val now = System.currentTimeMillis()
         val user = Turn(newId(), Role.USER, task, createdAt = now)
         val assistant = Turn(newId(), Role.ASSISTANT, "", createdAt = now + 1, complete = false)
@@ -316,6 +328,29 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         path
     }
 
+    fun addPendingImport(path: String) {
+        val list = pendingBySession[currentId].orEmpty()
+        if (path !in list) pendingBySession[currentId] = list + path
+        publish()
+    }
+
+    fun removePendingImport(path: String) {
+        pendingBySession[currentId]?.let { pendingBySession[currentId] = it - path }
+        publish()
+    }
+
+    /** The current conversation's workspace file at [path], or null when it is not an existing file. */
+    fun workspaceFile(path: String): java.io.File? =
+        runCatching { container.runtime(currentId).workspace.resolve(path) }.getOrNull()?.takeIf { it.isFile }
+
+    /** Like [importFile], streaming from [input] so large videos are copied without loading them whole. */
+    suspend fun importStream(name: String, input: java.io.InputStream): String = withContext(Dispatchers.IO) {
+        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "import" }
+        val path = "imports/$safe"
+        container.runtime(currentId).workspace.writeStream(path, input)
+        path
+    }
+
     fun step(stepId: String): Step? = _state.value.session.turns.asSequence().flatMap { it.steps }.firstOrNull { it.id == stepId }
 
     // ---- Internals ----------------------------------------------------------------------
@@ -347,6 +382,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)
         }
+        _pendingImports.value = pendingBySession[currentId].orEmpty()
         _conversations.value = ConversationsUiState(
             items = summaries.values.sortedByDescending { it.updatedAt },
             runningIds = runs.keys.toSet(),

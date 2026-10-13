@@ -135,7 +135,7 @@ Every assistant turn renders in this fixed order:
 
 While the model thinks, its raw reasoning streams into the `thought` row as words, about one line tall, with older text fading out. When it finishes, the row keeps one line of the reasoning that fades at the tail; tap it for the full text.
 
-The **+** in the input opens an attachment sheet: Camera, Photos and Files tiles, plus a quick **Thinking** switch for the selected model (the same per-model setting as in Settings). Picked items are copied byte-for-byte into `/workspace/imports/` and mentioned in the message.
+The **+** in the input opens an attachment sheet: Camera, Photos and Files tiles, plus a quick **Thinking** switch for the selected model (the same per-model setting as in Settings). Picked items (Photos takes images and videos) are copied byte-for-byte into `/workspace/imports/` and wait above the input as small thumbnails with a remove button; a message can be just the imports. In the sent message they show as previews instead of a file name: images and videos as rounded, aspect-fit cards (videos with their first frame, a play badge and the length), other files as a compact chip with name and size. Tapping one opens it in the file viewer and its built-in player. The model still receives them as `@imports/<name>` mentions.
 
 The folder button in the chat top bar opens the workspace: a segmented switch for **Terminal**, **Sources** (every page read in the conversation) and **Files** (an **Artifacts** group with files the agent wrote, then all workspace files). Sources and Files only appear when they have content.
 

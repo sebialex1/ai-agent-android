@@ -43,8 +43,10 @@ fun InputPill(
     onMic: () -> Unit,
     modifier: Modifier = Modifier,
     placeholder: String = "Ask anything",
+    /** Imports are waiting above the input, so an empty message can still be sent. */
+    hasAttachments: Boolean = false,
 ) {
-    val canSend = value.text.isNotBlank() && !running
+    val canSend = (value.text.isNotBlank() || hasAttachments) && !running
     val fill by animateColorAsState(if (canSend || running) Palette.Accent else Palette.SurfaceHighest, label = "send")
     Row(
         modifier = modifier
