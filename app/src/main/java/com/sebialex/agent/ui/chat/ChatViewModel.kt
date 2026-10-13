@@ -69,6 +69,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private val cache = HashMap<String, Session>()
     private val summaries = HashMap<String, SessionSummary>()
     private val runs = HashMap<String, Run>()
+    /** Messages waiting for the running turn of each conversation to finish (declared before init: publish() reads it). */
+    private val queues = HashMap<String, List<QueuedMessage>>()
     private var currentId: String = newId()
     private var expanded: Set<String> = emptySet()
     private var revealing: Set<String> = emptySet()
@@ -218,9 +220,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     // ---- Agent turn ---------------------------------------------------------------------
-
-    /** Messages waiting for the running turn of each conversation to finish. */
-    private val queues = HashMap<String, List<QueuedMessage>>()
 
     fun send(text: String) {
         val sessionId = currentId
