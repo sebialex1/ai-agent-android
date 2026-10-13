@@ -432,7 +432,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** An empty conversation; memory of past chats starts on (switchable per chat). */
+    /** An empty conversation; memory starts as saved (on until the user explicitly saved "off"). */
     private fun freshSession(): Session {
         val s = Session(newId(), "", emptyList(), System.currentTimeMillis())
         if (container.settings.memoryForNewChats()) container.settings.setConversationMemory(s.id, true)

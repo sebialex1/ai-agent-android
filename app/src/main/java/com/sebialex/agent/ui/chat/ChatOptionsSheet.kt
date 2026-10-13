@@ -25,8 +25,9 @@ private enum class OptionsMode { MENU, RENAME, CONFIRM_DELETE }
  * Memory is bound to [SecureSettings.memoryChats], a flow that changes on every switch, so the
  * switch always moves (the old one in the "+" sheet read a snapshot that never changed).
  *
- * This switch is the only memory control in the app and only changes this chat; new chats
- * always start with memory on. Settings has no copy of it.
+ * This switch is the only memory control in the app. Its last choice is saved as what new chats
+ * start with ([SecureSettings.setMemoryForNewChats]); until anything is saved, that is "on".
+ * An explicit "off" is therefore kept, and can be undone here. Settings has no copy of it.
  */
 @Composable
 fun ChatOptionsSheet(
@@ -64,7 +65,10 @@ fun ChatOptionsSheet(
                     icon = R.drawable.ic_history,
                     title = "Memory of past chats",
                     checked = memory,
-                    onChange = { settings.setConversationMemory(sessionId, it) },
+                    onChange = {
+                        settings.setConversationMemory(sessionId, it)
+                        settings.setMemoryForNewChats(it)
+                    },
                 )
                 if (saved) {
                     SheetDivider()
