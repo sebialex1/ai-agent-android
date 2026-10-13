@@ -74,7 +74,7 @@ class OpenRouterBrain(
             put("model", model)
             put("messages", messages(ctx))
             if (withTools) {
-                put("tools", TOOLS)
+                put("tools", toolsFor(ctx.memoryTool))
                 if (openRouterExtras) {
                     put("tool_choice", "auto")
                     put("parallel_tool_calls", true)
@@ -202,7 +202,8 @@ class OpenRouterBrain(
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val files = ctx.workspaceFiles.take(200)
         val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly and do not claim to run anything.\n"
-        return SYSTEM_PROMPT + noTools + "\nToday is $date.\n" +
+        val memory = if (ctx.memoryTool && withTools) "\n" + MEMORY_PROMPT else ""
+        return SYSTEM_PROMPT + noTools + memory + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
@@ -369,6 +370,7 @@ class OpenRouterBrain(
             is ToolCall.ReadFile -> "read_file"
             is ToolCall.WriteFile -> "write_file"
             is ToolCall.Python -> "python"
+            is ToolCall.Memory -> MEMORY_TOOL_NAME
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -383,6 +385,12 @@ class OpenRouterBrain(
                 put("code", c.code)
                 if (c.packages.isNotEmpty()) putJsonArray("packages") { c.packages.forEach { add(it) } }
                 c.filename?.let { put("filename", it) }
+            }.toString()
+            is ToolCall.Memory -> buildJsonObject {
+                put("action", c.action)
+                c.conversationId?.let { put("conversation_id", it) }
+                if (c.offset > 0) put("offset", c.offset)
+                c.query?.let { put("query", it) }
             }.toString()
             is ToolCall.Invalid -> c.arguments
         }
@@ -416,7 +424,13 @@ class OpenRouterBrain(
                     }.map { it.trim() }.filter { it.isNotEmpty() }
                     ToolCall.Python(id, code, packages, arg("filename"))
                 }
-                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file.")
+                MEMORY_TOOL_NAME -> {
+                    val action = arg("action")?.trim()?.takeIf { it.isNotEmpty() } ?: return missing("action")
+                    // offset may arrive as a number or a numeric string.
+                    val offset = arg("offset")?.trim()?.toDoubleOrNull()?.toInt()?.coerceAtLeast(0) ?: 0
+                    ToolCall.Memory(id, action, arg("conversation_id")?.takeIf { it.isNotBlank() }, offset, arg("query")?.takeIf { it.isNotBlank() })
+                }
+                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: web_search, web_fetch, shell, python, read_file, write_file, conversation_memory (only when enabled).")
             }
         }
 
@@ -489,6 +503,45 @@ class OpenRouterBrain(
                 }
             }
         }
+
+        const val MEMORY_TOOL_NAME = "conversation_memory"
+
+        /** Read-only memory of earlier conversations; only sent when the user enabled it. */
+        val MEMORY_TOOL: JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", MEMORY_TOOL_NAME)
+                put(
+                    "description",
+                    "Read the user's earlier conversations with you (read-only). Start with list_conversations " +
+                        "(short lines, optional query to search), then summarize_conversation for one id, and only " +
+                        "use read_conversation (paged by message offset) when you need exact details.",
+                )
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("action") {
+                            put("type", "string")
+                            putJsonArray("enum") { com.sebialex.agent.domain.model.MEMORY_ACTIONS.forEach { add(it) } }
+                            put("description", "What to do")
+                        }
+                        putJsonObject("conversation_id") { put("type", "string"); put("description", "Conversation id from list_conversations") }
+                        putJsonObject("offset") { put("type", "integer"); put("description", "First message index for read_conversation, default 0") }
+                        putJsonObject("query") { put("type", "string"); put("description", "Optional text to search for with list_conversations") }
+                    }
+                    putJsonArray("required") { add("action") }
+                }
+            }
+        }
+
+        /** Extra system prompt lines when memory is on. */
+        internal const val MEMORY_PROMPT =
+            "Memory of earlier conversations is on: use the conversation_memory tool when the user refers to a " +
+                "previous chat or earlier work. Start from list_conversations or a summary; read full messages only " +
+                "when needed. It is read-only.\n"
+
+        /** The tools to send: the six agent tools, plus conversation memory when it is on. */
+        fun toolsFor(memory: Boolean): JsonArray = if (memory) JsonArray(TOOLS + MEMORY_TOOL) else TOOLS
 
         val TOOLS: JsonArray = JsonArray(
             listOf(

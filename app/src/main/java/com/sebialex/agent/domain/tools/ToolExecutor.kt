@@ -18,6 +18,8 @@ class ToolExecutor(
     private val workspace: Workspace,
     private val shell: Shell,
     private val web: WebGateway,
+    /** Earlier conversations, read-only. Null when this runtime has no access to them. */
+    private val memory: ConversationMemory? = null,
 ) {
     private var cwd = "/"
 
@@ -66,12 +68,26 @@ class ToolExecutor(
                     ToolResult(call.callId, true, "wrote ${call.content.length} bytes to ${w.virtualPath}", attachment = attachment)
                 }
                 is ToolCall.Python -> runPython(call)
+                is ToolCall.Memory -> runMemory(call)
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell || call is ToolCall.Python) 1 else null)
+        }
+    }
+
+    private fun runMemory(call: ToolCall.Memory): ToolResult {
+        val m = memory ?: return ToolResult(call.callId, false, "Conversation memory is not available.")
+        val id = call.conversationId?.trim().orEmpty()
+        return when (call.action) {
+            "list_conversations" -> ToolResult(call.callId, true, m.list(call.query))
+            "summarize_conversation" -> if (id.isEmpty()) ToolResult(call.callId, false, "summarize_conversation needs conversation_id.")
+                else ToolResult(call.callId, true, m.summarize(id))
+            "read_conversation" -> if (id.isEmpty()) ToolResult(call.callId, false, "read_conversation needs conversation_id.")
+                else ToolResult(call.callId, true, m.read(id, call.offset))
+            else -> ToolResult(call.callId, false, "Unknown action \"${call.action}\". Use one of: ${com.sebialex.agent.domain.model.MEMORY_ACTIONS.joinToString(", ")}.")
         }
     }
 

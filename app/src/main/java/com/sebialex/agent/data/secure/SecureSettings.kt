@@ -117,6 +117,16 @@ class SecureSettings(context: Context) {
     fun setLocalBackend(value: String) = edit { putString(KEY_LOCAL_BACKEND, if (value == BACKEND_CPU) BACKEND_CPU else BACKEND_GPU) }
     fun setLocalContext(value: Int) = edit { putInt(KEY_LOCAL_CONTEXT, value) }
     fun setLocalSpeculative(value: Boolean) = edit { putBoolean(KEY_LOCAL_SPECULATIVE, value) }
+    /**
+     * Memory of earlier conversations, stored per conversation and off by default. When on, the
+     * agent gets the read-only `conversation_memory` tool in that conversation only.
+     */
+    fun conversationMemory(sessionId: String): Boolean = prefs.getBoolean(KEY_MEMORY_PREFIX + sessionId, false)
+    fun setConversationMemory(sessionId: String, value: Boolean) = edit {
+        if (value) putBoolean(KEY_MEMORY_PREFIX + sessionId, true) else remove(KEY_MEMORY_PREFIX + sessionId)
+    }
+    /** Drops per-conversation settings of a deleted conversation. */
+    fun forgetConversation(sessionId: String) = edit { remove(KEY_MEMORY_PREFIX + sessionId) }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
     fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
     fun setReasoningEnabled(model: String, value: Boolean) = edit { putBoolean(reasoningOnKey(model), value) }
@@ -171,6 +181,7 @@ class SecureSettings(context: Context) {
         private const val KEY_PROVIDER = "cloud_provider"
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"
         private const val KEY_OLLAMA_CUSTOM = "ollama_model_custom"
+        private const val KEY_MEMORY_PREFIX = "conversation_memory::"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"

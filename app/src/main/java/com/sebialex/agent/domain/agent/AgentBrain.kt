@@ -25,6 +25,11 @@ data class BrainContext(
     val workspaceFiles: List<String>,
     /** Reasoning that came with each batch of tool calls, keyed by [Observation.batch]. */
     val thoughts: Map<Int, Thought> = emptyMap(),
+    /**
+     * The user turned on memory of past conversations for this conversation, so the
+     * `conversation_memory` tool is offered. When false the tool is not advertised at all.
+     */
+    val memoryTool: Boolean = false,
 )
 
 sealed interface BrainDecision {

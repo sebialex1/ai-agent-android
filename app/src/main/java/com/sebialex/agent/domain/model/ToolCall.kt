@@ -27,6 +27,19 @@ sealed interface ToolCall {
         val scriptName: String get() = scriptPath.substringAfterLast('/')
     }
 
+    /**
+     * Read-only look at earlier conversations ("memory"). [action] is one of [MEMORY_ACTIONS]:
+     * `list_conversations` (optionally filtered by [query]), `summarize_conversation` or
+     * `read_conversation` (paged from [offset], a message index). Nothing can be changed.
+     */
+    data class Memory(
+        override val callId: String,
+        val action: String,
+        val conversationId: String? = null,
+        val offset: Int = 0,
+        val query: String? = null,
+    ) : ToolCall
+
     /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
     data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
@@ -43,3 +56,6 @@ data class ToolResult(
 )
 
 data class SearchHit(val title: String, val url: String, val snippet: String)
+
+/** Actions of the conversation memory tool. */
+val MEMORY_ACTIONS = listOf("list_conversations", "summarize_conversation", "read_conversation")

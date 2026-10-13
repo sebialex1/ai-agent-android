@@ -46,6 +46,8 @@ class AgentOrchestrator(
     private val audit: AuditSink,
     /** When true, risky actions skip the approval card and run; each is still recorded as auto-approved. */
     private val autoApprove: () -> Boolean = { false },
+    /** Memory of earlier conversations is on for this conversation (per-conversation toggle). */
+    private val memoryEnabled: () -> Boolean = { false },
     private val maxSteps: Int = 30,
 ) {
     private var seq = 0L
@@ -60,7 +62,8 @@ class AgentOrchestrator(
         var batch = 0
 
         while (executed < maxSteps) {
-            val ctx = BrainContext(task, history, observations.toList(), workspaceFiles(), thoughts.toMap())
+            val memory = memoryEnabled()
+            val ctx = BrainContext(task, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory)
             val requestedAt = now()
             // Live reasoning: the thought row is created on the first streamed delta and updated
             // (throttled) while the model thinks. Every event carries the full step, so a dropped
@@ -123,6 +126,11 @@ class AgentOrchestrator(
                         executed++
                         if (call is ToolCall.Invalid) {
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
+                            continue
+                        }
+                        // The tool is not advertised when memory is off; a call anyway is refused.
+                        if (call is ToolCall.Memory && !memory) {
+                            observations += Observation(call, ToolResult(call.callId, false, "Memory of past conversations is turned off for this conversation."), batch)
                             continue
                         }
                         var autoRisk: String? = null
@@ -220,6 +228,23 @@ class AgentOrchestrator(
                 append(call.code)
             },
             path = "/" + call.scriptPath.removePrefix("/workspace/").removePrefix("/"), startedAt = now(),
+        )
+        is ToolCall.Memory -> Step(
+            nextId(), StepKind.FILE_READ,
+            when (call.action) {
+                "list_conversations" -> "past chats" + (call.query?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+                "summarize_conversation" -> "past chat summary"
+                else -> "past chat, from message ${call.offset}"
+            },
+            "conversation_memory",
+            buildString {
+                append("{\"action\": \"").append(esc(call.action)).append('"')
+                call.conversationId?.let { append(", \"conversation_id\": \"").append(esc(it)).append('"') }
+                if (call.offset > 0) append(", \"offset\": ").append(call.offset)
+                call.query?.let { append(", \"query\": \"").append(esc(it)).append('"') }
+                append('}')
+            },
+            startedAt = now(),
         )
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }

@@ -47,6 +47,8 @@ class PermissionPolicy(
         } else if (isOutside(call.scriptPath)) {
             PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, call.scriptPath)
         } else PermissionDecision.Allow
+        // Read-only view of the user's own earlier chats, only offered when the user enabled it.
+        is ToolCall.Memory -> PermissionDecision.Allow
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
 

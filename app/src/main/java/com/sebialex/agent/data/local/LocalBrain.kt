@@ -67,7 +67,7 @@ class LocalBrain(
         val config = ConversationConfig(
             systemInstruction = Contents.of(systemPrompt(ctx, loaded)),
             initialMessages = initial,
-            tools = if (loaded.toolCalling) toolProviders() else emptyList(),
+            tools = if (loaded.toolCalling) toolProviders(ctx.memoryTool) else emptyList(),
             // The app executes tools itself, after the permission policy.
             automaticToolCalling = false,
         )
@@ -214,12 +214,14 @@ class LocalBrain(
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val files = ctx.workspaceFiles.take(MAX_FILES)
         val base = if (loaded.toolCalling) OpenRouterBrain.SYSTEM_PROMPT else NO_TOOLS_PROMPT
-        return base + "\nYou run fully on this phone (${loaded.name}, ${loaded.backend}). Today is $date.\n" +
+        val memory = if (loaded.toolCalling && ctx.memoryTool) "\n" + OpenRouterBrain.MEMORY_PROMPT else ""
+        return base + memory + "\nYou run fully on this phone (${loaded.name}, ${loaded.backend}). Today is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
     private fun systemPromptLength(ctx: BrainContext) =
-        OpenRouterBrain.SYSTEM_PROMPT.length + 200 + ctx.workspaceFiles.take(MAX_FILES).sumOf { it.length + 1 } + TOOL_SCHEMA_CHARS
+        OpenRouterBrain.SYSTEM_PROMPT.length + 200 + ctx.workspaceFiles.take(MAX_FILES).sumOf { it.length + 1 } + TOOL_SCHEMA_CHARS +
+            if (ctx.memoryTool) OpenRouterBrain.MEMORY_PROMPT.length + MEMORY_SCHEMA_CHARS else 0
 
     /** The tool call's arguments as plain Kotlin values for LiteRT-LM's chat template. */
     private fun argumentsOf(call: ToolCall): Map<String, Any?> {
@@ -257,6 +259,7 @@ class LocalBrain(
         private const val CANCEL_WAIT_MS = 5_000L
         /** Approximate size of the six tool schemas once rendered into the prompt. */
         private const val TOOL_SCHEMA_CHARS = 2_400
+        private const val MEMORY_SCHEMA_CHARS = 700
         private val STRICT = Json
 
         private val NO_TOOLS_PROMPT = """
@@ -266,10 +269,11 @@ class LocalBrain(
         """.trimIndent()
 
         /**
-         * The agent's six tools, described to LiteRT-LM with the exact OpenRouter schemas. They are
-         * never executed by LiteRT-LM (automatic tool calling is off).
+         * The agent's six tools (plus conversation memory when it is on), described to LiteRT-LM with
+         * the exact OpenRouter schemas. They are never executed by LiteRT-LM (automatic tool calling
+         * is off).
          */
-        private fun toolProviders(): List<ToolProvider> = OpenRouterBrain.TOOLS.mapNotNull { el ->
+        private fun toolProviders(memory: Boolean): List<ToolProvider> = OpenRouterBrain.toolsFor(memory).mapNotNull { el ->
             val fn = (el as? JsonObject)?.get("function") as? JsonObject ?: return@mapNotNull null
             tool(SchemaTool(fn.toString()))
         }

@@ -11,6 +11,7 @@ import com.sebialex.agent.data.local.LocalModels
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningRules
+import com.sebialex.agent.data.persistence.ConversationMemoryReader
 import com.sebialex.agent.data.persistence.FileAuditLog
 import com.sebialex.agent.data.persistence.SessionStore
 import com.sebialex.agent.data.secure.SecureSettings
@@ -33,7 +34,13 @@ import kotlinx.coroutines.SupervisorJob
  * the mirror of that workspace that Termux works in, shell, tool executor (which carries the
  * shell's working directory) and audit log. Runtimes are never shared between conversations.
  */
-class SessionRuntime(val sessionId: String, dir: java.io.File, web: RoutingWebGateway, termux: TermuxBridge) {
+class SessionRuntime(
+    val sessionId: String,
+    dir: java.io.File,
+    web: RoutingWebGateway,
+    termux: TermuxBridge,
+    sessions: SessionStore,
+) {
     val workspace = Workspace(dir)
     val mirror = WorkspaceMirror(
         local = workspace.root,
@@ -42,7 +49,9 @@ class SessionRuntime(val sessionId: String, dir: java.io.File, web: RoutingWebGa
     )
     val shell = SandboxShell(workspace, termux, mirror)
     val audit = FileAuditLog(dir)
-    val tools = ToolExecutor(workspace, shell, web)
+    /** Read-only view of the other conversations, used only when memory is on for this one. */
+    val memory = ConversationMemoryReader(sessions, sessionId)
+    val tools = ToolExecutor(workspace, shell, web, memory)
 }
 
 /** Manual dependency container. */
@@ -124,11 +133,12 @@ class AppContainer(app: Application) {
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
-        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux) }
+        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions) }
 
     @Synchronized
     fun forget(sessionId: String) {
         runtimes.remove(sessionId)
+        settings.forgetConversation(sessionId)
         // The shared Termux copy of a deleted conversation goes with it.
         Thread { runCatching { java.io.File(termux.sharedRoot, sessionId).deleteRecursively() } }.start()
     }
@@ -148,6 +158,7 @@ class AppContainer(app: Application) {
             workspace = rt.workspace,
             audit = rt.audit,
             autoApprove = { settings.autoApprove() },
+            memoryEnabled = { settings.conversationMemory(sessionId) },
         )
     }
 }
