@@ -105,20 +105,11 @@ fun WorkspaceScreen(
     var input by rememberSaveable { mutableStateOf("") }
     var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
     var tab by rememberSaveable { mutableStateOf(WorkspaceTab.TERMINAL) }
-    var files by remember { mutableStateOf<List<String>>(emptyList()) }
     var preview by remember { mutableStateOf<SourceRef?>(null) }
+    // Bumped after every terminal command so the file manager shows what it changed.
+    var filesVersion by remember { mutableStateOf(0) }
 
-    fun refreshFiles() {
-        scope.launch {
-            files = withContext(Dispatchers.IO) {
-                runCatching {
-                    workspace.walk().map { workspace.virtualOf(it) }
-                        .filterNot { p -> p.split('/').any { it.startsWith(".") } }
-                        .sorted()
-                }.getOrDefault(emptyList())
-            }
-        }
-    }
+    fun refreshFiles() { filesVersion++ }
 
     fun run(command: String) {
         scope.launch {
@@ -142,7 +133,6 @@ fun WorkspaceScreen(
     }
 
     LaunchedEffect(Unit) {
-        refreshFiles()
         if (entries.isEmpty()) run("ls")
     }
 
@@ -151,10 +141,11 @@ fun WorkspaceScreen(
     val distinctArtifacts = remember(artifacts) {
         artifacts.groupBy { it.path }.map { (_, versions) -> versions.maxBy { it.updatedAt } }.sortedByDescending { it.updatedAt }
     }
+    // Files is always offered: it is a real file manager, useful even before anything exists.
     val tabs = buildList {
         add(WorkspaceTab.TERMINAL)
+        add(WorkspaceTab.FILES)
         if (distinctSources.isNotEmpty()) add(WorkspaceTab.SOURCES)
-        if (distinctArtifacts.isNotEmpty() || files.isNotEmpty()) add(WorkspaceTab.FILES)
     }
     val current = if (tab in tabs) tab else WorkspaceTab.TERMINAL
 
@@ -172,9 +163,7 @@ fun WorkspaceScreen(
             } else {
                 Text("Workspace", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.align(Alignment.Center))
             }
-            if (current == WorkspaceTab.TERMINAL) {
-                CircleIconButton(R.drawable.ic_folder, "List files", { run("tree") }, Modifier.align(Alignment.CenterEnd))
-            }
+
         }
         AnimatedContent(
             targetState = current,
@@ -194,7 +183,12 @@ fun WorkspaceScreen(
                     onSubmit = ::submit,
                 )
                 WorkspaceTab.SOURCES -> SourcesTab(distinctSources, onOpen = { preview = it })
-                WorkspaceTab.FILES -> FilesTab(distinctArtifacts, files, onOpenFile)
+                WorkspaceTab.FILES -> com.sebialex.agent.ui.files.FileManager(
+                    workspace = workspace,
+                    artifacts = distinctArtifacts,
+                    onOpenFile = onOpenFile,
+                    refreshKey = filesVersion,
+                )
             }
         }
     }
@@ -382,50 +376,6 @@ private fun SourcesTab(sources: List<SourceRef>, onOpen: (SourceRef) -> Unit) {
                     FadingText(s.host, MaterialTheme.typography.labelSmall, Palette.TextTertiary)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun FilesTab(artifacts: List<FileAttachment>, files: List<String>, onOpenFile: (String, String?) -> Unit) {
-    var artifactsOpen by rememberSaveable { mutableStateOf(true) }
-    var filesOpen by rememberSaveable { mutableStateOf(true) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-        // Artifacts: only rendered when the agent actually produced at least one.
-        if (artifacts.isNotEmpty()) {
-            item { GroupHeader(R.drawable.ic_file_edit, "Artifacts", artifacts.size, artifactsOpen) { artifactsOpen = !artifactsOpen } }
-            if (artifactsOpen) items(artifacts, key = { "a:" + it.path }) { a ->
-                FileRow(
-                    name = a.name,
-                    detail = a.path + if (a.baseSnapshot != null) "   +${a.added} \u2212${a.removed}" else "",
-                    onClick = { onOpenFile(a.path, a.baseSnapshot) },
-                )
-            }
-        }
-        if (files.isNotEmpty()) {
-            item { GroupHeader(R.drawable.ic_folder, "Workspace", files.size, filesOpen) { filesOpen = !filesOpen } }
-            if (filesOpen) items(files, key = { "f:$it" }) { path ->
-                FileRow(name = path.substringAfterLast('/'), detail = path, onClick = { onOpenFile(path, null) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun FileRow(name: String, detail: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(start = 44.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppIcon(R.drawable.ic_file, null, tint = Palette.IconMuted, size = 18.dp)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            FadingText(name, MaterialTheme.typography.bodyMedium, Palette.TextPrimary)
-            FadingText(detail, MaterialTheme.typography.labelSmall, Palette.TextTertiary)
         }
     }
 }
