@@ -1,8 +1,5 @@
 package com.sebialex.agent.data.llm
 
-import com.sebialex.agent.domain.agent.AgentBrain
-import com.sebialex.agent.domain.agent.BrainContext
-import com.sebialex.agent.domain.agent.BrainDecision
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -41,11 +38,18 @@ data class OllamaModelInfo(
 
 /**
  * Ollama Cloud: Ollama's hosted models at `https://ollama.com`, a separate cloud provider next to
- * OpenRouter (nothing runs on this phone). Chat goes through its OpenAI-compatible endpoint
- * `POST /v1/chat/completions` (streaming, tools, `reasoning_effort`), so the same request/
- * streaming code as OpenRouter is reused. The model list comes from `GET /api/tags` and per-model
- * capabilities (tools, thinking levels, context) from `POST /api/show`. Every request carries
- * `Authorization: Bearer <key>`; keys are created at https://ollama.com/settings/keys.
+ * OpenRouter (nothing runs on this phone).
+ *
+ * Follows https://docs.ollama.com/cloud and https://docs.ollama.com/api:
+ * - chat uses the native `POST https://ollama.com/api/chat` endpoint (NDJSON streaming, native
+ *   `tools` / `tool_calls`, and the `think` field for thinking models such as Gemma 4);
+ * - model names are exactly those returned by `GET /api/tags` (e.g. `gemma4:31b`). The `:cloud` /
+ *   `-cloud` names only work through a signed-in local Ollama app, never against ollama.com;
+ * - capabilities (tools, thinking levels, context) come from `POST /api/show`;
+ * - every request carries `Authorization: Bearer <key>` (keys: https://ollama.com/settings/keys).
+ *
+ * A 403 from ollama.com almost always means the key is wrong/revoked or the model needs a paid
+ * plan ("this model requires a subscription"); the server's own message is surfaced verbatim.
  */
 class OllamaCloud(
     private val apiKey: () -> String?,
@@ -59,7 +63,8 @@ class OllamaCloud(
     private val infoLock = Mutex()
     private val infos = HashMap<String, OllamaModelInfo>()
 
-    val chatEndpoint: String get() = "$base/v1/chat/completions"
+    /** Native chat endpoint (`/api/chat`), see https://docs.ollama.com/api/chat. */
+    val chatEndpoint: String get() = "$base/api/chat"
 
     /** Models available to this key, by name. Empty without a key (nothing is requested then). */
     suspend fun models(refresh: Boolean = false): List<OllamaModel> {
@@ -85,12 +90,15 @@ class OllamaCloud(
     /** Reasoning controls for an Ollama model, from its `thinking` metadata. */
     suspend fun reasoning(id: String): ModelReasoning {
         // Hand-typed ids may be unknown to /api/show; they simply get no reasoning control.
+        val name = resolveName(wireName(id))
         val info = try {
-            info(wireName(id))
+            info(name)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ModelReasoning.unsupported(id)
+            // Details could not be read: known thinking families still get their switch.
+            if (knownThinking(name) || alwaysThinking(name)) OllamaModelInfo(true, true, emptyList(), null, null)
+            else return ModelReasoning.unsupported(id)
         }
         if (!info.thinking) return ModelReasoning.unsupported(id)
         val values = info.thinkingValues
@@ -115,6 +123,25 @@ class OllamaCloud(
         )
     }
 
+    /**
+     * The exact name to send for [name]. ollama.com only accepts names from `/api/tags`, so a
+     * bare family name (`gemma4`) or a local-app name (`gemma4:cloud`) is mapped to the listed
+     * tag (`gemma4:31b`). Unchanged when the list cannot be read or has no better match.
+     */
+    suspend fun resolveName(name: String): String {
+        val clean = normalizeName(name)
+        val list = try {
+            models()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return clean
+        }
+        if (list.isEmpty() || list.any { it.name == clean }) return clean
+        val family = clean.substringBefore(':')
+        return list.firstOrNull { it.name.substringBefore(':') == family }?.name ?: clean
+    }
+
     private fun fetchModels(key: String): List<OllamaModel> {
         val conn = URL("$base/api/tags").openConnection() as HttpURLConnection
         try {
@@ -122,10 +149,10 @@ class OllamaCloud(
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
             conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("Authorization", "Bearer $key")
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Authorization", "Bearer ${key.trim()}")
             val code = conn.responseCode
-            if (code == 401 || code == 403) throw IOException("Ollama Cloud rejected the API key (HTTP $code)")
-            if (code !in 200..299) throw IOException("HTTP $code while reading the Ollama Cloud model list")
+            if (code !in 200..299) throw httpError(code, conn, "reading the Ollama Cloud model list")
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             val models = json.parseToJsonElement(text).jsonObject["models"] as? JsonArray
                 ?: throw IOException("the Ollama Cloud model list had no models")
@@ -148,10 +175,11 @@ class OllamaCloud(
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Accept", "application/json")
-            apiKey()?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            apiKey()?.let { conn.setRequestProperty("Authorization", "Bearer ${it.trim()}") }
             conn.outputStream.use { it.write(buildJsonObject { put("model", name) }.toString().toByteArray()) }
             val code = conn.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code while reading Ollama Cloud model details")
+            if (code !in 200..299) throw httpError(code, conn, "reading Ollama Cloud model details")
             val root = json.parseToJsonElement(conn.inputStream.bufferedReader().use { it.readText() }).jsonObject
             val caps = (root["capabilities"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }.toSet()
             val thinking = root["thinking"] as? JsonObject
@@ -164,7 +192,9 @@ class OllamaCloud(
                 ?.let { (it.value as? JsonPrimitive)?.longOrNull }
             return OllamaModelInfo(
                 tools = "tools" in caps,
-                thinking = "thinking" in caps,
+                // Gemma 4, gpt-oss, Qwen 3, DeepSeek R1/V3.x ... are thinking models even when the
+                // cloud entry omits the capability.
+                thinking = "thinking" in caps || (caps.isEmpty() && knownThinking(name)) || alwaysThinking(name),
                 thinkingValues = values,
                 thinkingDefault = default,
                 contextLength = context,
@@ -175,6 +205,66 @@ class OllamaCloud(
     }
 
     companion object {
+        internal const val USER_AGENT = "AgentForAndroid/1.0 (+https://github.com/sebialex1/ai-agent-android)"
+
+        /** Model families that think (from ollama.com/search?c=thinking), used when `/api/show` is silent. */
+        private val THINKING_FAMILIES = listOf(
+            "gemma4", "gpt-oss", "qwen3", "deepseek-r1", "deepseek-v3.1", "deepseek-v3.2", "deepseek-v4",
+            "kimi-k2-thinking", "kimi-k2.5", "magistral", "glm-4.6", "glm-4.7", "glm-5", "minimax-m2", "nemotron-3",
+        )
+
+        /** True for model names of a known thinking family, e.g. `gemma4:31b` or `qwen3-coder:480b`. */
+        fun knownThinking(name: String): Boolean {
+            val family = normalizeName(name).substringBefore(':').lowercase()
+            return THINKING_FAMILIES.any { family.startsWith(it) }
+        }
+
+        /** Gemma 4 always has a thinking mode (ollama.com/library/gemma4), whatever the metadata says. */
+        fun alwaysThinking(name: String): Boolean = normalizeName(name).lowercase().startsWith("gemma4")
+
+        /**
+         * The native `think` value for a request: `false` when the user turned thinking off, the
+         * model's named level when one is picked, otherwise `true`. Null for non-thinking models.
+         */
+        fun thinkValue(info: ModelReasoning, pref: ReasoningPreference): kotlinx.serialization.json.JsonElement? {
+            if (!info.supported) return null
+            val r = ReasoningRules.resolve(info, pref)
+            return when {
+                !r.on -> JsonPrimitive(false)
+                r.effort != null && r.effort != BOOLEAN_ON_EFFORT -> JsonPrimitive(r.effort)
+                r.effort != null && info.supportedEfforts != listOf(BOOLEAN_ON_EFFORT) -> JsonPrimitive(r.effort)
+                else -> JsonPrimitive(true)
+            }
+        }
+
+        /** Readable error with the server's own message (`{"error": "..."}` on the native API). */
+        internal fun httpError(code: Int, conn: HttpURLConnection, what: String): IOException =
+            httpError(code, runCatching { conn.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty(), what)
+
+        internal fun httpError(code: Int, body: String, what: String): IOException {
+            val detail = errorMessage(body)
+            val hint = when (code) {
+                401 -> "the API key was rejected. Create a new key at $KEYS_URL and paste it in Settings"
+                403 -> if (detail?.contains("subscription", ignoreCase = true) == true) "this model needs a paid Ollama plan (ollama.com/upgrade); pick a model your plan includes"
+                    else "access denied. Check the API key at $KEYS_URL and that your plan includes this model"
+                404 -> "model not found. Use a name from the Ollama Cloud model list (e.g. gemma4:31b, without -cloud)"
+                429 -> "rate limited or usage limit reached; see ollama.com/settings/usage"
+                else -> null
+            }
+            val parts = listOfNotNull(detail?.takeIf { it.isNotBlank() }, hint)
+            return IOException("HTTP $code while $what" + if (parts.isEmpty()) "" else ": " + parts.joinToString(" \u2014 "))
+        }
+
+        /** `{"error": "text"}` or `{"error": {"message": "text"}}`. */
+        internal fun errorMessage(body: String): String? = runCatching {
+            val root = Json.parseToJsonElement(body) as? JsonObject ?: return@runCatching null
+            when (val e = root["error"]) {
+                is JsonPrimitive -> e.content
+                is JsonObject -> (e["message"] as? JsonPrimitive)?.content
+                else -> null
+            }
+        }.getOrNull() ?: body.trim().take(300).takeIf { it.isNotEmpty() && !it.startsWith("<") }
+
         /** Every Ollama Cloud model id in settings starts with this. */
         const val PREFIX = "ollama/"
         const val KEYS_URL = "https://ollama.com/settings/keys"
@@ -200,35 +290,3 @@ class OllamaCloud(
     }
 }
 
-/**
- * Agent brain for Ollama Cloud. It reads the model's capabilities first (tools are only offered
- * to models that support them), then runs the shared OpenAI-compatible chat code against
- * `ollama.com/v1/chat/completions`.
- */
-class OllamaBrain(
-    private val cloud: OllamaCloud,
-    private val apiKey: String,
-    private val model: String,
-    private val reasoningFields: suspend () -> JsonObject,
-) : AgentBrain {
-    override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
-        val name = OllamaCloud.wireName(model)
-        // If details cannot be read, still try with tools: most cloud models support them.
-        val tools = try {
-            cloud.info(name).tools
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            true
-        }
-        return OpenRouterBrain(
-            apiKey = apiKey,
-            model = name,
-            endpoint = cloud.chatEndpoint,
-            reasoningFields = reasoningFields,
-            provider = "Ollama Cloud",
-            openRouterExtras = false,
-            withTools = tools,
-        ).next(ctx, onReasoning)
-    }
-}

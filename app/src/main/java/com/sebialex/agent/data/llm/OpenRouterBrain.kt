@@ -139,7 +139,8 @@ class OpenRouterBrain(
         else -> ""
     }
 
-    private fun messages(ctx: BrainContext): JsonArray = buildJsonArray {
+    /** OpenAI-style message list for this request. Also used (converted) by the native Ollama brain. */
+    internal fun messages(ctx: BrainContext): JsonArray = buildJsonArray {
         add(buildJsonObject {
             put("role", "system")
             put("content", systemPrompt(ctx))

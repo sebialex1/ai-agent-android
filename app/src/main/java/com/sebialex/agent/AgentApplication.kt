@@ -120,8 +120,9 @@ class AppContainer(app: Application) {
                 OllamaCloud.isOllama(model) -> BrainRoute(
                     label = "Ollama Cloud request",
                     brain = settings.ollamaKey()?.let { key ->
-                        OllamaBrain(ollama, key, model, reasoningFields = {
-                            ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model))
+                        OllamaBrain(ollama, key, model, think = {
+                            // Native `think` field from the model's /api/show metadata and the user's choice.
+                            OllamaCloud.thinkValue(models.reasoning(model), settings.reasoning(model))
                         })
                     },
                     notice = OLLAMA_NO_KEY_NOTICE,
