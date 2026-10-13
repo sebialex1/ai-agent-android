@@ -1,0 +1,3 @@
+-keepattributes *Annotation*, InnerClasses
+-keep,includedescriptorclasses class com.sebialex.agent.**$$serializer { *; }
+-keepclassmembers class com.sebialex.agent.** { *** Companion; }
