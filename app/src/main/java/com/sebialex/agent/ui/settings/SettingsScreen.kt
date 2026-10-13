@@ -102,7 +102,6 @@ fun SettingsScreen(
     // One scroll position per page, so going back and forth never jumps.
     val homeScroll = rememberScrollState()
     val scrolls = SettingsSection.entries.associateWith { rememberScrollState() }
-    var picking by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     fun back() {
         if (section != null && !(direct && section == initialSection)) section = null else onBack()
@@ -180,14 +179,9 @@ fun SettingsScreen(
                         SandboxSetting(termux)
                     }
                     SettingsSection.MODELS -> {
-                        ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
-                        ReasoningSetting(
-                            model = snap.model,
-                            pref = snap.reasoning,
-                            models = models,
-                            onEnabled = { settings.setReasoningEnabled(snap.model, it) },
-                            onEffort = { settings.setReasoningEffort(snap.model, it) },
-                        )
+                        // Provider keys and configuration only. Picking the active model and its
+                        // reasoning is done in the chat's + sheet (the same global setting), so it
+                        // is not repeated here.
                         Group("API keys") {
                             KeyField(
                                 label = "OpenRouter",
@@ -245,17 +239,6 @@ fun SettingsScreen(
                 Spacer(Modifier.height(24.dp))
             }
         }
-    }
-    if (picking) {
-        ModelPickerSheet(
-            settings = settings,
-            models = models,
-            ollama = ollama,
-            store = modelStore,
-            engine = localEngine,
-            onOpenOnDevice = { section = SettingsSection.ON_DEVICE },
-            onDismiss = { picking = false },
-        )
     }
 }
 
@@ -335,109 +318,6 @@ private fun LinkRow(title: String, detail: String, onClick: () -> Unit) {
             Text(detail, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
         }
         AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 16.dp)
-    }
-}
-
-private sealed interface ModelCheck {
-    data object Loading : ModelCheck
-    data class Ready(val info: ModelReasoning) : ModelCheck
-    data object Failed : ModelCheck
-}
-
-/**
- * Reasoning toggle for the selected model, driven by its live OpenRouter metadata.
- * Unsupported models get a disabled switch; mandatory models have no off state; effort
- * choices come from the model's supported_efforts. The choice is stored per model.
- */
-@Composable
-private fun ReasoningSetting(
-    model: String,
-    pref: ReasoningPreference,
-    models: OpenRouterModels,
-    onEnabled: (Boolean) -> Unit,
-    onEffort: (String) -> Unit,
-) {
-    var check by remember(model) { mutableStateOf<ModelCheck>(ModelCheck.Loading) }
-    var attempt by remember(model) { mutableIntStateOf(0) }
-    LaunchedEffect(model, attempt) {
-        check = ModelCheck.Loading
-        check = try {
-            ModelCheck.Ready(models.reasoning(model, refresh = attempt > 0))
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            ModelCheck.Failed
-        }
-    }
-    val info = (check as? ModelCheck.Ready)?.info
-    val supported = info?.supported == true
-    val resolved = info?.let { ReasoningRules.resolve(it, pref) }
-    val locked = info != null && supported && !info.canDisable
-    val status = when {
-        check is ModelCheck.Loading -> "checking model"
-        check is ModelCheck.Failed -> "could not check model, tap to retry"
-        !supported -> "not supported"
-        locked -> "always on for this model"
-        else -> null
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = check is ModelCheck.Failed || (supported && !locked)) {
-                    if (check is ModelCheck.Failed) attempt++ else onEnabled(resolved?.on != true)
-                }
-                .padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Reasoning",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (supported) Palette.TextPrimary else Palette.TextTertiary,
-                )
-                if (status != null) Text(status, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-            }
-            // Mandatory reasoning has no off option, so no switch is shown at all.
-            if (!locked) Switch(
-                checked = resolved?.on == true,
-                onCheckedChange = onEnabled,
-                enabled = supported,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Palette.OnAccent,
-                    checkedTrackColor = Palette.Accent,
-                    uncheckedThumbColor = Palette.IconMuted,
-                    uncheckedTrackColor = Palette.SurfaceHigh,
-                    uncheckedBorderColor = Palette.SurfaceHighest,
-                    disabledUncheckedThumbColor = Palette.SurfaceHighest,
-                    disabledUncheckedTrackColor = Palette.Surface,
-                    disabledUncheckedBorderColor = Palette.SurfaceHigh,
-                ),
-            )
-        }
-        val choices = info?.effortChoices.orEmpty()
-        // A single level is just "on" (Ollama boolean thinking models), so no chips for it.
-        if (resolved?.on == true && choices.size > 1) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                choices.forEach { effort ->
-                    val selected = effort == resolved.effort
-                    Text(
-                        effort,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (selected) Palette.OnAccent else Palette.TextSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(if (selected) Palette.Accent else Palette.SurfaceHigh)
-                            .clickable { onEffort(effort) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    )
-                }
-            }
-        }
     }
 }
 

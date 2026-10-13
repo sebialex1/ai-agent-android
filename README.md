@@ -12,7 +12,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 - Conversations can be **pinned** (own section on top) and renamed from the themed options sheet (the ⋯ next to a chat in the conversations list; the chat's own top bar only has back, new chat and workspace). After the first answer the model writes a short **title** from the conversation (on by default); a renamed chat keeps its title.
 - **Memory of past chats** is per conversation, switched in that chat's options sheet (the only switch for it). New chats start with it on until you switch it off somewhere; from then on they start with the last choice made there (an explicit off is never overridden). Settings has no second copy.
-- **Settings** opens on a vertical list of sections: General (permissions, Termux sandbox), Models (model, reasoning, and every API key: OpenRouter, Ollama Cloud and the TinyFish web search key), On-device, Chats (auto titles, delete all) and About. Tapping a section opens its own page with its name next to Back; Back (or system Back) returns to the list.
+- **Settings** opens on a vertical list of sections: General (permissions, Termux sandbox), Models (every API key: OpenRouter, Ollama Cloud and the TinyFish web search key; the active model and its reasoning are picked only in the chat's + sheet), On-device, Chats (auto titles, delete all) and About. Tapping a section opens its own page with its name next to Back; Back (or system Back) returns to the list.
 - The workspace **Files** tab is a small file manager: breadcrumbs, folders, sizes and ages; open, download to `Download/AgentForAndroid`, rename and delete per item; download a folder as zip, clear it, or show hidden files.
 - The **file viewer** shows type and size under the name. Images (png, jpg, gif, webp, bmp) open in-app with Coil (pinch or double-tap to zoom, GIFs animate). Video (mp4, webm, mkv, mov, m4v) and audio (mp3, ogg, wav, m4a) play in a small built-in player on the platform `MediaPlayer` (play/pause, seek, time; no ExoPlayer). Everything else opens as text or rendered Markdown.
 
@@ -26,11 +26,11 @@ All keys go in **Settings > Models** (gear on the conversations screen). They ar
 | OpenRouter | Model inference for the agent loop (tool calling) | `POST https://openrouter.ai/api/v1/chat/completions` (`Authorization: Bearer …`) |
 | Ollama Cloud (optional) | Hosted Ollama models, a second cloud provider | `POST https://ollama.com/api/chat` (native API), `GET https://ollama.com/api/tags`, `POST https://ollama.com/api/show` (`Authorization: Bearer …`) |
 
-The model is picked in Settings and defaults to `openrouter/auto`; it is not hard-coded anywhere. On-device models need no key at all (see below).
+The model is picked in the chat's + sheet and defaults to `openrouter/auto`; it is not hard-coded anywhere. On-device models need no key at all (see below).
 
 ## Models: three separate sources
 
-The model is chosen from the chat's **+** sheet (one row showing the current model; tapping it opens a clean searchable list) or from Settings > Models. The list shows downloaded on-device models, then Ollama Cloud and OpenRouter models, each pulled live from the provider (`/api/tags`, `/api/v1/models`). A manual model-id field only appears for a provider whose list failed or came back empty:
+The model is chosen from the chat's **+** sheet (one row showing the current model; tapping it opens a clean searchable list); that is the only model picker, Settings > Models only holds the keys. The list shows downloaded on-device models, then Ollama Cloud and OpenRouter models, each pulled live from the provider (`/api/tags`, `/api/v1/models`). A manual model-id field only appears for a provider whose list failed or came back empty:
 
 | Source | Runs on | Model ids | Needs |
 | --- | --- | --- | --- |
@@ -135,7 +135,7 @@ Every assistant turn renders in this fixed order:
 
 While the model thinks, its raw reasoning streams into the `thought` row as words, about one line tall, with older text fading out. When it finishes, the row keeps one line of the reasoning that fades at the tail; tap it for the full text.
 
-The **+** in the input opens an attachment sheet: Camera, Photos and Files tiles, plus a quick **Thinking** switch for the selected model (the same per-model setting as in Settings). Picked items (Photos takes images and videos) are copied byte-for-byte into `/workspace/imports/` and wait above the input as small thumbnails with a remove button; a message can be just the imports. In the sent message they show as previews instead of a file name: images and videos as rounded, aspect-fit cards (videos with their first frame, a play badge and the length), other files as a compact chip with name and size. Tapping one opens it in the file viewer and its built-in player. The model still receives them as `@imports/<name>` mentions.
+The **+** in the input opens an attachment sheet: Camera, Photos and Files tiles, the model row and the **Thinking** switch with its effort levels for the selected model (the only place for them; stored per model). Picked items (Photos takes images and videos) are copied byte-for-byte into `/workspace/imports/` and wait above the input as small thumbnails with a remove button; a message can be just the imports. In the sent message they show as previews instead of a file name: images and videos as rounded, aspect-fit cards (videos with their first frame, a play badge and the length), other files as a compact chip with name and size. Tapping one opens it in the file viewer and its built-in player. The model still receives them as `@imports/<name>` mentions.
 
 The folder button in the chat top bar opens the workspace: a segmented switch for **Terminal**, **Sources** (every page read in the conversation) and **Files** (an **Artifacts** group with files the agent wrote, then all workspace files). Sources and Files only appear when they have content.
 

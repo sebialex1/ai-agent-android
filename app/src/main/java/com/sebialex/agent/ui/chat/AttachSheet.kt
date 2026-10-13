@@ -43,6 +43,7 @@ import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.ui.components.AppSheet
 import com.sebialex.agent.ui.components.SheetOption
+import com.sebialex.agent.ui.settings.ChoiceChips
 import com.sebialex.agent.ui.settings.ModelList
 import com.sebialex.agent.ui.settings.modelName
 import com.sebialex.agent.ui.settings.sourceLine
@@ -54,8 +55,9 @@ import com.sebialex.agent.ui.theme.softSurface
 enum class AttachSource { CAMERA, PHOTOS, FILES }
 
 /**
- * The "+" sheet: camera, photos and files tiles, then the model for this chat (one quiet row
- * that opens a clean searchable list in place) and the thinking switch for that model.
+ * The "+" sheet: camera, photos and files tiles, then the model (one quiet row that opens a
+ * clean searchable list in place) and the thinking switch and effort for that model. This is
+ * the only place to pick the active model and its reasoning; Settings > Models holds the keys.
  * Per-conversation options such as memory of past chats live in the chat's options sheet.
  */
 @Composable
@@ -153,6 +155,10 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
         !current.canDisable -> "Always on for this model"
         else -> null
     }
+    // Effort levels live here too (Settings > Models no longer repeats model or reasoning).
+    val resolved = current?.let { ReasoningRules.resolve(it, snap.reasoning) }
+    val efforts = current?.effortChoices.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -179,5 +185,17 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
                 uncheckedBorderColor = Palette.SurfaceHighest,
             ),
         )
+    }
+    // A single level is just "on" (Ollama boolean thinking), so chips only for real choices.
+    if (resolved?.on == true && efforts.size > 1) {
+        Box(Modifier.padding(start = 44.dp, end = 10.dp, bottom = 6.dp)) {
+            ChoiceChips(
+                options = efforts,
+                selected = resolved.effort ?: "",
+                label = { it },
+                onSelect = { settings.setReasoningEffort(snap.model, it) },
+            )
+        }
+    }
     }
 }
