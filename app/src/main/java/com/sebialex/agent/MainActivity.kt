@@ -79,6 +79,7 @@ fun AppRoot(container: AppContainer) {
     // Files and the workspace shell always belong to the conversation that is open.
     val chat by vm.state.collectAsStateWithLifecycle()
     val runtime = container.runtime(chat.session.id)
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // Enabled whenever there is a screen below the current one. On the root (conversations)
     // it is disabled, so the system default (finish the activity) applies only there.
@@ -116,8 +117,19 @@ fun AppRoot(container: AppContainer) {
                 Screen.Workspace -> WorkspaceScreen(
                     shell = runtime.shell,
                     policy = container.policy,
+                    workspace = runtime.workspace,
+                    sources = chat.session.turns.flatMap { it.sources },
+                    artifacts = chat.session.turns.flatMap { it.attachments },
                     onBack = ::pop,
-                    onOpenFile = { push(Screen.File(it, null)) },
+                    onOpenFile = { path, base -> push(Screen.File(path, base)) },
+                    onOpenUrl = { url ->
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    },
                 )
                 Screen.Conversations -> ConversationsScreen(
                     vm = vm,
