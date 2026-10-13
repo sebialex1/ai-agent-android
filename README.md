@@ -28,6 +28,8 @@ Settings > General has a **Model** row that shows the current model and where it
 
 The **Cloud provider** switch (OpenRouter / Ollama Cloud) in General shows that provider's key field and makes its last used model active. Without an Ollama key the provider can still be selected; the picker then shows a short note instead of a model list, and a chat answers with a notice without running anything. Ollama Cloud uses the same streaming, tool-calling and reasoning code as OpenRouter through its OpenAI-compatible endpoint; tools are only offered to models whose `/api/show` capabilities include `tools`, and the Reasoning switch follows each model's `thinking` levels (`reasoning_effort`, `"none"` to turn it off).
 
+**Custom Ollama model ID.** The Ollama tab of the picker always has a *Custom model ID* field, for models the live list does not show (or when `/api/tags` fails or comes back empty). Type the name as listed on ollama.com, e.g. `gpt-oss:120b`; an `ollama/` prefix and the local-app `-cloud` / `:cloud` suffix are stripped. Once saved it gets its own row ("Custom model ID") and is used as `ollama/<name>`. Clearing the field and saving removes it; with the field empty the picker behaves as before. Names unknown to `/api/show` simply get no Reasoning control.
+
 ## On-device models (Settings > On-device)
 
 Local inference uses Google's **LiteRT-LM** runtime (`com.google.ai.edge.litertlm:litertlm-android:0.18.0`) on the GPU through OpenCL. Nothing leaves the phone; web tools still use the network when the model calls them.
@@ -40,7 +42,7 @@ Local inference uses Google's **LiteRT-LM** runtime (`com.google.ai.edge.litertl
 
 The "2B/4B" Gemma models are Gemma 4 E2B / E4B (effective 2B / 4B parameters), the current on-device Gemma generation. Files come from the ungated `litert-community` repositories on Hugging Face, pinned to exact commits, the same builds Google's AI Edge Gallery ships. You can also import any `.litertlm` file; its tool-calling and thinking support is read from the file.
 
-- **Downloads** go through the system `DownloadManager` into the app's external files directory (`Android/data/<app>/files/models`, no storage permission, removed with the app). They continue in the background with a notification, survive the app being closed, and are checked against the exact byte size before use. Free space is checked first.
+- **Downloads** go through the system `DownloadManager` into `Download/AgentForAndroid/models/` in shared storage, so models survive clearing app data and reinstalling. The On-device tab shows the folder actually in use. Android 11+ needs no permission to create files there. Android 8-10 need the storage permission (an *Allow* button appears); without it, and whenever shared storage cannot be written, files go to the app-specific folder `Android/data/<app>/files/models` (deleted with the app). Models already in that old folder are moved to Downloads once, in the background, with progress on the card. After a reinstall on Android 11+, Android hides files the previous install created until **All files access** is granted (the same access the Termux sandbox uses; an *Allow* button is shown). LiteRT-LM's compiled caches stay app-specific (`Android/data/<app>/files/litert-cache`). Downloads continue in the background with a notification, survive the app being closed, and are checked against the exact byte size before use. Free space is checked first.
 - **Loading**: one model is in memory at a time. It loads on first use (or on "Use"/"Load") on the GPU; if the GPU path is unavailable (no OpenCL, driver error) it falls back to the CPU and says why. Picking a cloud model unloads it to free memory.
 - **Context window**: 2K to 32K tokens (default 4K), capped by each model. Long histories and tool outputs are trimmed to fit.
 - **Faster decoding (MTP)**: optional multi-token prediction for models that include it (Gemma 4) on the GPU.
@@ -131,6 +133,16 @@ When you send a new message, all earlier step groups collapse. Answers, files, a
 
 A newly received answer types out with a fast typewriter that speeds up as the answer grows. Each answer is revealed once. Reopening a conversation, restarting the app, or coming back from another screen shows the saved text immediately.
 
+## Memory of past chats
+
+The + sheet in a chat has a **Memory of past chats** switch. It is stored per conversation and off by default. When it is off the agent is not even told the tool exists. When on, the agent (OpenRouter, Ollama Cloud and on-device alike) gets one read-only tool, `conversation_memory`, with three actions:
+
+- `list_conversations` (optional `query`): recent conversations, newest first, one line each (id, title, date, message count, first request). At most 25 rows / ~5 KB.
+- `summarize_conversation` (`conversation_id`): requests, the last answer excerpt, tools used, files written, sources. ~2.5 KB at most, built from the saved messages without an extra model call.
+- `read_conversation` (`conversation_id`, `offset`): the full messages, paged (~7 KB per page, 3 KB per message) with the next offset at the end.
+
+The tool can only read `session.json` files; nothing in it writes. The current conversation is left out, since it is already in context.
+
 ## Conversations
 
 The X at the top left opens the conversations menu: settings, search, and new conversation across the top, recently updated conversations below, and an input at the bottom that starts a new conversation. Tap a row to reopen it, or use its options to delete it.
@@ -163,7 +175,8 @@ app/src/main/java/com/sebialex/agent
 ├── domain/
 │   ├── model/                  Turn, Step, ToolCall, ToolResult, FileAttachment, SourceRef
 │   ├── agent/                  AgentOrchestrator (loop + approvals + audit), AgentBrain, RoutingBrain
-│   ├── tools/ToolExecutor.kt   dispatches tool calls to workspace / shell / web
+│   ├── tools/ToolExecutor.kt   dispatches tool calls to workspace / shell / web / memory
+│   ├── tools/ConversationMemory  read-only interface for the conversation_memory tool
 │   ├── permission/             PermissionPolicy (pure, unit tested)
 │   └── markdown/               block + inline parser, LCS line diff
 ├── data/
@@ -175,7 +188,8 @@ app/src/main/java/com/sebialex/agent
 │   ├── llm/OpenRouterBrain     OpenAI-compatible tool-calling client (OpenRouter and Ollama Cloud)
 │   ├── llm/OllamaCloud         Ollama Cloud model list, capabilities, OllamaBrain
 │   ├── local/                  LocalModels catalog, ModelStore (downloads/imports), LocalEngine (LiteRT-LM, GPU/CPU), LocalBrain
-│   └── persistence/            per-conversation session store and JSONL audit log
+│   └── persistence/            per-conversation session store, JSONL audit log,
+│                               ConversationMemoryReader (capped list/summary/paged read)
 └── ui/
     ├── theme/                  fixed dark palette, typography, soft surfaces
     ├── components/             icon buttons, fading single-line text, favicon loader
