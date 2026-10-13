@@ -163,10 +163,18 @@ fun ChatScreen(
             onWorkspace = onOpenWorkspace,
         )
         val turns = state.session.turns
+        // Typing "@" opens a floating file picker above the input (over the bottom of the list).
+        val mention = remember(input) { activeMention(input) }
+        var candidates by remember(sessionId) { mutableStateOf<List<MentionCandidate>?>(null) }
+        val mentionOpen = mention != null
+        androidx.compose.runtime.LaunchedEffect(mentionOpen, sessionId, turns.size) {
+            if (mentionOpen) candidates = vm.mentionCandidates()
+        }
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(26.dp, androidx.compose.ui.Alignment.Bottom),
         ) {
@@ -199,6 +207,19 @@ fun ChatScreen(
                     )
                 }
             }
+        }
+        MentionOverlay(visible = mention != null, modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
+            val m = mention ?: ActiveMention(0, 0, "")
+            val all = candidates.orEmpty()
+            val shown = remember(all, m.query) { filterMentions(all, m.query) }
+            MentionPopup(
+                items = shown,
+                query = m.query,
+                loading = candidates == null,
+                onPick = { c -> mention?.let { updateInput(applyMention(input, it, c.path)) } },
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+            )
+        }
         }
         if (pending.isNotEmpty()) {
             val items = remember(pending) { pending.mapNotNull { p -> vm.workspaceFile(p)?.let { p to it } } }

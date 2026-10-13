@@ -7,11 +7,15 @@ package com.sebialex.agent.domain.agent
  * (`me@example.com`) is never one.
  */
 object Mentions {
-    private val MENTION = Regex("(?<=^|\\s)@(\\S+)")
+    /** `@path` or, for names with spaces, `@"path with spaces"`. */
+    private val MENTION = Regex("(?<=^|\\s)@(?:\"([^\"\\n]+)\"|(\\S+))")
+
+    private fun pathOf(m: MatchResult): String =
+        m.groupValues[1].ifEmpty { m.groupValues[2].trimEnd(',', '.', ';', ':', '!', '?', ')') }
 
     /** Mentioned paths, in order, without duplicates and without trailing punctuation. */
     fun paths(text: String): List<String> =
-        MENTION.findAll(text).map { it.groupValues[1].trimEnd(',', '.', ';', ':', '!', '?', ')') }
+        MENTION.findAll(text).map { pathOf(it) }
             .filter { it.isNotEmpty() }
             .distinct()
             .toList()
@@ -20,10 +24,18 @@ object Mentions {
     fun strip(text: String, paths: Collection<String>): String {
         if (paths.isEmpty()) return text.trim()
         return MENTION.replace(text) { m ->
-            val p = m.groupValues[1].trimEnd(',', '.', ';', ':', '!', '?', ')')
-            if (p in paths) m.value.removePrefix("@$p") else m.value
+            val p = pathOf(m)
+            if (p !in paths) m.value
+            // Quoted mentions go whole; a bare one keeps any trailing punctuation it carried.
+            else if (m.groupValues[1].isNotEmpty()) "" else m.value.removePrefix("@$p")
         }.replace(Regex("[ \\t]{2,}"), " ").trim()
     }
+
+    /** Character ranges of every mention in [text], for highlighting. */
+    fun ranges(text: String): List<IntRange> = MENTION.findAll(text).map { it.range }.toList()
+
+    /** The mention text for [path]: bare when it has no whitespace, quoted otherwise. */
+    fun format(path: String): String = if (path.any { it.isWhitespace() }) "@\"$path\"" else "@$path"
 
     private val IMAGE_EXT = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
 

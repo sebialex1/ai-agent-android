@@ -40,6 +40,11 @@ data class ChatUiState(
     val queued: List<QueuedMessage> = emptyList(),
 )
 
+/** A workspace file offered by the @-mention popup. [path] is relative to /workspace. */
+data class MentionCandidate(val path: String, val file: java.io.File, val artifact: Boolean)
+
+private const val MAX_MENTION_FILES = 300
+
 /** A message typed and sent while an answer was still running. [task] already holds its import mentions. */
 data class QueuedMessage(val id: String, val task: String)
 
@@ -480,6 +485,25 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val path = importPath(name)
         container.runtime(currentId).workspace.writeStream(path, input)
         path
+    }
+
+    /**
+     * Files of the current conversation's workspace that can be @-mentioned: artifacts and files
+     * the agent wrote first (newest first), then everything else by last change. Hidden folders
+     * (scripts, temp) are left out.
+     */
+    suspend fun mentionCandidates(): List<MentionCandidate> = withContext(Dispatchers.IO) {
+        val ws = container.runtime(currentId).workspace
+        val produced = cache[currentId]?.turns.orEmpty().flatMap { it.artifacts + it.attachments }.map { it.path.removePrefix("/") }.toSet()
+        runCatching { ws.walk() }.getOrDefault(emptyList())
+            .asSequence()
+            .filter { it.isFile }
+            .map { f -> ws.virtualOf(f).removePrefix("/") to f }
+            .filterNot { (p, _) -> p.split('/').any { it.startsWith(".") } }
+            .map { (p, f) -> MentionCandidate(p, f, artifact = p in produced) }
+            .sortedWith(compareByDescending<MentionCandidate> { it.artifact }.thenByDescending { it.file.lastModified() })
+            .take(MAX_MENTION_FILES)
+            .toList()
     }
 
     fun step(stepId: String): Step? = _state.value.session.turns.asSequence().flatMap { it.steps }.firstOrNull { it.id == stepId }

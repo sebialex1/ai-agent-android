@@ -84,12 +84,23 @@ fun UserMessage(
 ) {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val press = rememberUpdatedState(onLongPress)
-    // Mentioned workspace files (imports) become previews; their @path text is not repeated.
-    val files = remember(turn.text) {
+    // Imports become previews and their @path text is not repeated. Files @-mentioned while
+    // typing stay in the text (highlighted) and get a compact chip under the bubble.
+    val resolved = remember(turn.text) {
         com.sebialex.agent.domain.agent.Mentions.paths(turn.text).mapNotNull { p -> resolveFile(p)?.let { p to it } }
     }
+    val files = remember(resolved) { resolved.filter { it.first.startsWith("imports/") } }
+    val mentioned = remember(resolved) { resolved.filterNot { it.first.startsWith("imports/") } }
     val body = remember(turn.text, files) {
         if (files.isEmpty()) turn.text else com.sebialex.agent.domain.agent.Mentions.strip(turn.text, files.map { it.first })
+    }
+    val styledBody = remember(body, mentioned) {
+        androidx.compose.ui.text.buildAnnotatedString {
+            append(body)
+            if (mentioned.isNotEmpty()) com.sebialex.agent.domain.agent.Mentions.ranges(body).forEach { r ->
+                addStyle(androidx.compose.ui.text.SpanStyle(color = Palette.Link, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), r.first, r.last + 1)
+            }
+        }
     }
     Column(
         Modifier.fillMaxWidth().padding(start = 56.dp),
@@ -98,7 +109,7 @@ fun UserMessage(
     ) {
         files.forEach { (path, file) -> ImportCard(path, file, onClick = { onOpenFile(path) }) }
         if (body.isNotBlank()) Text(
-            body,
+            styledBody,
             style = MaterialTheme.typography.bodyLarge,
             color = Palette.TextPrimary,
             modifier = Modifier
@@ -115,6 +126,26 @@ fun UserMessage(
                 )
                 .padding(horizontal = 16.dp, vertical = 11.dp),
         )
+        mentioned.forEach { (path, file) -> MentionChip(file, onClick = { onOpenFile(path) }) }
+    }
+}
+
+/** A workspace file @-mentioned in your message: small thumbnail or type icon and its name. */
+@Composable
+private fun MentionChip(file: java.io.File, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier
+            .widthIn(max = 260.dp)
+            .clip(shape)
+            .background(Palette.Surface)
+            .clickable(onClick = onClick)
+            .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MediaThumb(file, 22.dp, corner = 11.dp)
+        Spacer(Modifier.width(8.dp))
+        FadingText(file.name, MaterialTheme.typography.labelMedium, Palette.TextSecondary)
     }
 }
 
