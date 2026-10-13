@@ -43,6 +43,9 @@ sealed interface Screen {
     data object Conversations : Screen
 }
 
+/** Default back stack: conversations list at the root, the current chat on top. */
+private val CHAT_STACK: List<Screen> = listOf(Screen.Conversations, Screen.Chat)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
@@ -65,14 +68,20 @@ fun AppRoot(container: AppContainer) {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = ChatViewModel(container) as T
     })
-    var stack by remember { mutableStateOf(listOf<Screen>(Screen.Chat)) }
+    // The conversations list is the root of the app and the open chat sits directly above it,
+    // so system Back always walks up the hierarchy (viewer -> chat -> conversations) and only
+    // leaves the app from the conversations list, where there is nowhere left to go back to.
+    var stack by remember { mutableStateOf(CHAT_STACK) }
     fun push(s: Screen) { stack = stack + s }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
-    fun backToChat() { stack = listOf(Screen.Chat) }
+    fun backToChat() { stack = CHAT_STACK }
+    fun toConversations() { stack = listOf(Screen.Conversations) }
     // Files and the workspace shell always belong to the conversation that is open.
     val chat by vm.state.collectAsStateWithLifecycle()
     val runtime = container.runtime(chat.session.id)
 
+    // Enabled whenever there is a screen below the current one. On the root (conversations)
+    // it is disabled, so the system default (finish the activity) applies only there.
     BackHandler(enabled = stack.size > 1) { pop() }
 
     Box(Modifier.fillMaxSize().background(Palette.Ink)) {
@@ -90,7 +99,7 @@ fun AppRoot(container: AppContainer) {
             when (screen) {
                 Screen.Chat -> ChatScreen(
                     vm = vm,
-                    onClose = { push(Screen.Conversations) },
+                    onClose = ::toConversations,
                     onOpenFile = { path, base -> push(Screen.File(path, base)) },
                     onOpenWorkspace = { push(Screen.Workspace) },
                     onOpenSettings = { push(Screen.Settings) },
