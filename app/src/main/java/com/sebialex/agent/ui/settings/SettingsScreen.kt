@@ -35,6 +35,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -73,10 +79,24 @@ fun SettingsScreen(
             QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
             Text("Settings", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(start = 8.dp))
         }
+        val scroll = rememberScrollState()
         Column(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                // Rows scrolling under the header dissolve instead of showing a cut-off line.
+                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                .drawWithContent {
+                    drawContent()
+                    if (scroll.value > 0) {
+                        val fade = 28.dp.toPx().coerceAtMost(size.height)
+                        drawRect(
+                            brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = fade),
+                            size = androidx.compose.ui.geometry.Size(size.width, fade),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    }
+                }
+                .verticalScroll(scroll)
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
