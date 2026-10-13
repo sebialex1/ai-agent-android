@@ -51,7 +51,8 @@ fun ChatTopBar(
         Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
             QuietIconButton(R.drawable.ic_new_chat, "New conversation", onClick = onNew)
             Box {
-                QuietIconButton(R.drawable.ic_more, "More options", onClick = { menu = true })
+                // The gear from res/drawable/ic_settings.xml opens Workspace and Settings.
+                QuietIconButton(R.drawable.ic_settings, "Settings", onClick = { menu = true })
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(
                         text = { Text("Workspace", style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary) },
