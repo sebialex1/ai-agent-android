@@ -8,13 +8,15 @@ import com.sebialex.agent.data.llm.ReasoningPreference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 
 /**
  * Secrets and agent settings, stored with EncryptedSharedPreferences.
  * The AES-256 master key lives in the Android Keystore and never leaves secure hardware
  * when available. Keys are never logged, persisted elsewhere or rendered in the chat.
  */
-class SecureSettings(context: Context) {
+class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool {
 
     private val prefs: SharedPreferences = run {
         val masterKey = MasterKey.Builder(context, MASTER_KEY_ALIAS)
@@ -60,7 +62,20 @@ class SecureSettings(context: Context) {
         val memoryForNewChats: Boolean = true,
         /** Let the model write conversation titles. */
         val autoTitles: Boolean = true,
+        /** Every provider's keys (masked), by provider id; see [KeyPool]. */
+        val keys: Map<String, List<KeyView>> = emptyMap(),
+        /** User-added OpenAI-compatible providers. */
+        val customProviders: List<CustomProvider> = emptyList(),
     )
+
+    /** One stored key as the UI may show it: never the key itself, only its last characters. */
+    data class KeyView(val id: String, val hint: String, val label: String, val active: Boolean, val failing: Boolean, val addedAt: Long)
+
+    // Declared before _state: read() (its initial value) already uses them.
+    private val keyJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /** Keys that failed recently (provider:key to when), in memory only: a restart retries them. */
+    private val failing = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private val _state = MutableStateFlow(read())
     val state: StateFlow<Snapshot> = _state.asStateFlow()
@@ -76,9 +91,10 @@ class SecureSettings(context: Context) {
     )
     val memoryChats: StateFlow<Set<String>> = _memoryChats.asStateFlow()
 
-    fun tinyFishKey(): String? = prefs.getString(KEY_TINYFISH, null)?.takeIf { it.isNotBlank() }
-    fun openRouterKey(): String? = prefs.getString(KEY_OPENROUTER, null)?.takeIf { it.isNotBlank() }
-    fun ollamaKey(): String? = prefs.getString(KEY_OLLAMA, null)?.takeIf { it.isNotBlank() }
+    // The active key of each built-in provider (several keys can be stored; see the key ring below).
+    fun tinyFishKey(): String? = activeKey(PROVIDER_TINYFISH)
+    fun openRouterKey(): String? = activeKey(PROVIDER_OPENROUTER)
+    fun ollamaKey(): String? = activeKey(PROVIDER_OLLAMA)
     fun cloudProvider(): String = prefs.getString(KEY_PROVIDER, null)?.takeIf { it == PROVIDER_OLLAMA } ?: PROVIDER_OPENROUTER
     fun ollamaCustomModel(): String = prefs.getString(KEY_OLLAMA_CUSTOM, null)?.trim().orEmpty()
     fun ollamaModel(): String = prefs.getString(KEY_OLLAMA_MODEL, null)?.takeIf { it.startsWith(OLLAMA_PREFIX) }.orEmpty()
@@ -104,9 +120,160 @@ class SecureSettings(context: Context) {
         effort = prefs.getString(reasoningEffortKey(model), null)?.takeIf { it.isNotBlank() },
     )
 
-    fun setTinyFishKey(value: String?) = edit { putOrRemove(KEY_TINYFISH, value) }
-    fun setOpenRouterKey(value: String?) = edit { putOrRemove(KEY_OPENROUTER, value) }
-    fun setOllamaKey(value: String?) = edit { putOrRemove(KEY_OLLAMA, value) }
+    /** Adds a key (null or blank removes every key of that provider), kept for older call sites. */
+    fun setTinyFishKey(value: String?) = setSingle(PROVIDER_TINYFISH, value)
+    fun setOpenRouterKey(value: String?) = setSingle(PROVIDER_OPENROUTER, value)
+    fun setOllamaKey(value: String?) = setSingle(PROVIDER_OLLAMA, value)
+
+    private fun setSingle(provider: String, value: String?) {
+        if (value.isNullOrBlank()) clearKeys(provider) else addKey(provider, value)
+    }
+
+    // ---- Key ring: several keys per provider, one active, rotation on failure -----------------
+
+    @kotlinx.serialization.Serializable
+    data class StoredKey(val id: String, val key: String, val label: String = "", val addedAt: Long = 0)
+
+    /** The stored keys of [provider], oldest first. A key saved by an older version is migrated in. */
+    @Synchronized
+    fun storedKeys(provider: String): List<StoredKey> {
+        val raw = prefs.getString(KEY_RING_PREFIX + provider, null)
+        if (raw != null) return runCatching { keyJson.decodeFromString<List<StoredKey>>(raw) }.getOrDefault(emptyList())
+        val legacy = LEGACY_KEYS[provider]?.let { prefs.getString(it, null) }?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
+        val migrated = listOf(StoredKey(newKeyId(), legacy, "", System.currentTimeMillis()))
+        prefs.edit().putString(KEY_RING_PREFIX + provider, keyJson.encodeToString(migrated)).apply()
+        return migrated
+    }
+
+    private fun writeKeys(provider: String, keys: List<StoredKey>) = edit {
+        if (keys.isEmpty()) remove(KEY_RING_PREFIX + provider) else putString(KEY_RING_PREFIX + provider, keyJson.encodeToString(keys))
+        // The single legacy entry is never read again once the ring exists; drop it with the last key.
+        LEGACY_KEYS[provider]?.let { if (keys.isEmpty()) remove(it) }
+        if (keys.none { it.id == prefs.getString(KEY_ACTIVE_PREFIX + provider, null) }) {
+            if (keys.isEmpty()) remove(KEY_ACTIVE_PREFIX + provider) else putString(KEY_ACTIVE_PREFIX + provider, keys.first().id)
+        }
+    }
+
+    /** Adds [key] to [provider] (a duplicate is ignored). The first key becomes active. */
+    @Synchronized
+    fun addKey(provider: String, key: String, label: String = "") {
+        val k = key.trim()
+        if (k.isEmpty()) return
+        val keys = storedKeys(provider)
+        if (keys.any { it.key == k }) return
+        writeKeys(provider, keys + StoredKey(newKeyId(), k, label.trim().take(40), System.currentTimeMillis()))
+    }
+
+    @Synchronized
+    fun removeKey(provider: String, id: String) {
+        val keys = storedKeys(provider)
+        keys.firstOrNull { it.id == id }?.let { failing.remove(provider + ":" + it.key) }
+        writeKeys(provider, keys.filterNot { it.id == id })
+    }
+
+    @Synchronized
+    fun clearKeys(provider: String) {
+        storedKeys(provider).forEach { failing.remove(provider + ":" + it.key) }
+        writeKeys(provider, emptyList())
+    }
+
+    /** Makes the key [id] the one used from now on (and clears its failing mark). */
+    @Synchronized
+    fun setActiveKey(provider: String, id: String) {
+        val key = storedKeys(provider).firstOrNull { it.id == id } ?: return
+        failing.remove(provider + ":" + key.key)
+        edit { putString(KEY_ACTIVE_PREFIX + provider, id) }
+    }
+
+    @Synchronized
+    override fun activeKey(provider: String): String? {
+        val keys = storedKeys(provider)
+        if (keys.isEmpty()) return null
+        val id = prefs.getString(KEY_ACTIVE_PREFIX + provider, null)
+        return (keys.firstOrNull { it.id == id } ?: keys.first()).key
+    }
+
+    override fun keyCount(provider: String): Int = storedKeys(provider).size
+
+    @Synchronized
+    override fun rotateKey(provider: String, failed: String, reason: String): String? {
+        val now = System.currentTimeMillis()
+        failing[provider + ":" + failed] = now
+        val keys = storedKeys(provider)
+        if (keys.size < 2) { publishKeys(); return null }
+        val start = keys.indexOfFirst { it.key == failed }.coerceAtLeast(0)
+        // The next key after the failed one (wrapping around) that has not failed recently.
+        val next = (1 until keys.size).map { keys[(start + it) % keys.size] }
+            .firstOrNull { k -> (failing[provider + ":" + k.key] ?: 0L) < now - KEY_COOLDOWN_MS }
+        if (next == null) { publishKeys(); return null }
+        edit { putString(KEY_ACTIVE_PREFIX + provider, next.id) }
+        return next.key
+    }
+
+    override fun markKeyOk(provider: String, key: String) {
+        if (failing.remove("$provider:$key") != null) publishKeys()
+    }
+
+    private fun publishKeys() { _state.value = read() }
+
+    private fun keyViews(): Map<String, List<KeyView>> {
+        val providers = listOf(PROVIDER_OPENROUTER, PROVIDER_OLLAMA, PROVIDER_TINYFISH) +
+            customProviders().map { com.sebialex.agent.domain.agent.KeyPool.CUSTOM_PREFIX + it.id }
+        val now = System.currentTimeMillis()
+        return providers.associateWith { p ->
+            val keys = storedKeys(p)
+            val activeId = prefs.getString(KEY_ACTIVE_PREFIX + p, null)?.takeIf { id -> keys.any { it.id == id } } ?: keys.firstOrNull()?.id
+            keys.map { k ->
+                KeyView(
+                    id = k.id, hint = hint(k.key), label = k.label, active = k.id == activeId,
+                    failing = (failing["$p:${k.key}"] ?: 0L) >= now - KEY_COOLDOWN_MS, addedAt = k.addedAt,
+                )
+            }
+        }
+    }
+
+    private fun newKeyId() = java.lang.Long.toString(System.nanoTime(), 36) + java.lang.Long.toString((Math.random() * 46656).toLong(), 36)
+
+    // ---- Custom OpenAI-compatible providers ----------------------------------------------------
+
+    @kotlinx.serialization.Serializable
+    data class CustomProvider(
+        val id: String,
+        val name: String,
+        /** OpenAI-style API root, e.g. https://api.groq.com/openai/v1 (no trailing slash). */
+        val baseUrl: String,
+        /** Preset it was created from, or "custom". */
+        val preset: String = "custom",
+        /** Model ids found at `/models` (or typed by hand). */
+        val models: List<String> = emptyList(),
+        /** What auto-detection found, shown under the name. */
+        val detected: String = "",
+    )
+
+    fun customProviders(): List<CustomProvider> =
+        prefs.getString(KEY_CUSTOM_PROVIDERS, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<List<CustomProvider>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    fun customProvider(id: String): CustomProvider? = customProviders().firstOrNull { it.id == id }
+
+    /** Adds or replaces (same id) a custom provider. */
+    @Synchronized
+    fun saveCustomProvider(provider: CustomProvider) {
+        val list = customProviders().filterNot { it.id == provider.id } + provider
+        edit { putString(KEY_CUSTOM_PROVIDERS, keyJson.encodeToString(list)) }
+    }
+
+    /** Removes a custom provider and its keys; a selected model of it falls back to the default. */
+    @Synchronized
+    fun removeCustomProvider(id: String) {
+        clearKeys(com.sebialex.agent.domain.agent.KeyPool.CUSTOM_PREFIX + id)
+        val list = customProviders().filterNot { it.id == id }
+        edit {
+            putString(KEY_CUSTOM_PROVIDERS, keyJson.encodeToString(list))
+            if (model().startsWith("$CUSTOM_MODEL_PREFIX$id/")) putString(KEY_MODEL, remoteModel())
+        }
+    }
     /** Stores a hand-typed Ollama model name (already normalized, no prefix); empty clears it. */
     fun setOllamaCustomModel(value: String?) = edit { putOrRemove(KEY_OLLAMA_CUSTOM, value) }
 
@@ -190,12 +357,22 @@ class SecureSettings(context: Context) {
         localSpeculative = localSpeculative(),
         memoryForNewChats = memoryForNewChats(),
         autoTitles = autoTitles(),
+        keys = keyViews(),
+        customProviders = customProviders(),
     )
 
     private fun hint(key: String?): String = if (key == null) "" else "\u2022\u2022\u2022\u2022 " + key.takeLast(4)
 
     companion object {
         private const val FILE_NAME = "agent_secure_prefs"
+        private const val KEY_RING_PREFIX = "api_keys_v2::"
+        private const val KEY_ACTIVE_PREFIX = "api_key_active::"
+        private const val KEY_CUSTOM_PROVIDERS = "custom_providers_v1"
+        /** A key that failed is skipped by rotation for this long (it is still tried when it is the only one). */
+        private const val KEY_COOLDOWN_MS = 10 * 60_000L
+        const val PROVIDER_TINYFISH = "tinyfish"
+        /** Model ids of custom providers: custom/<provider id>/<model id>. */
+        const val CUSTOM_MODEL_PREFIX = "custom/"
         private const val MASTER_KEY_ALIAS = "agent_master_key"
         private const val KEY_TINYFISH = "tinyfish_api_key"
         private const val KEY_OPENROUTER = "openrouter_api_key"
@@ -215,6 +392,12 @@ class SecureSettings(context: Context) {
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_OLLAMA = "ollama"
+        /** Where the single key of each built-in provider lived before the key ring. */
+        private val LEGACY_KEYS = mapOf(
+            PROVIDER_OPENROUTER to KEY_OPENROUTER,
+            PROVIDER_OLLAMA to KEY_OLLAMA,
+            PROVIDER_TINYFISH to KEY_TINYFISH,
+        )
         private const val KEY_REMOTE_MODEL = "openrouter_model_last"
         private const val KEY_LOCAL_BACKEND = "local_backend"
         private const val KEY_LOCAL_CONTEXT = "local_context_tokens"

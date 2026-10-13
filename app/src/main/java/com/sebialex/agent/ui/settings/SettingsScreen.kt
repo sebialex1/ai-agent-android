@@ -182,30 +182,23 @@ fun SettingsScreen(
                         // Provider keys and configuration only. Picking the active model and its
                         // reasoning is done in the chat's + sheet (the same global setting), so it
                         // is not repeated here.
+                        // Each provider holds a small stack of keys: the active one is badged, a key
+                        // that fails (invalid, out of credit, rate limited) hands over to the next.
                         Group("API keys") {
-                            KeyField(
-                                label = "OpenRouter",
-                                saved = snap.hasOpenRouterKey,
-                                hint = snap.openRouterHint,
-                                onSave = settings::setOpenRouterKey,
-                                onClear = { settings.setOpenRouterKey(null) },
-                            )
-                            KeyField(
-                                label = "Ollama Cloud",
-                                saved = snap.hasOllamaKey,
-                                hint = snap.ollamaHint,
-                                onSave = settings::setOllamaKey,
-                                onClear = { settings.setOllamaKey(null) },
-                            )
-                            Note("Create a key at ollama.com/settings/keys.")
-                            KeyField(
-                                label = "Web search (TinyFish)",
-                                saved = snap.hasTinyFishKey,
-                                hint = snap.tinyFishHint,
-                                onSave = settings::setTinyFishKey,
-                                onClear = { settings.setTinyFishKey(null) },
-                            )
-                            Note("Optional. Without it, the phone searches directly.")
+                            listOf(
+                                Triple(SecureSettings.PROVIDER_OPENROUTER, "OpenRouter", "Model inference \u00b7 openrouter.ai/keys"),
+                                Triple(SecureSettings.PROVIDER_OLLAMA, "Ollama Cloud", "Hosted Ollama models \u00b7 ollama.com/settings/keys"),
+                                Triple(SecureSettings.PROVIDER_TINYFISH, "Web search (TinyFish)", "Optional; without it the phone searches directly"),
+                            ).forEach { (id, name, detail) ->
+                                KeyRingCard(
+                                    title = name,
+                                    subtitle = detail,
+                                    keys = snap.keys[id].orEmpty(),
+                                    onAdd = { key, label -> settings.addKey(id, key, label) },
+                                    onRemove = { settings.removeKey(id, it) },
+                                    onActivate = { settings.setActiveKey(id, it) },
+                                )
+                            }
                         }
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
@@ -318,45 +311,6 @@ private fun LinkRow(title: String, detail: String, onClick: () -> Unit) {
             Text(detail, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
         }
         AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 16.dp)
-    }
-}
-
-@Composable
-private fun KeyField(label: String, saved: Boolean, hint: String, onSave: (String) -> Unit, onClear: () -> Unit) {
-    var value by remember { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
-                .heightIn(min = 52.dp)
-                .padding(start = 14.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(R.drawable.ic_key, null, size = 18.dp)
-            Spacer(Modifier.width(12.dp))
-            Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = { value = it.trim() },
-                    singleLine = true,
-                    textStyle = MonoSmall.copy(color = Palette.TextPrimary),
-                    cursorBrush = SolidColor(Palette.TextPrimary),
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done, autoCorrectEnabled = false),
-                    modifier = Modifier.fillMaxWidth(),
-                    decorationBox = { inner ->
-                        if (value.isEmpty()) Text(if (saved) hint else "Paste key", style = MonoSmall, color = Palette.TextTertiary)
-                        inner()
-                    },
-                )
-            }
-            when {
-                value.isNotEmpty() -> QuietIconButton(R.drawable.ic_check, "Save $label", onClick = { onSave(value); value = "" })
-                saved -> QuietIconButton(R.drawable.ic_close, "Remove $label", onClick = onClear, tint = Palette.IconMuted)
-            }
-        }
     }
 }
 

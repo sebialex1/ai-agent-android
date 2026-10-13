@@ -19,7 +19,7 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## API keys
 
-All keys go in **Settings > Models** (gear on the conversations screen). They are stored with `EncryptedSharedPreferences`, using an AES-256-GCM master key held in the **Android Keystore**. Keys never show up in the chat, the logs, or backups (`allowBackup=false`, and the data extraction rules exclude them).
+All keys go in **Settings > Models** (gear on the conversations screen). Each provider (OpenRouter, Ollama Cloud, TinyFish and every custom provider) holds a **stack of keys**, shown as a small card: a numbered row per key (masked to its last four characters, optional label such as *Work* or *Free tier*), an **Active** badge on the key in use, a **Failing** badge on one that just failed, **Use** to switch by hand, remove, and **Add key**. When a request fails because of the key (HTTP 401/402/403/429, rate limit, quota, out of credit, invalid key) the next key that has not failed in the last 10 minutes becomes active and the request is retried, until one works or all have been tried; other errors are reported as before. Keys saved by older versions are migrated into the stack. They are stored with `EncryptedSharedPreferences`, using an AES-256-GCM master key held in the **Android Keystore**. Keys never show up in the chat, the logs, or backups (`allowBackup=false`, and the data extraction rules exclude them).
 
 | Key | Used for | Endpoint |
 | --- | --- | --- |

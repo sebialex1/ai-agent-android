@@ -17,13 +17,33 @@ interface WebGateway {
  */
 class RoutingWebGateway(
     private val keyProvider: () -> String?,
+    /** Marks a failing TinyFish key and returns the next stored one (null when none is left). */
+    private val rotate: (failed: String, reason: String) -> String? = { _, _ -> null },
     private val direct: WebGateway = DirectWebClient(),
 ) : WebGateway {
-    private fun live(): WebGateway = keyProvider()?.let { TinyFishClient(it) } ?: direct
+    override suspend fun search(query: String): List<SearchHit> = withKeys { it.search(query) }
 
-    override suspend fun search(query: String): List<SearchHit> = live().search(query)
+    override suspend fun fetch(url: String): FetchedPage = withKeys { it.fetch(url) }
 
-    override suspend fun fetch(url: String): FetchedPage = live().fetch(url)
+    /** TinyFish with the active key; a key error (401/402/403/429) moves on to the next stored key. */
+    private suspend fun <T> withKeys(block: suspend (WebGateway) -> T): T {
+        var key = keyProvider() ?: return block(direct)
+        val tried = HashSet<String>()
+        while (true) {
+            tried += key
+            try {
+                return block(TinyFishClient(key))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                val message = e.message.orEmpty()
+                if (!com.sebialex.agent.domain.agent.KeyPool.isKeyFailure(message)) throw e
+                val next = rotate(key, message)
+                if (next == null || next in tried) throw e
+                key = next
+            }
+        }
+    }
 }
 
 fun hostOf(url: String): String =

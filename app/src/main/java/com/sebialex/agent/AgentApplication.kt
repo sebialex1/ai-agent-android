@@ -60,7 +60,10 @@ class AppContainer(app: Application) {
     /** The real on-device environment: Termux's bash, apt/dpkg, pkg, Python and pip. */
     val termux = TermuxBridge(app)
     val sessions = SessionStore(app.filesDir)
-    private val web = RoutingWebGateway(keyProvider = { settings.tinyFishKey() })
+    private val web = RoutingWebGateway(
+        keyProvider = { settings.tinyFishKey() },
+        rotate = { failed, reason -> settings.rotateKey(SecureSettings.PROVIDER_TINYFISH, failed, reason) },
+    )
     val policy = PermissionPolicy(askBeforeWebAccess = { settings.askBeforeWeb() })
     private val runtimes = HashMap<String, SessionRuntime>()
 
@@ -104,7 +107,7 @@ class AppContainer(app: Application) {
     )
 
     private val brain = RoutingBrain(
-        openRouterKey = { settings.openRouterKey() },
+        keys = settings,
         model = { settings.model() },
         remote = { key, model ->
             OpenRouterBrain(key, model, reasoningFields = {
@@ -122,13 +125,15 @@ class AppContainer(app: Application) {
                 )
                 OllamaCloud.isOllama(model) -> BrainRoute(
                     label = "Ollama Cloud request",
-                    brain = settings.ollamaKey()?.let { key ->
+                    brain = null,
+                    notice = OLLAMA_NO_KEY_NOTICE,
+                    provider = SecureSettings.PROVIDER_OLLAMA,
+                    brainFor = { key ->
                         OllamaBrain(ollama, key, model, think = {
                             // Native `think` field from the model's /api/show metadata and the user's choice.
                             OllamaCloud.thinkValue(models.reasoning(model), settings.reasoning(model))
                         })
                     },
-                    notice = OLLAMA_NO_KEY_NOTICE,
                 )
                 else -> null
             }

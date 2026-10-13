@@ -89,7 +89,18 @@ interface AgentBrain {
  * is not set up (for example no API key), with [notice] and nothing executed. [label] names the
  * provider in error messages.
  */
-class BrainRoute(val label: String, val brain: AgentBrain?, val notice: String = "")
+class BrainRoute(
+    val label: String,
+    val brain: AgentBrain?,
+    val notice: String = "",
+    /**
+     * Key-based providers: [provider] names the key ring and [brainFor] builds the brain for one
+     * key, so a failing key (invalid, out of credit, rate limited) is rotated to the next one.
+     * When set, [brain] is ignored.
+     */
+    val provider: String? = null,
+    val brainFor: ((key: String) -> AgentBrain)? = null,
+)
 
 /**
  * Sends each request to the provider of the selected model. [other] claims models that run
@@ -98,7 +109,7 @@ class BrainRoute(val label: String, val brain: AgentBrain?, val notice: String =
  * and nothing is executed.
  */
 class RoutingBrain(
-    private val openRouterKey: () -> String?,
+    private val keys: KeyPool,
     private val model: () -> String,
     private val remote: (key: String, model: String) -> AgentBrain,
     private val other: (model: String) -> BrainRoute? = { null },
@@ -106,11 +117,48 @@ class RoutingBrain(
     override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
         val m = model()
         other(m)?.let { route ->
+            val factory = route.brainFor
+            val provider = route.provider
+            if (factory != null && provider != null) {
+                val key = keys.activeKey(provider) ?: return BrainDecision.Answer(route.notice)
+                return rotating(route.label, provider, key) { k -> factory(k).next(ctx, onReasoning) }
+            }
             val brain = route.brain ?: return BrainDecision.Answer(route.notice)
             return guarded(route.label) { brain.next(ctx, onReasoning) }
         }
-        val key = openRouterKey() ?: return BrainDecision.Answer(NO_KEY_NOTICE)
-        return guarded("model request") { remote(key, m).next(ctx, onReasoning) }
+        val key = keys.activeKey(KeyPool.OPENROUTER) ?: return BrainDecision.Answer(NO_KEY_NOTICE)
+        return rotating("model request", KeyPool.OPENROUTER, key) { k -> remote(k, m).next(ctx, onReasoning) }
+    }
+
+    /**
+     * Runs [block] with [first]; when it fails because of the key (401/402/403/429, quota, rate
+     * limit, invalid key) the next key of [provider] is tried, until one works or every key has
+     * failed. Any other error ends the turn with the provider's message, as before.
+     */
+    private suspend fun rotating(label: String, provider: String, first: String, block: suspend (String) -> BrainDecision): BrainDecision {
+        var key = first
+        val tried = LinkedHashSet<String>()
+        var lastError: String? = null
+        while (key !in tried) {
+            tried += key
+            try {
+                val decision = block(key)
+                keys.markKeyOk(provider, key)
+                return decision
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = e.message ?: e.javaClass.simpleName
+                if (!KeyPool.isKeyFailure(message)) return BrainDecision.Answer("The $label failed: $message")
+                lastError = message
+                key = keys.rotateKey(provider, key, message) ?: break
+            }
+        }
+        val count = tried.size
+        return BrainDecision.Answer(
+            "The $label failed: $lastError" +
+                if (count > 1) " (tried $count keys; add another key or check them in Settings > Models)" else "",
+        )
     }
 
     private suspend fun guarded(label: String, block: suspend () -> BrainDecision): BrainDecision = try {
