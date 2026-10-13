@@ -70,8 +70,11 @@ class AgentOrchestrator(
             audit.record(
                 Step(
                     id = nextId(), kind = StepKind.FILE_READ, payload = "vision: ${intent.name.lowercase()}", tool = "vision_intent",
-                    input = vision.paths.joinToString(", "), output = if (intent.shown) "shown with the message" else "not shown; view_image " +
-                        (if (intent == VisionIntent.Intent.REFUSED) "refused for this turn" else "refused for these imports"),
+                    input = vision.paths.joinToString(", "), output = when {
+                        intent.shown -> "shown with the message"
+                        intent.viewImage -> "not shown; view_image allowed on demand"
+                        else -> "not shown; view_image refused for this turn"
+                    },
                     status = StepStatus.DONE, startedAt = now(), finishedAt = now(),
                 ),
             )
@@ -144,7 +147,7 @@ class AgentOrchestrator(
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
                             continue
                         }
-                        // The user said not to look (REFUSED) or only to use the file (USE_ONLY).
+                        // Only an explicit "don't look" (REFUSED) blocks view_image; USE_ONLY allows it on demand.
                         val visionRefusal = vision.refusal(call)
                         if (visionRefusal != null) {
                             observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
@@ -236,13 +239,7 @@ class AgentOrchestrator(
         /** Why a view_image call must be refused under [intent], or null when it may run. */
         fun refusal(call: ToolCall): String? {
             if (call !is ToolCall.ViewImage || intent == null || intent.viewImage) return null
-            return when (intent) {
-                VisionIntent.Intent.REFUSED -> "Refused: the user asked you not to look at images in this message."
-                else -> {
-                    val target = runCatching { workspace.virtualOf(workspace.resolve(call.path)) }.getOrNull()
-                    if (target != null && target in paths) "Refused: the user only asked you to use this file, not to look at it." else null
-                }
-            }
+            return "Refused: the user asked you not to look at images in this message."
         }
     }
 
@@ -268,7 +265,7 @@ class AgentOrchestrator(
             VisionIntent.Intent.USE_ONLY -> return Vision(
                 intent, paths, emptyList(),
                 "\n\n[Attached: $names. Not shown to you: the user only asked you to use the file. Work with it by path; " +
-                    "view_image is not available for it.]",
+                    "call view_image only if the task really needs to see it.]",
             )
             else -> Unit
         }

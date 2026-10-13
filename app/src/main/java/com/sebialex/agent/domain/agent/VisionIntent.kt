@@ -8,9 +8,11 @@ package com.sebialex.agent.domain.agent
  *   "describe", "read the text": [Intent.ASKED_TO_LOOK]) or any other request about it
  *   ([Intent.IMPLICIT]) -> shown with the message;
  * - only an instruction to use or handle the file ("use this as the background", "upload it",
- *   "convert to png": [Intent.USE_ONLY]) -> not shown, and `view_image` on that import is refused;
+ *   "convert to png": [Intent.USE_ONLY]) -> not shown automatically; the model may still call
+ *   `view_image` on it if the task turns out to need the picture;
  * - an explicit refusal ("don't look", "don't describe it", "ignore the image":
- *   [Intent.REFUSED]) -> not shown, and `view_image` is refused for the whole turn.
+ *   [Intent.REFUSED]) -> not shown, and `view_image` is refused for the whole turn. This is the
+ *   only case that blocks `view_image`.
  *
  * The two "not shown" cases are kept apart so the audit log and the note to the model say which
  * one applied.
@@ -22,7 +24,8 @@ object VisionIntent {
         ONLY_MEDIA(shown = true, viewImage = true),
         ASKED_TO_LOOK(shown = true, viewImage = true),
         IMPLICIT(shown = true, viewImage = true),
-        USE_ONLY(shown = false, viewImage = false),
+        // Not inspected automatically, but the model may still look on demand if the task needs it.
+        USE_ONLY(shown = false, viewImage = true),
         REFUSED(shown = false, viewImage = false),
     }
 

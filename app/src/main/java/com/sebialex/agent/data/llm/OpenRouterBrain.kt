@@ -553,8 +553,8 @@ class OpenRouterBrain(
               headers and the response text. Non-GET requests ask the user first.
             - device_info: current date, time, time zone, locale and Android version.
             - view_image: look at a workspace image (or a few frames of a video). Imported files the user asked you to
-              look at are already shown with their message; call it only when you need to see one that was not shown,
-              and never when the user said not to look or only asked you to use the file.
+              look at are already shown with their message; call it only when the task really needs to see one that
+              was not shown, and never when the user said not to look at it.
             Rules:
             - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
             - If a command reports that Termux is not available or permission is denied, tell the user what to set up

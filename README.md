@@ -150,8 +150,8 @@ A newly received answer types out with a fast typewriter that speeds up as the a
 Whether the agent looks at an imported image is decided from the message it came with:
 
 - **Looks**: the message is only the import, or it asks to look ("what's this", "describe", "read the text", "who is this", a question about it, Romanian "uită-te", "ce e" and similar), or it is any other request about the picture. The image is sent with that message as an `image_url` part (scaled to at most 1568 px, EXIF rotation applied, JPEG or PNG); a video is sent as three frames (start, middle, end). Up to four imports per message.
-- **Does not look, use only** (`USE_ONLY`): the message only says what to do with the file ("use this as the background", "upload it", "convert to png", "rename it"). The model is told the file exists and works with it by path; `view_image` on that import is refused for the turn (other workspace images stay viewable).
-- **Does not look, refused** (`REFUSED`): the message says not to look ("don't look", "don't describe it", "ignore the image"). Nothing is shown and every `view_image` call in that turn is refused.
+- **Does not look, use only** (`USE_ONLY`): the message only says what to do with the file ("use this as the background", "upload it", "convert to png", "rename it"). The picture is not inspected automatically; the model is told the file exists, works with it by path, and can still call `view_image` on demand if the task turns out to need it.
+- **Does not look, refused** (`REFUSED`): the message says not to look ("don't look", "don't describe it", "ignore the image"). Nothing is shown and every `view_image` call in that turn is refused. This is the only case that blocks `view_image`.
 
 Each decision is written to the conversation's audit log as a `vision_intent` entry (`only_media`, `asked_to_look`, `implicit`, `use_only` or `refused`); it adds no row to the chat.
 
