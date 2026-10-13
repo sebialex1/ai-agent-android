@@ -1,5 +1,12 @@
 package com.sebialex.agent.ui.settings
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -63,13 +70,16 @@ import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
-/** Settings, split into tabs so no single page carries everything. */
-enum class SettingsTab(val label: String) {
-    GENERAL("General"),
-    MODELS("Models"),
-    ON_DEVICE("On-device"),
-    CHATS("Chats"),
-    ABOUT("About"),
+/**
+ * Settings sections. The settings home is a vertical list of these; tapping one opens it as its
+ * own page, with the section name in the top bar next to Back (no tab strip, no pill slider).
+ */
+enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes val icon: Int) {
+    GENERAL("General", R.drawable.ic_shield),
+    MODELS("Models", R.drawable.ic_code),
+    ON_DEVICE("On-device", R.drawable.ic_phone),
+    CHATS("Chats", R.drawable.ic_history),
+    ABOUT("About", R.drawable.ic_info),
 }
 
 @Composable
@@ -82,14 +92,24 @@ fun SettingsScreen(
     ollama: OllamaCloud,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
-    initialTab: SettingsTab = SettingsTab.GENERAL,
+    /** Opens straight into one section (e.g. On-device from the model picker); Back then leaves Settings. */
+    initialSection: SettingsSection? = null,
 ) {
     val snap by settings.state.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableStateOf(initialTab) }
-    // One scroll position per tab, so switching tabs never jumps.
-    val scrolls = SettingsTab.entries.associateWith { rememberScrollState() }
+    var section by rememberSaveable { mutableStateOf(initialSection) }
+    // Opened directly into a section: Back leaves Settings instead of showing the list first.
+    val direct = initialSection != null
+    // One scroll position per page, so going back and forth never jumps.
+    val homeScroll = rememberScrollState()
+    val scrolls = SettingsSection.entries.associateWith { rememberScrollState() }
     var picking by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    fun back() {
+        if (section != null && !(direct && section == initialSection)) section = null else onBack()
+    }
+    // Inside a section, system Back returns to the list first (registered after the app's own
+    // handler, so it takes precedence while enabled).
+    androidx.activity.compose.BackHandler(enabled = section != null && !(direct && section == initialSection)) { section = null }
     Column(
         Modifier
             .fillMaxSize()
@@ -98,113 +118,118 @@ fun SettingsScreen(
             .imePadding(),
     ) {
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
-            Text("Settings", style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(start = 8.dp))
+            QuietIconButton(R.drawable.ic_back, "Back", onClick = ::back)
+            AnimatedContent(
+                targetState = section?.label ?: "Settings",
+                transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) },
+                label = "settingsTitle",
+            ) { title ->
+                Text(title, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.padding(start = 8.dp))
+            }
         }
-        SettingsTabs(
-            options = SettingsTab.entries,
-            selected = tab,
-            label = { it.label },
-            onSelect = { tab = it },
-            modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 4.dp),
-        )
-        val scroll = scrolls.getValue(tab)
-        Column(
-            Modifier
-                .fillMaxSize()
-                // Rows scrolling under the header dissolve instead of showing a cut-off line.
-                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                .drawWithContent {
-                    drawContent()
-                    if (scroll.value > 0) {
-                        val fade = 28.dp.toPx().coerceAtMost(size.height)
-                        drawRect(
-                            brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = fade),
-                            size = androidx.compose.ui.geometry.Size(size.width, fade),
-                            blendMode = BlendMode.DstIn,
-                        )
+        AnimatedContent(
+            targetState = section,
+            transitionSpec = {
+                // Into a section slides in from the right; back to the list slides the other way.
+                val forward = targetState != null
+                val dir = if (forward) 1 else -1
+                (slideInHorizontally(tween(220)) { it / 6 * dir } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(tween(180)) { -it / 6 * dir } + fadeOut(tween(140)))
+            },
+            label = "settingsPage",
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            val scroll = if (page == null) homeScroll else scrolls.getValue(page)
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    // Rows scrolling under the header dissolve instead of showing a cut-off line.
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    .drawWithContent {
+                        drawContent()
+                        if (scroll.value > 0) {
+                            val fade = 28.dp.toPx().coerceAtMost(size.height)
+                            drawRect(
+                                brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = fade),
+                                size = androidx.compose.ui.geometry.Size(size.width, fade),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
                     }
-                }
-                .verticalScroll(scroll)
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(28.dp),
-        ) {
-            when (tab) {
-                SettingsTab.GENERAL -> {
-                    Group("Permissions") {
-                        SwitchRow(
-                            title = "Ask before web access",
-                            subtitle = null,
-                            checked = snap.askBeforeWeb,
-                            onChange = settings::setAskBeforeWeb,
-                        )
-                        SwitchRow(
-                            title = "Auto-approve agent actions",
-                            subtitle = "Installs, deletions and network commands run without asking. Blocked actions stay blocked.",
-                            checked = snap.autoApprove,
-                            onChange = settings::setAutoApprove,
-                        )
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if (page == null) 8.dp else 28.dp),
+            ) {
+                when (page) {
+                    null -> SettingsSection.entries.forEach { s -> SectionRow(s) { section = s } }
+                    SettingsSection.GENERAL -> {
+                        Group("Permissions") {
+                            SwitchRow(
+                                title = "Ask before web access",
+                                subtitle = null,
+                                checked = snap.askBeforeWeb,
+                                onChange = settings::setAskBeforeWeb,
+                            )
+                            SwitchRow(
+                                title = "Auto-approve agent actions",
+                                subtitle = "Installs, deletions and network commands run without asking. Blocked actions stay blocked.",
+                                checked = snap.autoApprove,
+                                onChange = settings::setAutoApprove,
+                            )
+                        }
+                        SandboxSetting(termux)
                     }
-                    Group("Web search") {
-                        KeyField(
-                            label = "TinyFish API key",
-                            saved = snap.hasTinyFishKey,
-                            hint = snap.tinyFishHint,
-                            onSave = settings::setTinyFishKey,
-                            onClear = { settings.setTinyFishKey(null) },
+                    SettingsSection.MODELS -> {
+                        ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
+                        ReasoningSetting(
+                            model = snap.model,
+                            pref = snap.reasoning,
+                            models = models,
+                            onEnabled = { settings.setReasoningEnabled(snap.model, it) },
+                            onEffort = { settings.setReasoningEffort(snap.model, it) },
                         )
-                        Note("Optional. Without it, the phone searches directly.")
+                        Group("API keys") {
+                            KeyField(
+                                label = "OpenRouter",
+                                saved = snap.hasOpenRouterKey,
+                                hint = snap.openRouterHint,
+                                onSave = settings::setOpenRouterKey,
+                                onClear = { settings.setOpenRouterKey(null) },
+                            )
+                            KeyField(
+                                label = "Ollama Cloud",
+                                saved = snap.hasOllamaKey,
+                                hint = snap.ollamaHint,
+                                onSave = settings::setOllamaKey,
+                                onClear = { settings.setOllamaKey(null) },
+                            )
+                            Note("Create a key at ollama.com/settings/keys.")
+                            KeyField(
+                                label = "Web search (TinyFish)",
+                                saved = snap.hasTinyFishKey,
+                                hint = snap.tinyFishHint,
+                                onSave = settings::setTinyFishKey,
+                                onClear = { settings.setTinyFishKey(null) },
+                            )
+                            Note("Optional. Without it, the phone searches directly.")
+                        }
                     }
-                    SandboxSetting(termux)
-                }
-                SettingsTab.MODELS -> {
-                    ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
-                    ReasoningSetting(
-                        model = snap.model,
-                        pref = snap.reasoning,
-                        models = models,
-                        onEnabled = { settings.setReasoningEnabled(snap.model, it) },
-                        onEffort = { settings.setReasoningEffort(snap.model, it) },
-                    )
-                    Group("OpenRouter") {
-                        KeyField(
-                            label = "OpenRouter API key",
-                            saved = snap.hasOpenRouterKey,
-                            hint = snap.openRouterHint,
-                            onSave = settings::setOpenRouterKey,
-                            onClear = { settings.setOpenRouterKey(null) },
-                        )
-                    }
-                    Group("Ollama Cloud") {
-                        KeyField(
-                            label = "Ollama Cloud API key",
-                            saved = snap.hasOllamaKey,
-                            hint = snap.ollamaHint,
-                            onSave = settings::setOllamaKey,
-                            onClear = { settings.setOllamaKey(null) },
-                        )
-                        Note("Create a key at ollama.com/settings/keys.")
-                    }
-                }
-                SettingsTab.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
-                SettingsTab.CHATS -> {
-                    // Memory of past chats has no row here: its only switch is in each chat's
-                    // options (the \u22ef next to a chat in the list).
-                    Group("Titles") {
+                    SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
+                    SettingsSection.CHATS -> {
+                        // Memory of past chats has no row here: its only switch is in each chat's
+                        // options (the \u22ef next to a chat in the list).
                         SwitchRow(
                             title = "Auto-generate titles",
                             subtitle = null,
                             checked = snap.autoTitles,
                             onChange = settings::setAutoTitles,
                         )
-                    }
-                    Group("Data") {
                         if (!confirmClear) {
                             Text(
-                                "Delete all conversations and workspaces",
+                                "Delete all conversations",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = Palette.Danger,
-                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { confirmClear = true }.padding(vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { confirmClear = true }.padding(vertical = 8.dp),
                             )
                         } else {
                             com.sebialex.agent.ui.components.SheetConfirm(
@@ -215,10 +240,10 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    SettingsSection.ABOUT -> AboutTab()
                 }
-                SettingsTab.ABOUT -> AboutTab()
+                Spacer(Modifier.height(24.dp))
             }
-            Spacer(Modifier.height(24.dp))
         }
     }
     if (picking) {
@@ -228,9 +253,29 @@ fun SettingsScreen(
             ollama = ollama,
             store = modelStore,
             engine = localEngine,
-            onOpenOnDevice = { tab = SettingsTab.ON_DEVICE },
+            onOpenOnDevice = { section = SettingsSection.ON_DEVICE },
             onDismiss = { picking = false },
         )
+    }
+}
+
+/** One row of the settings home: icon, section name and a chevron; opens the section's page. */
+@Composable
+private fun SectionRow(section: SettingsSection, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .softSurface(RoundedCornerShape(18.dp), Palette.Surface, elevation = 2.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(start = 16.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(section.icon, null, tint = Palette.IconMuted, size = 20.dp)
+        Spacer(Modifier.width(16.dp))
+        Text(section.label, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+        AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.IconMuted, size = 16.dp)
     }
 }
 

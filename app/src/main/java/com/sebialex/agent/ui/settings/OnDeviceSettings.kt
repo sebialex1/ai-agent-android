@@ -48,7 +48,7 @@ import com.sebialex.agent.ui.theme.softSurface
 import kotlinx.coroutines.launch
 
 /**
- * "On-device" tab of Settings: models that run on this phone's GPU with nothing sent anywhere.
+ * "On-device" page of Settings: models that run on this phone's GPU with nothing sent anywhere.
  * Download, use, delete or import model files, see what is loaded and on which accelerator,
  * and tune accelerator, context size and multi-token prediction.
  */
@@ -62,7 +62,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
-    // Downloads finish in the background; pick up their result whenever the tab is shown.
+    // Downloads finish in the background; pick up their result whenever the page is shown.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { store.refresh() }
     val ramGb = remember { totalRamGb(context) }
     val freeBytes = remember(statuses) { store.freeBytes() }

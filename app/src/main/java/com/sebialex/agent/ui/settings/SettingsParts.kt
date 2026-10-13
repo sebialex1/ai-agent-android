@@ -1,91 +1,25 @@
 package com.sebialex.agent.ui.settings
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.ui.theme.Palette
-
-/**
- * Settings tab bar: plain labels spread across the full width with a short accent underline
- * under the selected one, over a hairline divider. Every label stays visible on a phone, so
- * nothing scrolls sideways; the selected tab reads bright and semibold, the rest stay quiet.
- */
-@Composable
-internal fun <T> SettingsTabs(
-    options: List<T>,
-    selected: T,
-    label: (T) -> String,
-    onSelect: (T) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            options.forEach { o ->
-                val on = o == selected
-                val text by animateColorAsState(if (on) Palette.TextPrimary else Palette.TextTertiary, tween(160), label = "tabText")
-                val bar by animateColorAsState(if (on) Palette.Accent else Color.Transparent, tween(160), label = "tabBar")
-                Column(
-                    Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .selectable(selected = on, role = Role.Tab) { onSelect(o) }
-                        .padding(horizontal = 8.dp)
-                        .padding(top = 10.dp)
-                        .width(IntrinsicSize.Max),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        label(o),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
-                        color = text,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                    Box(
-                        Modifier
-                            .padding(top = 8.dp)
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(bar),
-                    )
-                }
-            }
-        }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.SurfaceHigh))
-    }
-}
 
 /** Small uppercase-free section label, same style as field labels. */
 @Composable

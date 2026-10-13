@@ -38,7 +38,8 @@ import com.sebialex.agent.ui.theme.Palette
 sealed interface Screen {
     data object Chat : Screen
     data class File(val path: String, val baseSnapshot: String?) : Screen
-    data class Settings(val tab: com.sebialex.agent.ui.settings.SettingsTab = com.sebialex.agent.ui.settings.SettingsTab.GENERAL) : Screen
+    /** Settings home (section list), or one section opened directly when [section] is set. */
+    data class Settings(val section: com.sebialex.agent.ui.settings.SettingsSection? = null) : Screen
     data object Workspace : Screen
     data object Conversations : Screen
 }
@@ -108,7 +109,7 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     store = container.modelStore,
                     engine = container.localEngine,
-                    onOpenOnDevice = { push(Screen.Settings(com.sebialex.agent.ui.settings.SettingsTab.ON_DEVICE)) },
+                    onOpenOnDevice = { push(Screen.Settings(com.sebialex.agent.ui.settings.SettingsSection.ON_DEVICE)) },
                 )
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
                 is Screen.Settings -> SettingsScreen(
@@ -120,7 +121,7 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
-                    initialTab = screen.tab,
+                    initialSection = screen.section,
                 )
                 Screen.Workspace -> WorkspaceScreen(
                     shell = runtime.shell,
