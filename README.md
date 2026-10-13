@@ -37,12 +37,12 @@ Option (a) is the only one where `apt install` and `pip install` keep working ag
 1. Install **Termux** from [F-Droid](https://f-droid.org/packages/com.termux/) or [GitHub releases](https://github.com/termux/termux-app/releases). The Play Store build is outdated. Open it once so it installs its own bootstrap.
 2. In Termux, run (Settings has a copy button for this):
    ```
-   mkdir -p ~/.termux && echo "allow-external-apps = true" >> ~/.termux/termux.properties && termux-setup-storage
+   mkdir -p ~/.termux && (grep -qx 'allow-external-apps = true' ~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps = true' >> ~/.termux/termux.properties) && termux-reload-settings; pkg install -y python; termux-setup-storage
    ```
-   Then grant Termux storage access when Android asks.
+   It is safe to run more than once. Then grant Termux storage access when Android asks.
 3. In Settings > Sandbox, tap **Allow** for *Run commands in Termux* (the `com.termux.permission.RUN_COMMAND` permission). If Android does not show a prompt, enable it under App info > Permissions > Additional permissions.
 4. Tap **Allow** for *All files access*. Termux runs as a different Linux user and cannot see this app's private files. Shared storage is the only place both apps can read and write.
-5. Tap **Check**. It runs a short command in Termux and prints the paths of `bash`, `apt`, `dpkg`, `pkg`, `python` and `pip` (`missing` for anything not installed yet). Python is installed on first use with `pkg install -y python`, which the agent can do itself.
+5. Tap **Check**. It runs a short command in Termux and prints the paths of `bash`, `apt`, `dpkg`, `pkg`, `python` and `pip` (`missing` for anything not installed yet), then checks that Termux can write the shared workspace folder. Python is installed by the setup command; if it is missing, the agent can install it with `pkg install -y python`.
 
 If the device kills Termux in the background, exempt Termux from battery optimisation.
 
@@ -84,7 +84,15 @@ Every assistant turn renders in this fixed order:
 1. Execution row: `8 steps >`. Tap it to expand compact one-line actions (search icon + query, favicon + hostname, terminal icon + command, file icon + filename, shield icon for approvals). Long rows fade at the right edge. Tapping a row opens its raw audit sheet: input, output, URL/path, exit code, and timing.
 2. The answer, rendered as Markdown.
 3. File pills: document icon, filename, and "Updated now" or a `+n −m` diff count.
-4. Source cluster: up to three favicon + domain chips, then `+N` for the rest. Each chip opens the exact page.
+4. Source cluster: up to three favicon + domain chips, then `+N` for the rest. Tapping a chip opens a compact preview (favicon, title, domain, excerpt of what was read) with an **Open website** button; nothing opens until you tap it.
+
+While the model thinks, its raw reasoning streams into the `thought` row as words, about one line tall, with older text fading out. When it finishes, the row keeps one line of the reasoning that fades at the tail; tap it for the full text.
+
+The **+** in the input opens an attachment sheet: Camera, Photos and Files tiles, plus a quick **Thinking** switch for the selected model (the same per-model setting as in Settings). Picked items are copied byte-for-byte into `/workspace/imports/` and mentioned in the message.
+
+The folder button in the chat top bar opens the workspace: a segmented switch for **Terminal**, **Sources** (every page read in the conversation) and **Files** (an **Artifacts** group with files the agent wrote, then all workspace files). Sources and Files only appear when they have content.
+
+Settings live on the conversations screen. System Back walks up: file viewer, workspace or settings, then the chat, then the conversations list, and only leaves the app from there.
 
 When you send a new message, all earlier step groups collapse. Answers, files, and sources stay visible. Only pages the agent actually fetched become website sources.
 
