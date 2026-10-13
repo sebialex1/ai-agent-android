@@ -85,6 +85,9 @@ class AppContainer(app: Application) {
     /** Ollama Cloud: hosted models at ollama.com, a second cloud provider next to OpenRouter. */
     val ollama = OllamaCloud(apiKey = { settings.ollamaKey() })
 
+    /** Model-written conversation titles. */
+    val titles = com.sebialex.agent.data.llm.TitleWriter(settings, ollama)
+
     /**
      * Live model metadata, used for per-model reasoning support. On-device models are answered
      * locally, Ollama Cloud models from ollama.com; everything else from OpenRouter's catalog.

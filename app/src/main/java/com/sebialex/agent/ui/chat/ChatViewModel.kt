@@ -253,6 +253,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }
                 persist(sessionId)
+                maybeWriteTitle(sessionId)
             }
         }
     }
@@ -353,9 +354,34 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         io.trySend { container.sessions.save(snapshot) }
     }
 
-    private fun titleFor(task: String): String {
-        val words = task.split(Regex("\\s+")).take(6).joinToString(" ")
-        return if (words.length > 40) words.take(40).trimEnd() else words
+    /** Placeholder title until the model has written one from the conversation. */
+    private fun titleFor(task: String): String = com.sebialex.agent.data.llm.TitleWriter.fallback(task)
+
+    private val titling = HashSet<String>()
+
+    /**
+     * After an answer, lets the model name the conversation from its content (once). A title the
+     * user typed is never replaced; if the model cannot write one, the placeholder stays and the
+     * next answer tries again.
+     */
+    private fun maybeWriteTitle(sessionId: String) {
+        val s = cache[sessionId] ?: return
+        if (s.customTitle || s.generatedTitle || sessionId in titling) return
+        if (s.turns.none { it.role == com.sebialex.agent.domain.model.Role.ASSISTANT && it.complete && it.text.isNotBlank() }) return
+        titling += sessionId
+        viewModelScope.launch {
+            try {
+                val title = container.titles.title(s.turns) ?: return@launch
+                // Gone from the cache means it was deleted meanwhile: never bring it back.
+                val current = cache[sessionId] ?: return@launch
+                if (current.customTitle) return@launch
+                cache[sessionId] = current.copy(title = title, generatedTitle = true)
+                publish()
+                persist(sessionId)
+            } finally {
+                titling -= sessionId
+            }
+        }
     }
 
     private fun newId() = UUID.randomUUID().toString().replace("-", "").take(16)
