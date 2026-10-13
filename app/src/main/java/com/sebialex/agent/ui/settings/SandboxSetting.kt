@@ -48,13 +48,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * One-time commands the user runs inside Termux so this app may use it. Idempotent: enables allow-external-apps once (and reloads Termux's settings so it applies
- * without a restart), installs Python (which ships pip), then grants Termux shared storage so
- * it can reach the mirrored workspace under /storage/emulated/0/AgentSandbox.
+ * One-time commands the user runs inside Termux so this app may use it. Safe to run again.
+ * - Creates ~/.termux/termux.properties if needed and adds `allow-external-apps = true` unless an
+ *   active line already sets it (with or without spaces around `=`; Java properties accept both).
+ *   printf starts with a newline so the line is never glued onto a last line without one, which
+ *   would silently turn it into part of a comment.
+ * - termux-reload-settings makes the running Termux re-read the file. RunCommandService checks the
+ *   copy Termux holds in memory, so without a reload (or a restart) the edit has no effect.
+ * - Installs Python (ships pip), then grants Termux shared storage for the mirrored workspace.
  */
 private const val TERMUX_SETUP =
-    "mkdir -p ~/.termux && (grep -qx 'allow-external-apps = true' ~/.termux/termux.properties 2>/dev/null || " +
-        "echo 'allow-external-apps = true' >> ~/.termux/termux.properties) && termux-reload-settings; " +
+    "mkdir -p ~/.termux && touch ~/.termux/termux.properties && " +
+        "(grep -Eq '^[[:space:]]*allow-external-apps[[:space:]]*=[[:space:]]*true[[:space:]]*\$' ~/.termux/termux.properties || " +
+        "printf '\\nallow-external-apps = true\\n' >> ~/.termux/termux.properties) && termux-reload-settings; " +
         "pkg install -y python; termux-setup-storage"
 
 /**
@@ -97,6 +103,16 @@ fun SandboxSetting(termux: TermuxBridge) {
             enabled = status.installed,
             onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
         )
+        // The green checks above are Android-side only. Termux's own allow-external-apps
+        // setting cannot be read from here; it is known once Termux answers (tap Check).
+        StatusRow(
+            label = "Termux allows this app",
+            ok = status.externalApps == true,
+            unknown = status.externalApps == null,
+            action = "Open Termux",
+            enabled = status.installed,
+            onAction = { openTermux(context) },
+        )
         StatusRow(
             label = "All files access",
             ok = status.storage,
@@ -124,9 +140,22 @@ fun SandboxSetting(termux: TermuxBridge) {
             }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
         }
         Text(
-            "Run this once in Termux, then tap Check.",
+            "Copy this, paste it in Termux and press Enter, then come back and tap Check. " +
+                "If Check still says allow-external-apps, force stop Termux (App info), reopen it and tap Check again.",
             style = MaterialTheme.typography.labelSmall,
             color = Palette.TextTertiary,
+        )
+        if (status.externalApps == false) Text(
+            "Termux app info",
+            style = MaterialTheme.typography.labelLarge,
+            color = Palette.TextPrimary,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Palette.SurfaceHigh)
+                .clickable {
+                    open(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${TermuxBridge.TERMUX_PACKAGE}")))
+                }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
         )
         Text(
             if (checking) "Checking\u2026" else "Check",
@@ -159,6 +188,7 @@ fun SandboxSetting(termux: TermuxBridge) {
                             }
                         }
                         checking = false
+                        status = termux.status()
                     }
                 }
                 .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -168,16 +198,22 @@ fun SandboxSetting(termux: TermuxBridge) {
 }
 
 @Composable
-private fun StatusRow(label: String, ok: Boolean, action: String, enabled: Boolean = true, onAction: () -> Unit) {
+private fun StatusRow(label: String, ok: Boolean, action: String, enabled: Boolean = true, unknown: Boolean = false, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        AppIcon(
+        if (unknown) {
+            // Not verified yet: neither a check nor a cross.
+            Text("?", style = MaterialTheme.typography.labelLarge, color = Palette.TextTertiary, modifier = Modifier.width(16.dp))
+        } else AppIcon(
             if (ok) R.drawable.ic_check else R.drawable.ic_close,
             if (ok) "Ready" else "Missing",
             tint = if (ok) Palette.IconMuted else Palette.TextTertiary,
             size = 16.dp,
         )
         Spacer(Modifier.width(12.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+            if (unknown) Text("Not checked yet. Tap Check below.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        }
         if (!ok) Text(
             action,
             style = MaterialTheme.typography.labelLarge,
@@ -196,6 +232,12 @@ private fun open(context: android.content.Context, intent: Intent): Boolean = tr
     true
 } catch (e: Exception) {
     false
+}
+
+/** Brings Termux to the front so the setup command can be pasted. */
+private fun openTermux(context: android.content.Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage(TermuxBridge.TERMUX_PACKAGE)
+    if (launch != null) open(context, launch)
 }
 
 private fun openAppDetails(context: android.content.Context) {
