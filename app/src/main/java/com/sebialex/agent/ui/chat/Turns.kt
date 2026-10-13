@@ -26,7 +26,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +83,8 @@ fun AssistantTurn(
     onOpenSource: (SourceRef) -> Unit,
     onMoreSources: (List<SourceRef>) -> Unit,
     onApproval: (Boolean) -> Unit,
+    reveal: Boolean = false,
+    onRevealed: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (turn.steps.isNotEmpty()) {
@@ -85,17 +94,49 @@ fun AssistantTurn(
             ApprovalCard(pendingApproval, onApproval)
         }
         if (turn.text.isNotBlank()) {
-            MarkdownContent(turn.text, compact = true)
+            if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
         }
-        if (turn.attachments.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                turn.attachments.forEach { FilePill(it, onClick = { onOpenFile(it) }) }
+        // Files and sources follow the answer once it has been revealed.
+        if (turn.attachments.isNotEmpty() || turn.sources.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (turn.attachments.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        turn.attachments.forEach { FilePill(it, onClick = { onOpenFile(it) }) }
+                    }
+                }
+                if (turn.sources.isNotEmpty()) {
+                    SourceCluster(turn.sources, onOpenSource, onMoreSources)
+                }
             }
         }
-        if (turn.sources.isNotEmpty()) {
-            SourceCluster(turn.sources, onOpenSource, onMoreSources)
-        }
     }
+}
+
+/**
+ * Reveals a freshly received answer once. The speed is time-based (independent of refresh rate)
+ * and accelerates: each frame adds a base amount plus a share of what is already visible plus a
+ * share of the total length, so short answers type out quickly and long answers do not drag
+ * (roughly 0.6 s for a short reply, a little over 1 s for several thousand characters).
+ * If the row leaves the screen before it finishes, it counts as revealed and never replays.
+ */
+@Composable
+private fun TypewriterMarkdown(text: String, onDone: () -> Unit) {
+    var shown by remember(text) { mutableIntStateOf(0) }
+    val done by rememberUpdatedState(onDone)
+    LaunchedEffect(text) {
+        var count = 0f
+        var last = withFrameNanos { it }
+        while (count < text.length) {
+            val now = withFrameNanos { it }
+            val frames = ((now - last) / 16_666_667f).coerceIn(0.25f, 4f)
+            last = now
+            count += (1.5f + count * 0.045f + text.length / 600f) * frames
+            shown = count.toInt().coerceAtMost(text.length)
+        }
+        done()
+    }
+    DisposableEffect(Unit) { onDispose { done() } }
+    MarkdownContent(text.substring(0, shown.coerceIn(0, text.length)), compact = true)
 }
 
 @Composable

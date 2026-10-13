@@ -29,6 +29,12 @@ data class ChatUiState(
     /** Assistant turn ids whose step list is expanded. */
     val expanded: Set<String> = emptySet(),
     val pendingApproval: ApprovalRequest? = null,
+    /**
+     * Assistant turns whose answer just arrived and should be revealed with the typewriter.
+     * Held in memory only: it is never persisted, so reopening a conversation, restarting the
+     * app or coming back from another screen always shows the saved text immediately.
+     */
+    val revealing: Set<String> = emptySet(),
 )
 
 data class ConversationsUiState(
@@ -54,6 +60,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private val runs = HashMap<String, Run>()
     private var currentId: String = newId()
     private var expanded: Set<String> = emptySet()
+    private var revealing: Set<String> = emptySet()
 
     private val _state = MutableStateFlow(ChatUiState(Session(currentId, "", emptyList(), 0)))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -99,6 +106,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             dropIfEmpty(currentId)
             currentId = id
             expanded = emptySet()
+            revealing = emptySet()
             io.trySend { container.sessions.setActive(id) }
             publish()
         }
@@ -111,6 +119,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         cache[fresh.id] = fresh
         currentId = fresh.id
         expanded = emptySet()
+        revealing = emptySet()
         publish()
     }
 
@@ -197,15 +206,24 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) { it.copy(steps = it.steps + event.step) }
             is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it }) }
             is AgentEvent.Finished -> {
-                onAnswerReceived(turnId)
+                onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, sources = event.sources, complete = true) }
                 persist(sessionId)
             }
         }
     }
 
-    /** Hook for the first-receive reveal. */
-    private fun onAnswerReceived(turnId: String) = Unit
+    /** Only an answer that arrives while its conversation is on screen gets the typewriter, once. */
+    private fun onAnswerReceived(sessionId: String, turnId: String) {
+        if (sessionId == currentId) revealing = revealing + turnId
+    }
+
+    /** Called when the reveal finishes or its row leaves the screen. It never replays. */
+    fun markRevealed(turnId: String) {
+        if (turnId !in revealing) return
+        revealing = revealing - turnId
+        publish()
+    }
 
     private fun finishIfIncomplete(sessionId: String, turnId: String) {
         val turn = cache[sessionId]?.turns?.firstOrNull { it.id == turnId }
@@ -270,6 +288,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             running = run != null,
             expanded = expanded,
             pendingApproval = run?.pending,
+            revealing = revealing,
         )
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size)

@@ -118,6 +118,8 @@ fun ChatScreen(
                         onOpenSource = { openUrl(it.url) },
                         onMoreSources = { moreSources = it },
                         onApproval = vm::respondToApproval,
+                        reveal = turn.id in state.revealing,
+                        onRevealed = { vm.markRevealed(turn.id) },
                     )
                 }
             }
