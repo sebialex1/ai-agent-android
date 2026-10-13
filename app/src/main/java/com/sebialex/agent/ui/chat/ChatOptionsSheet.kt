@@ -19,14 +19,14 @@ private enum class OptionsMode { MENU, RENAME, CONFIRM_DELETE }
 
 /**
  * Options of one conversation, in the app's own sheet style (no plain system menu): pin,
- * rename, the per-conversation "Memory of past chats" switch and delete. Opened from the "..."
- * of a row in the conversations list and from the chat's top bar.
+ * rename, the per-conversation "Memory of past chats" switch and delete. Opened only from the
+ * "..." of a row in the conversations list (the chat's top bar has no second copy).
  *
  * Memory is bound to [SecureSettings.memoryChats], a flow that changes on every switch, so the
  * switch always moves (the old one in the "+" sheet read a snapshot that never changed).
  *
  * This switch is the only memory control in the app. Flipping it also becomes the starting
- * value for new chats ([SecureSettings.setMemoryForNewChats]); Settings > Chats just shows it.
+ * value for new chats ([SecureSettings.setMemoryForNewChats]). Settings has no copy of it.
  */
 @Composable
 fun ChatOptionsSheet(

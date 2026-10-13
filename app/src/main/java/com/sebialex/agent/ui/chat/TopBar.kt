@@ -18,10 +18,9 @@ import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
 
 /**
- * Chat top bar: conversations (X), chat options (pin, rename, memory, delete), title, new
- * conversation and the workspace.
- * Settings deliberately live only on the conversations screen, so the chat has no second
- * control that does the same thing.
+ * Chat top bar: conversations (X), title, new conversation and the workspace.
+ * Chat options (pin, rename, memory, delete) and Settings live only on the conversations
+ * screen (the \u22ef next to each title), so the chat has no second control for the same thing.
  */
 @Composable
 fun ChatTopBar(
@@ -29,7 +28,6 @@ fun ChatTopBar(
     onClose: () -> Unit,
     onNew: () -> Unit,
     onWorkspace: () -> Unit,
-    onOptions: () -> Unit,
 ) {
     Box(
         Modifier
@@ -37,10 +35,7 @@ fun ChatTopBar(
             .height(56.dp)
             .padding(horizontal = 6.dp),
     ) {
-        Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
-            QuietIconButton(R.drawable.ic_close, "Conversations", onClick = onClose)
-            QuietIconButton(R.drawable.ic_more, "Chat options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 20.dp)
-        }
+        QuietIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,

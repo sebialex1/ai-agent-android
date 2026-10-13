@@ -146,13 +146,12 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
     val current = info
     val on = current != null && ReasoningRules.resolve(current, snap.reasoning).on
     val enabled = current?.canDisable == true
-    // Readable name plus where it runs, e.g. "Gemma 4 E2B · On this phone · GPU".
-    val name = modelName(snap.model) + " \u00b7 " + sourceLine(snap.model, snap.localBackend)
+    // The model row right above already names the model, so only an unusual state is shown.
     val subtitle = when {
-        current == null -> "Checking $name\u2026"
-        !current.supported -> "Not available for $name"
-        !current.canDisable -> "Always on for $name"
-        else -> name
+        current == null -> null
+        !current.supported -> "Not available for this model"
+        !current.canDisable -> "Always on for this model"
+        else -> null
     }
     Row(
         Modifier
@@ -166,7 +165,7 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text("Thinking", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
         }
         Switch(
             checked = on,

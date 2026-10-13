@@ -62,7 +62,6 @@ fun ChatScreen(
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
-    var chatOptions by remember { mutableStateOf(false) }
     var previewSource by remember { mutableStateOf<SourceRef?>(null) }
     val listState = rememberLazyListState()
 
@@ -138,7 +137,6 @@ fun ChatScreen(
             onClose = onClose,
             onNew = { vm.newConversation(); input = TextFieldValue("") },
             onWorkspace = onOpenWorkspace,
-            onOptions = { chatOptions = true },
         )
         val turns = state.session.turns
         LazyColumn(
@@ -214,20 +212,6 @@ fun ChatScreen(
             onPick = { attachMenu = false; openPicker(it) },
             onOpenOnDevice = onOpenOnDevice,
             onDismiss = { attachMenu = false },
-        )
-    }
-    if (chatOptions) {
-        val session = state.session
-        ChatOptionsSheet(
-            sessionId = session.id,
-            title = session.title,
-            pinned = session.pinned,
-            settings = settings,
-            saved = session.turns.isNotEmpty(),
-            onPin = { vm.setPinned(session.id, it) },
-            onRename = { vm.rename(session.id, it) },
-            onDelete = { vm.deleteConversation(session.id) },
-            onDismiss = { chatOptions = false },
         )
     }
     moreSources?.let { list ->

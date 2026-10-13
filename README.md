@@ -10,8 +10,8 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## Chats, settings and files
 
-- Conversations can be **pinned** (own section on top) and renamed from the themed options sheet (\u22ef on a row or in the chat's top bar). After the first answer the model writes a short **title** from the conversation; a renamed chat keeps its title.
-- **Memory of past chats** is per conversation, switched in that chat's options sheet (the only switch for it). New chats start with the last choice made there; Settings > Chats just shows it.
+- Conversations can be **pinned** (own section on top) and renamed from the themed options sheet (the \u22ef next to a chat in the conversations list; the chat's own top bar only has back, new chat and workspace). After the first answer the model writes a short **title** from the conversation; a renamed chat keeps its title.
+- **Memory of past chats** is per conversation, switched in that chat's options sheet (the only switch for it). New chats start with the last choice made there; Settings has no second copy.
 - **Settings** is split into tabs: General (permissions, web search key, Termux sandbox), Models (model, reasoning, OpenRouter and Ollama Cloud keys), On-device, Chats and About.
 - The workspace **Files** tab is a small file manager: breadcrumbs, folders, sizes and ages; open, download to `Download/AgentForAndroid`, rename and delete per item; download a folder as zip, clear it, or show hidden files.
 - The **file viewer** shows type and size under the name. Images (png, jpg, gif, webp, bmp) open in-app with Coil (pinch or double-tap to zoom, GIFs animate). Video (mp4, webm, mkv, mov, m4v) and audio (mp3, ogg, wav, m4a) play in a small built-in player on the platform `MediaPlayer` (play/pause, seek, time; no ExoPlayer). Everything else opens as text or rendered Markdown.
