@@ -69,7 +69,15 @@ internal fun typeLabel(name: String, kind: FileKind): String {
  * so a file the agent rewrites shows its new content.
  */
 @Composable
-internal fun ImagePreview(file: File, modifier: Modifier = Modifier) {
+internal fun ImagePreview(
+    file: File,
+    modifier: Modifier = Modifier,
+    /** Landscape full-screen: no inner padding, so the picture uses the whole screen. */
+    immersive: Boolean = false,
+    /** Single tap (immersive mode: shows or hides the overlay header). */
+    onTap: (() -> Unit)? = null,
+) {
+    val tap by androidx.compose.runtime.rememberUpdatedState(onTap)
     val context = LocalContext.current
     val loader = remember(context) {
         ImageLoader.Builder(context)
@@ -88,7 +96,7 @@ internal fun ImagePreview(file: File, modifier: Modifier = Modifier) {
             .fillMaxSize()
             .clipToBounds()
             .pointerInput(file) {
-                detectTapGestures(onDoubleTap = {
+                detectTapGestures(onTap = { tap?.invoke() }, onDoubleTap = {
                     if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 2.5f
                 })
             }
@@ -108,7 +116,7 @@ internal fun ImagePreview(file: File, modifier: Modifier = Modifier) {
             onState = { state = it },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(if (immersive) 0.dp else 16.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale

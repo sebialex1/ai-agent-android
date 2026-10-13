@@ -1,6 +1,8 @@
 package com.sebialex.agent.ui.files
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -19,6 +21,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,6 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,22 +115,43 @@ fun FileViewerScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.Ink)
-            .systemBarsPadding()
-            .imePadding(),
-    ) {
+    // Landscape media (image or video) goes immersive: the picture fills the screen and the
+    // header becomes a slim translucent overlay that a tap hides or shows again. Text, audio and
+    // portrait keep the regular header. The media composable stays at the same place in the tree
+    // either way, so rotating never restarts a playing video.
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val immersive = landscape && error == null && (kind == FileKind.IMAGE || kind == FileKind.VIDEO)
+    var chrome by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(immersive) { if (!immersive) chrome = true }
+
+    val header: @Composable (compact: Boolean) -> Unit = { compact ->
         Row(
-            Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(if (compact) 44.dp else 56.dp).padding(horizontal = if (compact) 2.dp else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (mode == ViewMode.EDIT) {
                 QuietIconButton(R.drawable.ic_close, "Discard changes", onClick = { mode = if (isMarkdown) ViewMode.RENDERED else ViewMode.RAW })
             } else {
-                QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
+                QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack, size = if (compact) 40.dp else 44.dp, iconSize = if (compact) 18.dp else 22.dp)
             }
+            if (compact) {
+                // One quiet line: name, then type and size, so the bar stays thin over the picture.
+                Text(
+                    name,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Palette.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false).padding(start = 4.dp),
+                )
+                Text(
+                    "  " + typeLabel(name, kind) + (size?.let { " \u00b7 " + formatSize(it) } ?: ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextSecondary,
+                    maxLines = 1,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+            } else {
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 Text(
                     name,
@@ -159,29 +192,71 @@ fun FileViewerScreen(
                 }
                 QuietIconButton(R.drawable.ic_edit, "Edit", onClick = { draft = content ?: ""; mode = ViewMode.EDIT }, tint = Palette.IconMuted)
             }
-        }
-
-        val text = content
-        when {
-            error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
             }
-            kind == FileKind.IMAGE -> file?.let { ImagePreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
-            kind == FileKind.VIDEO -> file?.let { VideoPreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
-            kind == FileKind.AUDIO -> file?.let { AudioPreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
-            text == null -> Spacer(Modifier.fillMaxSize())
-            else -> AnimatedContent(
-                targetState = mode,
-                transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
-                label = "mode",
-                modifier = Modifier.weight(1f),
-            ) { m ->
-                when (m) {
-                    ViewMode.RENDERED -> RenderedMarkdown(text, onToggleTask = { line -> save(MarkdownParser.toggleTask(text, line)) })
-                    ViewMode.RAW -> RawText(text)
-                    ViewMode.DIFF -> DiffView(base ?: "", text)
-                    ViewMode.EDIT -> Editor(draft, onChange = { draft = it })
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(if (immersive) Color.Black else Palette.Ink)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (immersive) Modifier else Modifier.systemBarsPadding().imePadding()),
+        ) {
+            if (!immersive) header(false)
+
+            val text = content
+            val toggleChrome = { chrome = !chrome }
+            when {
+                error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
                 }
+                kind == FileKind.IMAGE -> file?.let {
+                    ImagePreview(it, Modifier.weight(1f), immersive = immersive, onTap = if (immersive) toggleChrome else null)
+                } ?: Spacer(Modifier.fillMaxSize())
+                kind == FileKind.VIDEO -> file?.let {
+                    VideoPreview(
+                        it, Modifier.weight(1f),
+                        immersive = immersive,
+                        chromeVisible = !immersive || chrome,
+                        onTapImmersive = toggleChrome,
+                        onHideChrome = { chrome = false },
+                    )
+                } ?: Spacer(Modifier.fillMaxSize())
+                kind == FileKind.AUDIO -> file?.let { AudioPreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
+                text == null -> Spacer(Modifier.fillMaxSize())
+                else -> AnimatedContent(
+                    targetState = mode,
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    label = "mode",
+                    modifier = Modifier.weight(1f),
+                ) { m ->
+                    when (m) {
+                        ViewMode.RENDERED -> RenderedMarkdown(text, onToggleTask = { line -> save(MarkdownParser.toggleTask(text, line)) })
+                        ViewMode.RAW -> RawText(text)
+                        ViewMode.DIFF -> DiffView(base ?: "", text)
+                        ViewMode.EDIT -> Editor(draft, onChange = { draft = it })
+                    }
+                }
+            }
+        }
+        // Slim, translucent overlay header for landscape media: a soft top gradient instead of
+        // a solid bar, inset for the status bar and display cutout.
+        AnimatedVisibility(
+            visible = immersive && chrome,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color(0x99000000), Color(0x00000000))))
+                    .statusBarsPadding()
+                    .displayCutoutPadding()
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+                    .padding(bottom = 10.dp),
+            ) {
+                header(true)
             }
         }
     }

@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -162,50 +165,95 @@ private fun rememberPlayer(file: File, video: Boolean): PlayerState {
 }
 
 @Composable
-internal fun VideoPreview(file: File, modifier: Modifier = Modifier) {
+internal fun VideoPreview(
+    file: File,
+    modifier: Modifier = Modifier,
+    /**
+     * Landscape full-screen: the picture fills the screen, the controls float over its bottom
+     * edge on a soft gradient and hide (with the header) a moment after playback starts.
+     */
+    immersive: Boolean = false,
+    /** Whether the overlay controls are shown (always true outside immersive mode). */
+    chromeVisible: Boolean = true,
+    /** Tap on the picture in immersive mode: show or hide the overlay. */
+    onTapImmersive: () -> Unit = {},
+    /** Asks the screen to hide its overlay (auto-hide while playing). */
+    onHideChrome: () -> Unit = {},
+) {
     val state = rememberPlayer(file, video = true)
-    Column(modifier.fillMaxSize()) {
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(Color.Black)
-                // Tap anywhere on the picture to play or pause.
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.toggle() },
-            contentAlignment = Alignment.Center,
-        ) {
-            val ratio = if (state.videoWidth > 0 && state.videoHeight > 0) state.videoWidth.toFloat() / state.videoHeight else 16f / 9f
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            private var surface: Surface? = null
-                            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                                val s = Surface(st)
-                                surface = s
-                                if (!state.released) runCatching { state.player.setSurface(s) }
+    // Auto-hide while playing in immersive mode; paused video keeps its controls on screen.
+    LaunchedEffect(immersive, chromeVisible, state.playing) {
+        if (immersive && chromeVisible && state.playing) {
+            delay(2_600)
+            onHideChrome()
+        }
+    }
+    Box(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(Color.Black)
+                    // Portrait: tap anywhere on the picture to play or pause. Immersive: tap
+                    // shows or hides the overlay (the controls and big button still play/pause).
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        if (immersive) onTapImmersive() else state.toggle()
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                val ratio = if (state.videoWidth > 0 && state.videoHeight > 0) state.videoWidth.toFloat() / state.videoHeight else 16f / 9f
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                private var surface: Surface? = null
+                                override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                                    val s = Surface(st)
+                                    surface = s
+                                    if (!state.released) runCatching { state.player.setSurface(s) }
+                                }
+                                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
+                                override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                                    if (!state.released) runCatching { state.player.setSurface(null) }
+                                    surface?.release()
+                                    surface = null
+                                    return true
+                                }
+                                override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
                             }
-                            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
-                            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                if (!state.released) runCatching { state.player.setSurface(null) }
-                                surface?.release()
-                                surface = null
-                                return true
-                            }
-                            override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
                         }
-                    }
-                },
-                update = { it.keepScreenOn = state.playing },
-                // Fits inside the box either way: landscape fills the width, portrait the height.
-                modifier = Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f),
-            )
-            when {
-                state.failed -> Message("This video cannot be played on this device")
-                state.prepared && !state.playing -> BigPlayButton(onClick = state::toggle)
+                    },
+                    update = { it.keepScreenOn = state.playing },
+                    // Fits inside the box either way: wide video fills the width, tall video the height.
+                    modifier = Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f || immersive),
+                )
+                when {
+                    state.failed -> Message("This video cannot be played on this device")
+                    state.prepared && !state.playing && chromeVisible -> BigPlayButton(onClick = state::toggle)
+                }
+            }
+            // Portrait keeps the controls below the picture, in their own soft row.
+            if (!immersive) Controls(state, Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = immersive && chromeVisible,
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(200)),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color(0x00000000), Color(0xA6000000))))
+                    .navigationBarsPadding()
+                    .displayCutoutPadding()
+                    .padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Controls(state, Modifier.widthIn(max = 720.dp), translucent = true)
             }
         }
-        Controls(state, Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     }
 }
 
@@ -232,13 +280,16 @@ internal fun AudioPreview(file: File, modifier: Modifier = Modifier) {
 
 /** Play/pause, elapsed time, seek slider, total time, in one soft row. */
 @Composable
-private fun Controls(state: PlayerState, modifier: Modifier = Modifier) {
+private fun Controls(state: PlayerState, modifier: Modifier = Modifier, translucent: Boolean = false) {
     val duration = state.duration
     val shown = state.scrub ?: state.position.toFloat()
     Row(
         modifier
             .fillMaxWidth()
-            .softSurface(RoundedCornerShape(20.dp), Palette.Surface, elevation = 3.dp)
+            .then(
+                if (translucent) Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0x66000000))
+                else Modifier.softSurface(RoundedCornerShape(20.dp), Palette.Surface, elevation = 3.dp),
+            )
             .padding(start = 6.dp, end = 14.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

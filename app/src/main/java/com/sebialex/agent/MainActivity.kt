@@ -20,6 +20,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -73,7 +75,12 @@ fun AppRoot(container: AppContainer) {
     // The conversations list is the root of the app and the open chat sits directly above it,
     // so system Back always walks up the hierarchy (viewer -> chat -> conversations) and only
     // leaves the app from the conversations list, where there is nowhere left to go back to.
-    var stack by remember { mutableStateOf(CHAT_STACK) }
+    // Saved with the instance state: rotating the phone (or any other configuration change that
+    // still recreates the activity, and process death) reopens exactly the screen that was on top,
+    // file viewer and Settings section included, instead of falling back to the chat.
+    // The activity also handles orientation/size changes itself (manifest configChanges), so a
+    // plain rotation does not even recompose from scratch: playing media keeps playing.
+    var stack by rememberSaveable(stateSaver = STACK_SAVER) { mutableStateOf(CHAT_STACK) }
     // Each screen keeps its rememberSaveable state (chat draft, scroll position, open sheet) while
     // another screen is on top: AnimatedContent disposes a screen that is not shown, so without
     // this holder coming back from the file viewer or workspace rebuilt the chat as if newly opened.
@@ -166,6 +173,45 @@ fun AppRoot(container: AppContainer) {
         }
     }
 }
+
+/**
+ * Saves the back stack as plain strings (Bundle-safe): `c` chat, `v` conversations, `w` workspace,
+ * `s:<SECTION>` settings, `f:<snapshot>\u0000<path>` file viewer.
+ */
+private val STACK_SAVER = listSaver<List<Screen>, String>(
+    save = { stack ->
+        stack.map { s ->
+            when (s) {
+                Screen.Chat -> "c"
+                Screen.Conversations -> "v"
+                Screen.Workspace -> "w"
+                is Screen.Settings -> "s:" + (s.section?.name ?: "")
+                is Screen.File -> "f:" + (s.baseSnapshot ?: "") + "\u0000" + s.path
+            }
+        }
+    },
+    restore = { saved ->
+        saved.mapNotNull { v ->
+            when {
+                v == "c" -> Screen.Chat
+                v == "v" -> Screen.Conversations
+                v == "w" -> Screen.Workspace
+                v.startsWith("s:") -> Screen.Settings(
+                    v.removePrefix("s:").takeIf { it.isNotEmpty() }?.let { name ->
+                        com.sebialex.agent.ui.settings.SettingsSection.entries.firstOrNull { it.name == name }
+                    },
+                )
+                v.startsWith("f:") -> {
+                    val body = v.removePrefix("f:")
+                    val base = body.substringBefore('\u0000').takeIf { it.isNotEmpty() }
+                    val path = body.substringAfter('\u0000', "")
+                    if (path.isEmpty()) null else Screen.File(path, base)
+                }
+                else -> null
+            }
+        }.ifEmpty { CHAT_STACK }
+    },
+)
 
 /** Saved-state key of a screen (strings, so the holder can store them in the saved instance state). */
 private fun stateKey(screen: Screen): String = when (screen) {
