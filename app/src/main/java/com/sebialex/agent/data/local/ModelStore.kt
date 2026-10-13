@@ -1,7 +1,11 @@
 package com.sebialex.agent.data.local
 
+import android.Manifest
 import android.app.DownloadManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
 import android.net.Uri
 import android.provider.OpenableColumns
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +28,8 @@ sealed interface ModelStatus {
     data class Downloading(val done: Long, val total: Long, val waiting: String? = null) : ModelStatus {
         val fraction: Float get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
     }
-    data class Importing(val done: Long, val total: Long) : ModelStatus {
+    /** Copying a file in: an import, or [moving] an existing model to the Downloads folder. */
+    data class Importing(val done: Long, val total: Long, val moving: Boolean = false) : ModelStatus {
         val fraction: Float get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
     }
     data class Ready(val file: File, val bytes: Long) : ModelStatus
@@ -34,17 +39,56 @@ sealed interface ModelStatus {
 /**
  * Model files on this phone. Downloads go through the system [DownloadManager], so multi-GB
  * files keep downloading with a notification when the app is in the background, survive the
- * app being killed and retry on flaky networks. Files land in the app-specific external files
- * directory (no storage permission needed, removed with the app) as `<file>.part` and are
- * renamed once the byte count matches the catalog. Users can also import their own `.litertlm`.
+ * app being killed and retry on flaky networks. Files arrive as `<file>.part` and are renamed
+ * once the byte count matches the catalog. Users can also import their own `.litertlm`.
+ *
+ * Location: `Download/AgentForAndroid/models/` in shared storage, so clearing the app's data or
+ * reinstalling it does not throw multi-GB models away. Android 11+ lets an app create files there
+ * without any permission; Android 8-10 need the storage permission. Only when shared storage
+ * cannot be written does the store fall back to the app-specific folder
+ * (`Android/data/<app>/files/models`, deleted with the app). Files found in that old folder are
+ * moved to Downloads once it becomes usable.
  */
 class ModelStore(private val context: Context, private val scope: CoroutineScope) {
 
-    /** App-specific external storage, the only place DownloadManager can write for us. */
-    private val externalDir: File? = context.getExternalFilesDir(DIR)
-    val dir: File = (externalDir ?: File(context.filesDir, DIR)).apply { mkdirs() }
-    /** LiteRT-LM's compiled GPU/CPU caches, kept apart from the model files. */
-    val cacheDir: File = File(dir, CACHE_DIR).apply { mkdirs() }
+    /** The previous (and fallback) location: app-specific external storage. */
+    private val legacyDir: File? = context.getExternalFilesDir(DIR)
+    /** `Download/AgentForAndroid/models`. */
+    @Suppress("DEPRECATION")
+    private val publicDir: File = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), PUBLIC_SUBDIR)
+    private val fallbackDir: File = legacyDir ?: File(context.filesDir, DIR)
+
+    /** Where model files are stored now. Switches to Downloads as soon as it is writable. */
+    @Volatile
+    var dir: File = fallbackDir
+        private set
+
+    /** True when [dir] is the shared Downloads folder. */
+    @Volatile
+    var shared: Boolean = false
+        private set
+    private val _sharedState = MutableStateFlow(false)
+    /** [shared] as a flow, so Settings updates when the folder switches to Downloads. */
+    val sharedState: StateFlow<Boolean> = _sharedState.asStateFlow()
+
+    /** LiteRT-LM's compiled GPU/CPU caches: app-specific, never in Downloads. */
+    val cacheDir: File = File(context.getExternalFilesDir(null) ?: context.filesDir, CACHE_DIR).apply { mkdirs() }
+
+    /** Human-readable folder for Settings, e.g. "Download/AgentForAndroid/models". */
+    val location: String
+        get() = if (shared) "${Environment.DIRECTORY_DOWNLOADS}/$PUBLIC_SUBDIR" else "Android/data/${context.packageName}/files/$DIR"
+
+    /**
+     * Android 11+ without "All files access": files downloaded before a reinstall belong to the
+     * old install and stay invisible until that access is granted. Shown as a hint in Settings.
+     */
+    val needsAllFilesAccessForOldFiles: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()
+
+    /** Android 8-10 need the storage permission before Downloads can be used. */
+    val needsStoragePermission: Boolean
+        get() = Build.VERSION.SDK_INT < Build.VERSION_CODES.R && !shared &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val dm: DownloadManager? = context.getSystemService(DownloadManager::class.java)
@@ -61,8 +105,10 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     private val failures = HashMap<String, String>()
     private val importing = HashMap<String, ModelStatus.Importing>()
     private var poller: Job? = null
+    private var mover: Job? = null
 
     init {
+        cleanOldCache()
         refresh()
     }
 
@@ -73,10 +119,14 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
 
     /** The complete model file, or null while it is missing, partial or still downloading. */
     fun fileFor(model: LocalModel): File? {
-        val f = File(dir, model.fileName)
-        if (!f.isFile || f.length() == 0L) return null
-        if (model.sizeBytes > 0 && f.length() != model.sizeBytes) return null
-        return f
+        // The old folder still counts until its files have been moved.
+        for (d in listOfNotNull(dir, legacyDir.takeIf { shared })) {
+            val f = File(d, model.fileName)
+            if (!f.isFile || f.length() == 0L) continue
+            if (model.sizeBytes > 0 && f.length() != model.sizeBytes) continue
+            return f
+        }
+        return null
     }
 
     fun status(id: String): ModelStatus = _statuses.value[id] ?: ModelStatus.Missing
@@ -87,9 +137,11 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     /** Re-reads the disk and the download queue. Cheap; safe from any thread. */
     @Synchronized
     fun refresh() {
+        updateLocation()
         val catalogFiles = LocalModels.catalog.map { it.fileName }.toSet()
-        val imports = dir.listFiles().orEmpty()
+        val imports = listOfNotNull(dir, legacyDir.takeIf { shared }).flatMap { it.listFiles().orEmpty().toList() }
             .filter { it.isFile && it.name.endsWith(MODEL_EXT) && it.name !in catalogFiles }
+            .distinctBy { it.name }
             .sortedBy { it.name.lowercase() }
             .map { LocalModels.imported(it.name) }
         _imported.value = imports
@@ -121,7 +173,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     fun download(model: LocalModel): String? {
         val url = model.url ?: return "This model has no download link."
         val manager = dm ?: return "This phone has no download service."
-        if (externalDir == null) return "Storage is not available right now. Try again in a moment."
+        if (!shared && legacyDir == null) return "Storage is not available right now. Try again in a moment."
         if (fileFor(model) != null) return null
         val needed = model.sizeBytes + SPACE_MARGIN
         if (model.sizeBytes > 0 && freeBytes() < needed) {
@@ -132,11 +184,15 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
             prefs.getLong(model.id, -1L).takeIf { it >= 0 }?.let { runCatching { manager.remove(it) } }
             partFile(model).delete()
             File(dir, model.fileName).takeIf { it.exists() }?.delete()
+            val target = dir
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(model.name)
                 .setDescription("On-device model, ${LocalModels.formatSize(model.sizeBytes)}")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalFilesDir(context, DIR, model.fileName + PART)
+                .apply {
+                    if (shared) setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "$PUBLIC_SUBDIR/${model.fileName}$PART")
+                    else setDestinationInExternalFilesDir(context, DIR, model.fileName + PART)
+                }
                 .setMimeType("application/octet-stream")
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(false)
@@ -145,7 +201,8 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
             } catch (e: Exception) {
                 return "Could not start the download: ${e.message ?: e.javaClass.simpleName}"
             }
-            prefs.edit().putLong(model.id, id).apply()
+            // Remember where this download goes, in case the location changes while it runs.
+            prefs.edit().putLong(model.id, id).putString(model.id + DIR_SUFFIX, target.absolutePath).apply()
         }
         refresh()
         return null
@@ -155,8 +212,8 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     fun cancel(model: LocalModel) {
         synchronized(this) {
             prefs.getLong(model.id, -1L).takeIf { it >= 0 }?.let { id -> runCatching { dm?.remove(id) } }
-            prefs.edit().remove(model.id).apply()
             partFile(model).delete()
+            prefs.edit().remove(model.id).remove(model.id + DIR_SUFFIX).apply()
             failures.remove(model.id)
         }
         refresh()
@@ -166,6 +223,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     fun delete(model: LocalModel) {
         cancel(model)
         File(dir, model.fileName).delete()
+        legacyDir?.let { File(it, model.fileName).delete() }
         // Cache file names are chosen by LiteRT-LM, so clear them all; other models rebuild
         // theirs on the next load.
         cacheDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
@@ -236,7 +294,10 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
         }
     }
 
-    private fun partFile(model: LocalModel) = File(dir, model.fileName + PART)
+    /** Folder of a running download (where it was started), else the current folder. */
+    private fun downloadDir(model: LocalModel): File = prefs.getString(model.id + DIR_SUFFIX, null)?.let(::File) ?: dir
+
+    private fun partFile(model: LocalModel) = File(downloadDir(model), model.fileName + PART)
 
     /**
      * The download queue's view of [model], finishing successful downloads on the way.
@@ -258,8 +319,8 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
         }.getOrNull()
         if (row == null) {
             // Cancelled from the notification or cleared by the system.
-            prefs.edit().remove(model.id).apply()
             partFile(model).delete()
+            prefs.edit().remove(model.id).remove(model.id + DIR_SUFFIX).apply()
             return null
         }
         val total = if (row.total > 0) row.total else model.sizeBytes
@@ -267,9 +328,10 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
             DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING -> ModelStatus.Downloading(row.done, total)
             DownloadManager.STATUS_PAUSED -> ModelStatus.Downloading(row.done, total, pausedReason(row.reason))
             DownloadManager.STATUS_SUCCESSFUL -> {
-                prefs.edit().remove(model.id).apply()
                 val part = partFile(model)
-                val target = File(dir, model.fileName)
+                // Finished in its own folder; a later move brings it to Downloads if needed.
+                val target = File(part.parentFile ?: dir, model.fileName)
+                prefs.edit().remove(model.id).remove(model.id + DIR_SUFFIX).apply()
                 val size = part.length()
                 when {
                     !part.isFile -> failures[model.id] = "The downloaded file is missing."
@@ -285,14 +347,104 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
                 null
             }
             DownloadManager.STATUS_FAILED -> {
-                prefs.edit().remove(model.id).apply()
                 runCatching { manager.remove(id) }
                 partFile(model).delete()
+                prefs.edit().remove(model.id).remove(model.id + DIR_SUFFIX).apply()
                 failures[model.id] = failedReason(row.reason)
                 null
             }
             else -> ModelStatus.Downloading(row.done, total)
         }
+    }
+
+    /** Uses Downloads when it can be written; starts moving old files there once it can. */
+    private fun updateLocation() {
+        if (!shared && publicWritable()) {
+            dir = publicDir
+            shared = true
+            _sharedState.value = true
+        }
+        if (shared) migrateLegacy()
+    }
+
+    private fun publicWritable(): Boolean = runCatching {
+        if (Environment.getExternalStorageState() != Environment.MEDIA_MOUNTED) return@runCatching false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) return@runCatching false
+        publicDir.mkdirs()
+        if (!publicDir.isDirectory) return@runCatching false
+        val probe = File(publicDir, ".write-test")
+        probe.writeText("ok")
+        probe.delete()
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Moves complete model files from the old app-specific folder to Downloads in the background
+     * (rename when possible, otherwise copy then delete), shown as progress on the model card.
+     * Files with a running download stay until that download finishes.
+     */
+    private fun migrateLegacy() {
+        val old = legacyDir ?: return
+        if (mover?.isActive == true) return
+        val busy = LocalModels.catalog.filter { prefs.getLong(it.id, -1L) >= 0 }.map { it.fileName }.toSet()
+        val files = old.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(MODEL_EXT) && it.name !in busy }
+        if (files.isEmpty()) return
+        mover = scope.launch(Dispatchers.IO) {
+            for (src in files) {
+                val model = LocalModels.catalog.firstOrNull { it.fileName == src.name } ?: LocalModels.imported(src.name)
+                val target = File(publicDir, src.name)
+                runCatching {
+                    if (target.isFile && target.length() == src.length()) {
+                        src.delete()
+                        return@runCatching
+                    }
+                    synchronized(this@ModelStore) { importing[model.id] = ModelStatus.Importing(0, src.length(), moving = true) }
+                    refreshStatuses()
+                    if (!src.renameTo(target)) {
+                        val tmp = File(publicDir, src.name + ".moving")
+                        copyWithProgress(src, tmp, model.id)
+                        target.delete()
+                        if (!tmp.renameTo(target)) { tmp.delete(); throw IOException("rename failed") }
+                        src.delete()
+                    }
+                }.onFailure { e -> synchronized(this@ModelStore) { failures[model.id] = "Could not move to Downloads: ${e.message ?: e.javaClass.simpleName}. The file stays in the old folder." } }
+                synchronized(this@ModelStore) { importing.remove(model.id) }
+                refreshStatuses()
+            }
+            // Leftover LiteRT-LM caches from the old layout.
+            File(old, OLD_CACHE_DIR).deleteRecursively()
+        }
+    }
+
+    private fun copyWithProgress(src: File, dst: File, modelId: String) {
+        src.inputStream().use { inp ->
+            dst.outputStream().use { out ->
+                val buf = ByteArray(1 shl 20)
+                var copied = 0L
+                var last = 0L
+                while (true) {
+                    val n = inp.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    copied += n
+                    if (copied - last >= REPORT_EVERY) {
+                        last = copied
+                        synchronized(this) { importing[modelId] = ModelStatus.Importing(copied, src.length(), moving = true) }
+                        refreshStatuses()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Re-publishes statuses from the mover; the running mover makes refresh skip a new move. */
+    private fun refreshStatuses() = refresh()
+
+    /** Caches used to live next to the models; they now have their own folder. */
+    private fun cleanOldCache() {
+        runCatching { legacyDir?.let { File(it, OLD_CACHE_DIR).takeIf { f -> f.isDirectory }?.deleteRecursively() } }
     }
 
     private data class Row(val status: Int, val done: Long, val total: Long, val reason: Int)
@@ -331,7 +483,12 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
     companion object {
         const val DIR = "models"
         const val MODEL_EXT = ".litertlm"
-        private const val CACHE_DIR = "cache"
+        private const val CACHE_DIR = "litert-cache"
+        /** Folder under the system Downloads directory. */
+        const val PUBLIC_SUBDIR = "AgentForAndroid/models"
+        private const val DIR_SUFFIX = "::dir"
+        /** Where caches lived in the first on-device build (inside the models folder). */
+        private const val OLD_CACHE_DIR = "cache"
         private const val PART = ".part"
         private const val PREFS = "local_model_downloads"
         private const val POLL_MS = 700L

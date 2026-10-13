@@ -293,7 +293,7 @@ private fun DeviceSection(
             subtitle = when (status) {
                 is ModelStatus.Ready -> "Downloaded \u00b7 runs on the ${if (snap.localBackend == SecureSettings.BACKEND_CPU) "CPU" else "GPU"}"
                 is ModelStatus.Downloading -> "Downloading \u00b7 ${(status.fraction * 100).toInt()}%"
-                is ModelStatus.Importing -> "Importing\u2026"
+                is ModelStatus.Importing -> if (status.moving) "Moving to Downloads\u2026" else "Importing\u2026"
                 is ModelStatus.Failed -> "Download failed \u00b7 open the On-device tab"
                 ModelStatus.Missing -> "Not downloaded \u00b7 ${LocalModels.formatSize(m.sizeBytes)} \u00b7 get it in the On-device tab"
             },

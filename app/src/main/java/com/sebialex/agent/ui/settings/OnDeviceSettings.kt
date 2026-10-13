@@ -58,6 +58,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
     val statuses by store.statuses.collectAsStateWithLifecycle()
     val imported by store.imported.collectAsStateWithLifecycle()
     val engineState by engine.state.collectAsStateWithLifecycle()
+    val shared by store.sharedState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
@@ -65,6 +66,8 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { store.refresh() }
     val ramGb = remember { totalRamGb(context) }
     val freeBytes = remember(statuses) { store.freeBytes() }
+    // Android 8-10: Downloads needs the storage permission; granting it moves models there.
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { store.refresh() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             message = store.import(uri).fold(
@@ -86,6 +89,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
             )
+            StorageNote(store, shared, onPermission = { storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) })
         }
 
         EngineRow(engineState, snap.model, store, engine)
@@ -163,6 +167,45 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
             onChange = settings::setLocalSpeculative,
         )
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Where model files are kept, and what to grant so they survive reinstalls. */
+@Composable
+private fun StorageNote(store: ModelStore, shared: Boolean, onPermission: () -> Unit) {
+    val context = LocalContext.current
+    Text(
+        if (shared) "Models are saved in ${store.location}, so they stay when app data is cleared or the app is reinstalled."
+        else "Models are saved in ${store.location} and are deleted with the app.",
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.TextTertiary,
+    )
+    when {
+        store.needsStoragePermission -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Allow storage access to keep models in Downloads instead.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            PillButton("Allow", onClick = onPermission)
+        }
+        shared && store.needsAllFilesAccessForOldFiles -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "After a reinstall, Android hides files the old install downloaded until All files access is allowed.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            PillButton("Allow", onClick = {
+                val ok = runCatching {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
+                    )
+                }.isSuccess
+                if (!ok) runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+            })
+        }
     }
 }
 
@@ -265,7 +308,11 @@ private fun ModelCard(
                     color = Palette.Accent,
                     trackColor = Palette.Surface,
                 )
-                Text("Importing\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+                Text(
+                    if (status.moving) "Moving to Downloads\u2026 ${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Importing\u2026",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                )
             }
             is ModelStatus.Ready -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (selected) {
