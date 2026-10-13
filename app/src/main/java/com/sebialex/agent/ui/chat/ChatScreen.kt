@@ -202,6 +202,7 @@ fun ChatScreen(
         AttachSheet(
             settings = settings,
             models = models,
+            sessionId = state.session.id,
             onPick = { attachMenu = false; openPicker(it) },
             onDismiss = { attachMenu = false },
         )
