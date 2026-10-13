@@ -83,6 +83,7 @@ class AppContainer(app: Application) {
             policy = policy,
             workspace = rt.workspace,
             audit = rt.audit,
+            autoApprove = { settings.autoApprove() },
         )
     }
 }

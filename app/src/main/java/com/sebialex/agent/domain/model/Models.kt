@@ -34,6 +34,8 @@ data class Step(
     val startedAt: Long,
     val finishedAt: Long? = null,
     val exitCode: Int? = null,
+    /** The action was risky ([risk]) and ran without asking because auto-approve is on. */
+    val autoApproved: Boolean = false,
 )
 
 @Serializable

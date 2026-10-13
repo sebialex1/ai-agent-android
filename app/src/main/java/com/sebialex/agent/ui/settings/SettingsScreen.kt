@@ -124,6 +124,23 @@ fun SettingsScreen(
                     ),
                 )
             }
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAutoApprove(!snap.autoApprove) }.padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = snap.autoApprove,
+                    onCheckedChange = settings::setAutoApprove,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Palette.OnAccent,
+                        checkedTrackColor = Palette.Accent,
+                        uncheckedThumbColor = Palette.IconMuted,
+                        uncheckedTrackColor = Palette.SurfaceHigh,
+                        uncheckedBorderColor = Palette.SurfaceHighest,
+                    ),
+                )
+            }
             SandboxSetting(termux)
             Text(
                 "Delete all conversations and workspaces",

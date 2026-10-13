@@ -44,6 +44,8 @@ class AgentOrchestrator(
     private val policy: PermissionPolicy,
     private val workspace: Workspace,
     private val audit: AuditSink,
+    /** When true, risky actions skip the approval card and run; each is still recorded as auto-approved. */
+    private val autoApprove: () -> Boolean = { false },
     private val maxSteps: Int = 30,
 ) {
     private var seq = 0L
@@ -90,6 +92,7 @@ class AgentOrchestrator(
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
                             continue
                         }
+                        var autoRisk: String? = null
                         val allowed = when (val d = policy.evaluate(call)) {
                             PermissionDecision.Allow -> true
                             is PermissionDecision.Deny -> {
@@ -99,7 +102,11 @@ class AgentOrchestrator(
                                 send(AgentEvent.StepAdded(s)); audit.record(s)
                                 false
                             }
-                            is PermissionDecision.Ask -> {
+                            // Auto-approve: no card, no pause. The action's own step carries the mark.
+                            is PermissionDecision.Ask -> if (autoApprove()) {
+                                autoRisk = d.reason.label
+                                true
+                            } else {
                                 val s = permissionStep(d.summary, d.reason.label)
                                 send(AgentEvent.StepAdded(s))
                                 val ok = gate.request(ApprovalRequest(s.id, d.summary, d.reason.label))
@@ -116,7 +123,9 @@ class AgentOrchestrator(
                             observations += Observation(call, ToolResult(call.callId, false, "Permission denied. Do not retry this action."), batch)
                             continue
                         }
-                        val step = stepFor(call)
+                        val step = stepFor(call).let { s ->
+                            if (autoRisk != null) s.copy(autoApproved = true, risk = autoRisk) else s
+                        }
                         send(AgentEvent.StepAdded(step))
                         val result = tools.execute(call)
                         val finished = step.copy(

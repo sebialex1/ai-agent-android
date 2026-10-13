@@ -90,6 +90,7 @@ fun StepDetailSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Meta("status", step.status.name.lowercase(Locale.US).replace('_', ' '))
                     step.risk?.let { Meta("risk", it) }
+                    if (step.autoApproved) Meta("approval", "auto-approved")
                     Meta("started", time.format(Date(step.startedAt)))
                     step.finishedAt?.let { Meta("duration", "${it - step.startedAt} ms") }
                     step.exitCode?.let { Meta("exit", it.toString()) }

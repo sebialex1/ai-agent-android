@@ -208,6 +208,11 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
             color = if (muted) Palette.TextTertiary else Palette.TextSecondary,
             modifier = Modifier.weight(1f),
         )
+        // Ran without asking (auto-approve): a tiny shield in the row's own muted tint.
+        if (step.autoApproved) {
+            Spacer(Modifier.width(6.dp))
+            AppIcon(R.drawable.ic_shield, "Auto-approved", tint = Palette.TextTertiary, size = 12.dp)
+        }
         Spacer(Modifier.width(8.dp))
         AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
     }

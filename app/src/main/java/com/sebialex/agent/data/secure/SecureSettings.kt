@@ -36,6 +36,8 @@ class SecureSettings(context: Context) {
         val openRouterHint: String,
         val model: String,
         val askBeforeWeb: Boolean,
+        /** Skip the Allow/Deny card and run risky agent actions immediately. Default off. */
+        val autoApprove: Boolean,
         /** Reasoning choice stored for [model] only. Null fields mean the model default applies. */
         val reasoning: ReasoningPreference,
     )
@@ -47,6 +49,7 @@ class SecureSettings(context: Context) {
     fun openRouterKey(): String? = prefs.getString(KEY_OPENROUTER, null)?.takeIf { it.isNotBlank() }
     fun model(): String = prefs.getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
     fun askBeforeWeb(): Boolean = prefs.getBoolean(KEY_ASK_WEB, false)
+    fun autoApprove(): Boolean = prefs.getBoolean(KEY_AUTO_APPROVE, false)
 
     /** Reasoning on/off and effort are stored per model id, so each model keeps its own setting. */
     fun reasoning(model: String = model()): ReasoningPreference = ReasoningPreference(
@@ -58,6 +61,7 @@ class SecureSettings(context: Context) {
     fun setOpenRouterKey(value: String?) = edit { putOrRemove(KEY_OPENROUTER, value) }
     fun setModel(value: String?) = edit { putOrRemove(KEY_MODEL, value) }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
+    fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
     fun setReasoningEnabled(model: String, value: Boolean) = edit { putBoolean(reasoningOnKey(model), value) }
     fun setReasoningEffort(model: String, value: String?) = edit { putOrRemove(reasoningEffortKey(model), value) }
 
@@ -81,6 +85,7 @@ class SecureSettings(context: Context) {
         openRouterHint = hint(openRouterKey()),
         model = model(),
         askBeforeWeb = askBeforeWeb(),
+        autoApprove = autoApprove(),
         reasoning = reasoning(model()),
     )
 
@@ -93,6 +98,7 @@ class SecureSettings(context: Context) {
         private const val KEY_OPENROUTER = "openrouter_api_key"
         private const val KEY_MODEL = "openrouter_model"
         private const val KEY_ASK_WEB = "ask_before_web"
+        private const val KEY_AUTO_APPROVE = "auto_approve_actions"
         private const val KEY_REASONING_ON_PREFIX = "reasoning_enabled::"
         private const val KEY_REASONING_EFFORT_PREFIX = "reasoning_effort::"
         const val DEFAULT_MODEL = "openrouter/auto"
