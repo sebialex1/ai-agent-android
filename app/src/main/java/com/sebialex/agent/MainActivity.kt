@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
@@ -73,10 +74,21 @@ fun AppRoot(container: AppContainer) {
     // so system Back always walks up the hierarchy (viewer -> chat -> conversations) and only
     // leaves the app from the conversations list, where there is nowhere left to go back to.
     var stack by remember { mutableStateOf(CHAT_STACK) }
+    // Each screen keeps its rememberSaveable state (chat draft, scroll position, open sheet) while
+    // another screen is on top: AnimatedContent disposes a screen that is not shown, so without
+    // this holder coming back from the file viewer or workspace rebuilt the chat as if newly opened.
+    val saveable = rememberSaveableStateHolder()
+    // Only the two root screens keep state across visits; a closed viewer, workspace or Settings
+    // opens fresh next time (Settings on its section list, or the section it is opened with).
+    fun replaceStack(next: List<Screen>) {
+        stack.filter { it !in next && it !is Screen.Chat && it !is Screen.Conversations }
+            .forEach { saveable.removeState(stateKey(it)) }
+        stack = next
+    }
     fun push(s: Screen) { stack = stack + s }
-    fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
-    fun backToChat() { stack = CHAT_STACK }
-    fun toConversations() { stack = listOf(Screen.Conversations) }
+    fun pop() { if (stack.size > 1) replaceStack(stack.dropLast(1)) }
+    fun backToChat() = replaceStack(CHAT_STACK)
+    fun toConversations() = replaceStack(listOf(Screen.Conversations))
     // Files and the workspace shell always belong to the conversation that is open.
     val chat by vm.state.collectAsStateWithLifecycle()
     val runtime = container.runtime(chat.session.id)
@@ -98,6 +110,7 @@ fun AppRoot(container: AppContainer) {
             },
             label = "screen",
         ) { screen ->
+            saveable.SaveableStateProvider(stateKey(screen)) {
             when (screen) {
                 Screen.Chat -> ChatScreen(
                     vm = vm,
@@ -149,6 +162,16 @@ fun AppRoot(container: AppContainer) {
                     settings = container.settings,
                 )
             }
+            }
         }
     }
+}
+
+/** Saved-state key of a screen (strings, so the holder can store them in the saved instance state). */
+private fun stateKey(screen: Screen): String = when (screen) {
+    Screen.Conversations -> "conversations"
+    Screen.Chat -> "chat"
+    Screen.Workspace -> "workspace"
+    is Screen.Settings -> "settings"
+    is Screen.File -> "file:" + screen.path
 }

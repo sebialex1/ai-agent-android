@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,7 +58,18 @@ fun ChatScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var input by remember { mutableStateOf(TextFieldValue("")) }
+    // The draft belongs to its conversation: restored from the view model when the chat screen
+    // comes back (file viewer, workspace, another chat), and saved with the screen's state
+    // (cursor included) through the app's SaveableStateHolder, which also covers process death.
+    val sessionId = state.session.id
+    // Keyed by conversation: a draft saved for one chat is never restored into another.
+    var input by rememberSaveable(sessionId, stateSaver = TextFieldValue.Saver, key = "draft:$sessionId") {
+        mutableStateOf(vm.draft(sessionId).let { TextFieldValue(it, TextRange(it.length)) })
+    }
+    fun updateInput(value: TextFieldValue) {
+        input = value
+        vm.setDraft(sessionId, value.text)
+    }
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
     var attachMenu by remember { mutableStateOf(false) }
@@ -66,7 +77,8 @@ fun ChatScreen(
     // Imported files waiting to be sent; shown as thumbnails above the input, not as @path text.
     // Held by the view model per conversation, so opening one in the viewer keeps them.
     val pending by vm.pendingImports.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
+    // Scroll position per conversation, restored when coming back from a viewer.
+    val listState = rememberSaveable(sessionId, saver = LazyListState.Saver, key = "list:$sessionId") { LazyListState() }
 
     fun openUrl(url: String) {
         try {
@@ -79,7 +91,7 @@ fun ChatScreen(
         val t = input.text
         val sep = if (t.isEmpty() || t.endsWith(" ")) "" else " "
         val next = t + sep + text
-        input = TextFieldValue(next, TextRange(next.length))
+        updateInput(TextFieldValue(next, TextRange(next.length)))
     }
 
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -143,7 +155,7 @@ fun ChatScreen(
         ChatTopBar(
             title = state.session.title,
             onClose = onClose,
-            onNew = { vm.newConversation(); input = TextFieldValue("") },
+            onNew = { updateInput(TextFieldValue("")); vm.newConversation() },
             onWorkspace = onOpenWorkspace,
         )
         val turns = state.session.turns
@@ -185,12 +197,12 @@ fun ChatScreen(
         }
         InputPill(
             value = input,
-            onValueChange = { input = it },
+            onValueChange = { updateInput(it) },
             running = state.running,
             hasAttachments = pending.isNotEmpty(),
             onSend = {
                 vm.send(input.text)
-                input = TextFieldValue("")
+                updateInput(TextFieldValue(""))
                 scope.launch { listState.animateScrollToItem(0) }
             },
             onStop = vm::stop,

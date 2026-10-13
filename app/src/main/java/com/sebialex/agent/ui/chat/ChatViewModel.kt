@@ -74,6 +74,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private val _pendingImports = MutableStateFlow<List<String>>(emptyList())
     val pendingImports: StateFlow<List<String>> = _pendingImports.asStateFlow()
 
+    /** Unsent text per conversation, so leaving the chat for a viewer or another chat keeps it. */
+    private val drafts = HashMap<String, String>()
+
+    fun draft(sessionId: String): String = drafts[sessionId].orEmpty()
+
+    fun setDraft(sessionId: String, text: String) {
+        if (text.isEmpty()) drafts.remove(sessionId) else drafts[sessionId] = text
+    }
+
     private val _conversations = MutableStateFlow(ConversationsUiState())
     val conversations: StateFlow<ConversationsUiState> = _conversations.asStateFlow()
 
@@ -143,6 +152,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         cache.remove(id)
         summaries.remove(id)
         pendingBySession.remove(id)
+        drafts.remove(id)
         container.forget(id)
         if (id == currentId) {
             val fresh = freshSession()
@@ -185,6 +195,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         cache.clear()
         summaries.clear()
         pendingBySession.clear()
+        drafts.clear()
         container.forgetAll()
         val fresh = freshSession()
         cache[fresh.id] = fresh
