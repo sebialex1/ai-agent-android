@@ -71,8 +71,9 @@ class AgentOrchestrator(
             var lastLive = 0L
             fun liveStep(): Step {
                 val text = live.toString()
-                return committed?.copy(output = committed.output + "\n\n" + text, status = StepStatus.RUNNING, finishedAt = null)
-                    ?: Step(
+                val base = committed
+                return if (base != null) base.copy(output = base.output + "\n\n" + text, status = StepStatus.RUNNING, finishedAt = null)
+                    else Step(
                         id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
                         input = "", output = text, status = StepStatus.RUNNING, startedAt = requestedAt,
                     )
