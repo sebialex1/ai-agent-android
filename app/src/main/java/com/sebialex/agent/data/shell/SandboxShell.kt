@@ -50,7 +50,7 @@ class SandboxShell(
 
     override fun which(programs: List<String>): Map<String, String?>? {
         if (programs.isEmpty()) return emptyMap()
-        val todo = programs.filter { it !in known }
+        val todo = programs.filter { !known.containsKey(it) }
         val looked = HashMap<String, String?>()
         if (todo.isNotEmpty()) {
             val script = ToolCheck.script(todo)
