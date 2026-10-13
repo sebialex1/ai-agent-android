@@ -48,6 +48,15 @@ class OpenRouterBrain(
      * model has no controllable reasoning.
      */
     private val reasoningFields: suspend () -> JsonObject = { JsonObject(emptyMap()) },
+    /** Provider name used in error messages. */
+    private val provider: String = "OpenRouter",
+    /**
+     * OpenRouter-only request extras: `tool_choice`, `parallel_tool_calls` and the attribution
+     * headers. Off for other OpenAI-compatible providers (Ollama Cloud) that do not take them.
+     */
+    private val openRouterExtras: Boolean = true,
+    /** Offer the agent's tools. Off for models whose provider reports no tool support. */
+    private val withTools: Boolean = true,
 ) : AgentBrain {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -64,15 +73,19 @@ class OpenRouterBrain(
         val body = buildJsonObject {
             put("model", model)
             put("messages", messages(ctx))
-            put("tools", TOOLS)
-            put("tool_choice", "auto")
-            put("parallel_tool_calls", true)
+            if (withTools) {
+                put("tools", TOOLS)
+                if (openRouterExtras) {
+                    put("tool_choice", "auto")
+                    put("parallel_tool_calls", true)
+                }
+            }
             reasoning.forEach { (k, v) -> put(k, v) }
             // Streamed so reasoning can be shown live; the full message is reassembled below.
             put("stream", true)
         }.toString()
         val choice = postStreaming(body, onReasoning)
-        val message = choice["message"] as? JsonObject ?: throw IOException("OpenRouter returned no message")
+        val message = choice["message"] as? JsonObject ?: throw IOException("$provider returned no message")
 
         val calls = (message["tool_calls"] as? JsonArray).orEmpty().mapIndexedNotNull { i, el ->
             val o = el as? JsonObject ?: return@mapIndexedNotNull null
@@ -188,7 +201,8 @@ class OpenRouterBrain(
     private fun systemPrompt(ctx: BrainContext): String {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val files = ctx.workspaceFiles.take(200)
-        return SYSTEM_PROMPT + "\nToday is $date.\n" +
+        val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly and do not claim to run anything.\n"
+        return SYSTEM_PROMPT + noTools + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
@@ -220,7 +234,7 @@ class OpenRouterBrain(
                     if (data == "[DONE]") break
                     val chunk = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull() ?: continue
                     (chunk["error"] as? JsonObject)?.let { err ->
-                        throw IOException((err["message"] as? JsonPrimitive)?.content ?: "OpenRouter error")
+                        throw IOException((err["message"] as? JsonPrimitive)?.content ?: "$provider error")
                     }
                     acc.add(chunk, onReasoning)
                 }
@@ -234,10 +248,10 @@ class OpenRouterBrain(
     private fun nonStreamingChoice(text: String): JsonObject {
         val root = json.parseToJsonElement(text).jsonObject
         (root["error"] as? JsonObject)?.let { err ->
-            throw IOException((err["message"] as? JsonPrimitive)?.content ?: "OpenRouter error")
+            throw IOException((err["message"] as? JsonPrimitive)?.content ?: "$provider error")
         }
         return (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
-            ?: throw IOException("OpenRouter returned no choices")
+            ?: throw IOException("$provider returned no choices")
     }
 
     /** Reassembles streamed deltas into a single non-streaming style choice. */
@@ -328,8 +342,10 @@ class OpenRouterBrain(
         conn.setRequestProperty("Authorization", "Bearer $apiKey")
         conn.setRequestProperty("Content-Type", "application/json")
         conn.setRequestProperty("Accept", accept)
-        conn.setRequestProperty("HTTP-Referer", "https://github.com/sebialex1/ai-agent-android")
-        conn.setRequestProperty("X-Title", "Agent for Android")
+        if (openRouterExtras) {
+            conn.setRequestProperty("HTTP-Referer", "https://github.com/sebialex1/ai-agent-android")
+            conn.setRequestProperty("X-Title", "Agent for Android")
+        }
         conn.outputStream.use { it.write(body.toByteArray()) }
         return conn
     }

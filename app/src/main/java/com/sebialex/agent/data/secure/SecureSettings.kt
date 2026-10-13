@@ -34,6 +34,12 @@ class SecureSettings(context: Context) {
         val tinyFishHint: String,
         val hasOpenRouterKey: Boolean,
         val openRouterHint: String,
+        val hasOllamaKey: Boolean,
+        val ollamaHint: String,
+        /** Cloud provider shown in Settings and preselected in the picker: [PROVIDER_OPENROUTER] or [PROVIDER_OLLAMA]. */
+        val cloudProvider: String,
+        /** Last Ollama Cloud model id (with its `ollama/` prefix), empty when none was picked yet. */
+        val ollamaModel: String,
         val model: String,
         val askBeforeWeb: Boolean,
         /** Skip the Allow/Deny card and run risky agent actions immediately. Default off. */
@@ -55,11 +61,14 @@ class SecureSettings(context: Context) {
 
     fun tinyFishKey(): String? = prefs.getString(KEY_TINYFISH, null)?.takeIf { it.isNotBlank() }
     fun openRouterKey(): String? = prefs.getString(KEY_OPENROUTER, null)?.takeIf { it.isNotBlank() }
+    fun ollamaKey(): String? = prefs.getString(KEY_OLLAMA, null)?.takeIf { it.isNotBlank() }
+    fun cloudProvider(): String = prefs.getString(KEY_PROVIDER, null)?.takeIf { it == PROVIDER_OLLAMA } ?: PROVIDER_OPENROUTER
+    fun ollamaModel(): String = prefs.getString(KEY_OLLAMA_MODEL, null)?.takeIf { it.startsWith(OLLAMA_PREFIX) }.orEmpty()
     fun model(): String = prefs.getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
     fun askBeforeWeb(): Boolean = prefs.getBoolean(KEY_ASK_WEB, false)
     fun autoApprove(): Boolean = prefs.getBoolean(KEY_AUTO_APPROVE, false)
     fun remoteModel(): String = prefs.getString(KEY_REMOTE_MODEL, null)?.takeIf { it.isNotBlank() }
-        ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) } ?: DEFAULT_MODEL
+        ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) || it.startsWith(OLLAMA_PREFIX) } ?: DEFAULT_MODEL
     fun localBackend(): String = prefs.getString(KEY_LOCAL_BACKEND, null)?.takeIf { it == BACKEND_CPU } ?: BACKEND_GPU
     fun localContext(): Int = prefs.getInt(KEY_LOCAL_CONTEXT, DEFAULT_LOCAL_CONTEXT).takeIf { it in LOCAL_CONTEXTS } ?: DEFAULT_LOCAL_CONTEXT
     fun localSpeculative(): Boolean = prefs.getBoolean(KEY_LOCAL_SPECULATIVE, false)
@@ -72,11 +81,31 @@ class SecureSettings(context: Context) {
 
     fun setTinyFishKey(value: String?) = edit { putOrRemove(KEY_TINYFISH, value) }
     fun setOpenRouterKey(value: String?) = edit { putOrRemove(KEY_OPENROUTER, value) }
+    fun setOllamaKey(value: String?) = edit { putOrRemove(KEY_OLLAMA, value) }
+
+    /**
+     * Switches the cloud provider. When the active model belongs to the other cloud provider,
+     * the last model used with [value] becomes active, so the switch really changes who answers.
+     * An on-device model stays selected.
+     */
+    fun setCloudProvider(value: String) = edit {
+        val p = if (value == PROVIDER_OLLAMA) PROVIDER_OLLAMA else PROVIDER_OPENROUTER
+        putString(KEY_PROVIDER, p)
+        val current = model()
+        if (!current.startsWith(LOCAL_PREFIX)) {
+            val next = if (p == PROVIDER_OLLAMA) ollamaModel() else remoteModel()
+            if (next.isNotEmpty()) putString(KEY_MODEL, next)
+        }
+    }
     fun setModel(value: String?) = edit {
         putOrRemove(KEY_MODEL, value)
         // Remember the OpenRouter choice separately so the picker can switch back to it.
         val v = value?.trim()
-        if (!v.isNullOrEmpty() && !v.startsWith(LOCAL_PREFIX)) putString(KEY_REMOTE_MODEL, v)
+        when {
+            v.isNullOrEmpty() || v.startsWith(LOCAL_PREFIX) -> Unit
+            v.startsWith(OLLAMA_PREFIX) -> { putString(KEY_OLLAMA_MODEL, v); putString(KEY_PROVIDER, PROVIDER_OLLAMA) }
+            else -> { putString(KEY_REMOTE_MODEL, v); putString(KEY_PROVIDER, PROVIDER_OPENROUTER) }
+        }
     }
     fun setLocalBackend(value: String) = edit { putString(KEY_LOCAL_BACKEND, if (value == BACKEND_CPU) BACKEND_CPU else BACKEND_GPU) }
     fun setLocalContext(value: Int) = edit { putInt(KEY_LOCAL_CONTEXT, value) }
@@ -104,6 +133,10 @@ class SecureSettings(context: Context) {
         tinyFishHint = hint(tinyFishKey()),
         hasOpenRouterKey = openRouterKey() != null,
         openRouterHint = hint(openRouterKey()),
+        hasOllamaKey = ollamaKey() != null,
+        ollamaHint = hint(ollamaKey()),
+        cloudProvider = cloudProvider(),
+        ollamaModel = ollamaModel(),
         model = model(),
         askBeforeWeb = askBeforeWeb(),
         autoApprove = autoApprove(),
@@ -126,6 +159,13 @@ class SecureSettings(context: Context) {
         private const val KEY_AUTO_APPROVE = "auto_approve_actions"
         private const val KEY_REASONING_ON_PREFIX = "reasoning_enabled::"
         private const val KEY_REASONING_EFFORT_PREFIX = "reasoning_effort::"
+        private const val KEY_OLLAMA = "ollama_api_key"
+        private const val KEY_PROVIDER = "cloud_provider"
+        private const val KEY_OLLAMA_MODEL = "ollama_model_last"
+        /** Same prefix as OllamaCloud.PREFIX. */
+        private const val OLLAMA_PREFIX = "ollama/"
+        const val PROVIDER_OPENROUTER = "openrouter"
+        const val PROVIDER_OLLAMA = "ollama"
         private const val KEY_REMOTE_MODEL = "openrouter_model_last"
         private const val KEY_LOCAL_BACKEND = "local_backend"
         private const val KEY_LOCAL_CONTEXT = "local_context_tokens"

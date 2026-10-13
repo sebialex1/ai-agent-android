@@ -260,7 +260,8 @@ private fun ReasoningSetting(
             )
         }
         val choices = info?.effortChoices.orEmpty()
-        if (resolved?.on == true && choices.isNotEmpty()) {
+        // A single level is just "on" (Ollama boolean thinking models), so no chips for it.
+        if (resolved?.on == true && choices.size > 1) {
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

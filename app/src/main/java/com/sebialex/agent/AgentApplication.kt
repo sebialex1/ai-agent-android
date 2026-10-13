@@ -2,6 +2,8 @@ package com.sebialex.agent
 
 import android.app.Application
 import com.sebialex.agent.data.llm.ModelReasoning
+import com.sebialex.agent.data.llm.OllamaBrain
+import com.sebialex.agent.data.llm.OllamaCloud
 import com.sebialex.agent.data.llm.OpenRouterBrain
 import com.sebialex.agent.data.local.LocalBrain
 import com.sebialex.agent.data.local.LocalEngine
@@ -71,13 +73,22 @@ class AppContainer(app: Application) {
         return ModelReasoning.local(id, thinking)
     }
 
+    /** Ollama Cloud: hosted models at ollama.com, a second cloud provider next to OpenRouter. */
+    val ollama = OllamaCloud(apiKey = { settings.ollamaKey() })
+
     /**
      * Live model metadata, used for per-model reasoning support. On-device models are answered
-     * locally; everything else comes from OpenRouter's catalog.
+     * locally, Ollama Cloud models from ollama.com; everything else from OpenRouter's catalog.
      */
     val models = OpenRouterModels(
         apiKey = { settings.openRouterKey() },
-        other = { id -> if (LocalModels.isLocal(id)) localReasoning(id) else null },
+        other = { id ->
+            when {
+                LocalModels.isLocal(id) -> localReasoning(id)
+                OllamaCloud.isOllama(id) -> ollama.reasoning(id)
+                else -> null
+            }
+        },
     )
 
     private val brain = RoutingBrain(
@@ -90,13 +101,24 @@ class AppContainer(app: Application) {
             })
         },
         other = { model ->
-            if (!LocalModels.isLocal(model)) null
-            else BrainRoute(
-                label = "on-device model",
-                brain = LocalBrain(localEngine, modelStore, model, thinking = {
-                    ReasoningRules.resolve(localReasoning(model), settings.reasoning(model)).on
-                }),
-            )
+            when {
+                LocalModels.isLocal(model) -> BrainRoute(
+                    label = "on-device model",
+                    brain = LocalBrain(localEngine, modelStore, model, thinking = {
+                        ReasoningRules.resolve(localReasoning(model), settings.reasoning(model)).on
+                    }),
+                )
+                OllamaCloud.isOllama(model) -> BrainRoute(
+                    label = "Ollama Cloud request",
+                    brain = settings.ollamaKey()?.let { key ->
+                        OllamaBrain(ollama, key, model, reasoningFields = {
+                            ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model))
+                        })
+                    },
+                    notice = OLLAMA_NO_KEY_NOTICE,
+                )
+                else -> null
+            }
         },
     )
 
@@ -129,6 +151,9 @@ class AppContainer(app: Application) {
         )
     }
 }
+
+private const val OLLAMA_NO_KEY_NOTICE =
+    "Add an Ollama Cloud API key in Settings (create one at ollama.com/settings/keys) to use this model. Nothing was executed."
 
 class AgentApplication : Application() {
     lateinit var container: AppContainer
