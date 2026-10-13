@@ -6,16 +6,49 @@ Kotlin, Jetpack Compose (Material 3), Gradle Kotlin DSL, `compileSdk`/`targetSdk
 
 ## API keys
 
-Both keys go in **Settings** (overflow menu, top right). They are stored with `EncryptedSharedPreferences`, using an AES-256-GCM master key held in the **Android Keystore**. Keys never show up in the chat, the logs, or backups (`allowBackup=false`, and the data extraction rules exclude them).
+All keys go in **Settings** (overflow menu, top right). They are stored with `EncryptedSharedPreferences`, using an AES-256-GCM master key held in the **Android Keystore**. Keys never show up in the chat, the logs, or backups (`allowBackup=false`, and the data extraction rules exclude them).
 
 | Key | Used for | Endpoint |
 | --- | --- | --- |
 | TinyFish | Web search and page retrieval | `GET https://api.search.tinyfish.ai?query=…`, `POST https://api.fetch.tinyfish.ai` (`X-API-Key` header) |
 | OpenRouter | Model inference for the agent loop (tool calling) | `POST https://openrouter.ai/api/v1/chat/completions` (`Authorization: Bearer …`) |
+| Ollama Cloud (optional) | Hosted Ollama models, a second cloud provider | `POST https://ollama.com/v1/chat/completions`, `GET https://ollama.com/api/tags`, `POST https://ollama.com/api/show` (`Authorization: Bearer …`) |
 
-The model is set in Settings and defaults to `openrouter/auto`; it is not hard-coded anywhere.
+The model is picked in Settings and defaults to `openrouter/auto`; it is not hard-coded anywhere. On-device models need no key at all (see below).
 
-Nothing is canned or simulated. Every answer comes from OpenRouter's chat completions endpoint with tool calling, and every tool call is really executed: the exact exchange (assistant `tool_calls`, then one `tool` message per call with the real output) is replayed to the model on each step. Without an OpenRouter key the agent does not run at all; the turn ends with a short notice and nothing is executed. Without a TinyFish key, web access still happens for real, using a direct HTTPS GET for pages and DuckDuckGo's HTML results for search. Failures show up as failed steps and are reported back to the model.
+## Models: three separate sources
+
+Settings > General has a **Model** row that shows the current model and where it runs. Tapping it opens a picker with a segmented switch, so the sources never mix in one list:
+
+| Source | Runs on | Model ids | Needs |
+| --- | --- | --- | --- |
+| OpenRouter | OpenRouter's cloud | `openrouter/auto`, `anthropic/…`, any OpenRouter id | OpenRouter key |
+| Ollama Cloud | ollama.com's cloud (not this phone) | `ollama/<name>`, e.g. `ollama/gpt-oss:120b`; the list is read live from `/api/tags` | Ollama Cloud key (create one at https://ollama.com/settings/keys) |
+| On this phone | This phone's GPU (CPU fallback), offline | `local/gemma-4-e2b-it`, `local/gemma-4-e4b-it`, `local/lfm2.5-1.2b-instruct`, `local/file/<name>.litertlm` | A downloaded model file |
+
+The **Cloud provider** switch (OpenRouter / Ollama Cloud) in General shows that provider's key field and makes its last used model active. Without an Ollama key the provider can still be selected; the picker then shows a short note instead of a model list, and a chat answers with a notice without running anything. Ollama Cloud uses the same streaming, tool-calling and reasoning code as OpenRouter through its OpenAI-compatible endpoint; tools are only offered to models whose `/api/show` capabilities include `tools`, and the Reasoning switch follows each model's `thinking` levels (`reasoning_effort`, `"none"` to turn it off).
+
+## On-device models (Settings > On-device)
+
+Local inference uses Google's **LiteRT-LM** runtime (`com.google.ai.edge.litertlm:litertlm-android:0.18.0`) on the GPU through OpenCL. Nothing leaves the phone; web tools still use the network when the model calls them.
+
+| Model | File | Size | RAM | Notes |
+| --- | --- | --- | --- | --- |
+| Gemma 4 E2B (recommended) | `gemma-4-E2B-it.litertlm` | 2.58 GB | 8 GB | Tool calling, thinking, multi-token prediction, 32K context |
+| Gemma 4 E4B | `gemma-4-E4B-it.litertlm` | 3.65 GB | 12 GB | Stronger, slower |
+| LFM2.5 1.2B | `LFM2.5-1.2B-Instruct_int4_gpu.litertlm` | 736 MB | 6 GB | Smallest and fastest GPU build with tool calling, 4K context |
+
+The "2B/4B" Gemma models are Gemma 4 E2B / E4B (effective 2B / 4B parameters), the current on-device Gemma generation. Files come from the ungated `litert-community` repositories on Hugging Face, pinned to exact commits, the same builds Google's AI Edge Gallery ships. You can also import any `.litertlm` file; its tool-calling and thinking support is read from the file.
+
+- **Downloads** go through the system `DownloadManager` into the app's external files directory (`Android/data/<app>/files/models`, no storage permission, removed with the app). They continue in the background with a notification, survive the app being closed, and are checked against the exact byte size before use. Free space is checked first.
+- **Loading**: one model is in memory at a time. It loads on first use (or on "Use"/"Load") on the GPU; if the GPU path is unavailable (no OpenCL, driver error) it falls back to the CPU and says why. Picking a cloud model unloads it to free memory.
+- **Context window**: 2K to 32K tokens (default 4K), capped by each model. Long histories and tool outputs are trimmed to fit.
+- **Faster decoding (MTP)**: optional multi-token prediction for models that include it (Gemma 4) on the GPU.
+- **Agent behaviour** is the same as with cloud models: the same system prompt and six tools, tool calls returned to the app (LiteRT-LM never runs them), approvals and the audit log unchanged. Gemma 4's thinking mode is off by default and can be switched on with the Reasoning/Thinking toggle.
+
+Build notes: LiteRT-LM 0.18.0 is compiled with a newer Kotlin than earlier versions of this project, so the build uses Kotlin 2.2.21, AGP 8.8.2 and Gradle 8.10.2, with `-Xskip-metadata-version-check` (as the AI Edge Gallery does). The manifest declares `libOpenCL.so` and `libvndksupport.so` as optional native libraries for GPU access. Native code ships for `arm64-v8a` (and `x86_64` emulators).
+
+Nothing is canned or simulated. Every answer comes from OpenRouter's chat completions endpoint with tool calling, and every tool call is really executed: the exact exchange (assistant `tool_calls`, then one `tool` message per call with the real output) is replayed to the model on each step. Without a key for the selected cloud provider (and without an on-device model) the agent does not run at all; the turn ends with a short notice and nothing is executed. Without a TinyFish key, web access still happens for real, using a direct HTTPS GET for pages and DuckDuckGo's HTML results for search. Failures show up as failed steps and are reported back to the model.
 
 The shell implements a jailed coreutils subset (`ls`, `cat`, `grep`, `find`, `mv`, `rm`, …) directly on the workspace. Everything else runs for real in the Termux environment described below, with a 60 s timeout (300 s for `apt`/`pkg`/`pip` installs) and an output cap. A program that is not installed reports `not found` with its real exit code.
 
@@ -134,12 +167,14 @@ app/src/main/java/com/sebialex/agent
 │   ├── permission/             PermissionPolicy (pure, unit tested)
 │   └── markdown/               block + inline parser, LCS line diff
 ├── data/
-│   ├── secure/SecureSettings   Keystore-backed EncryptedSharedPreferences (TinyFish, OpenRouter, model)
+│   ├── secure/SecureSettings   Keystore-backed EncryptedSharedPreferences (keys, provider, model, on-device options)
 │   ├── workspace/Workspace     path-jailed file store with snapshots for diffs
 │   ├── shell/                  SandboxShell (jailed built-ins, then Termux or /system/bin/sh),
 │   │                           TermuxBridge (RUN_COMMAND + result receiver), WorkspaceMirror
 │   ├── web/                    TinyFishClient, DirectWebClient, RoutingWebGateway
-│   ├── llm/OpenRouterBrain     OpenAI-compatible tool-calling client
+│   ├── llm/OpenRouterBrain     OpenAI-compatible tool-calling client (OpenRouter and Ollama Cloud)
+│   ├── llm/OllamaCloud         Ollama Cloud model list, capabilities, OllamaBrain
+│   ├── local/                  LocalModels catalog, ModelStore (downloads/imports), LocalEngine (LiteRT-LM, GPU/CPU), LocalBrain
 │   └── persistence/            per-conversation session store and JSONL audit log
 └── ui/
     ├── theme/                  fixed dark palette, typography, soft surfaces
@@ -147,7 +182,7 @@ app/src/main/java/com/sebialex/agent
     ├── chat/                   timeline, turns, steps, approval card, input pill, sheets, conversations menu
     ├── markdown/               Compose Markdown renderer
     ├── files/                  reader / raw / diff / editor
-    ├── settings/               key fields, model, reasoning, web approval, auto-approve, sandbox status
+    ├── settings/               General / On-device tabs, model picker, provider switch, keys, reasoning, sandbox status
     └── terminal/               workspace shell
 ```
 
