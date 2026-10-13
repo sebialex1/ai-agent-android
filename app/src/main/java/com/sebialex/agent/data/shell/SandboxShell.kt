@@ -8,19 +8,30 @@ import java.util.Locale
 
 data class ShellResult(val output: String, val exitCode: Int, val cwd: String, val openFile: String? = null)
 
-/** A shell that can run commands against the workspace. Real backends (e.g. a Termux bootstrap) plug in here. */
+/** A shell that can run commands against the workspace. */
 interface Shell {
     fun execute(command: String, cwd: String = "/"): ShellResult
 }
 
 /**
  * Workspace shell. The common coreutils subset is implemented directly against the sandboxed
- * [Workspace] (path-jailed). Anything else is executed for real by the device's `/system/bin/sh`
- * with the workspace as working directory, a timeout and an output cap. Nothing is simulated:
- * a missing program reports "not found" with its real exit code.
- * Commands are only reached after the permission policy.
+ * [Workspace] (path-jailed). Everything else runs for real:
+ *
+ * - in **Termux** (its bash, apt/dpkg, pkg, Python and pip) when [termux] is ready. The
+ *   conversation's workspace is mirrored to shared storage before the command and copied back
+ *   after it, so installed tools and downloaded files show up in the app;
+ * - otherwise on the device's `/system/bin/sh`. Package managers and Python never fall back:
+ *   without a working Termux they fail with the real reason (not installed, permission denied).
+ *
+ * Every external command runs in the conversation's own workspace directory with a timeout
+ * (60 s, package installs 300 s) and an output cap. Commands are only reached after the
+ * permission policy.
  */
-class SandboxShell(private val ws: Workspace) : Shell {
+class SandboxShell(
+    private val ws: Workspace,
+    private val termux: TermuxBridge? = null,
+    private val mirror: WorkspaceMirror? = null,
+) : Shell {
 
     override fun execute(command: String, cwd: String): ShellResult {
         var dir = cwd
@@ -206,8 +217,62 @@ class SandboxShell(private val ws: Workspace) : Shell {
         }
     }
 
-    /** Runs a command line for real with the device shell, inside the workspace directory. */
+    /** Runs a command line for real: in Termux when it is ready, otherwise with the device shell. */
     private fun external(command: String, cwd: String, stdin: String?): ShellResult {
+        val status = termux?.status()
+        if (termux != null && mirror != null && status?.ready == true) return inTermux(command, cwd, stdin)
+        if (needsTermux(command)) {
+            val reason = status?.problem?.message ?: TermuxProblem.NOT_INSTALLED.message
+            val program = tokenize(command).firstOrNull().orEmpty()
+            return fail("$program: cannot run, the Termux environment is not available.\n$reason", cwd, 127)
+        }
+        return systemShell(command, cwd, stdin)
+    }
+
+    /** Executes in Termux, inside this conversation's mirrored workspace. */
+    private fun inTermux(command: String, cwd: String, stdin: String?): ShellResult {
+        val t = termux!!
+        val m = mirror!!
+        val timeout = timeoutFor(command)
+        try {
+            m.push()
+        } catch (e: Exception) {
+            return fail("sandbox: could not share the workspace with Termux: ${e.message}", cwd, 126)
+        }
+        val sharedDir = java.io.File(m.shared, cwd.removePrefix("/")).apply { mkdirs() }
+        val sharedRoot = m.shared.absolutePath
+        // Inside Termux the workspace lives at the shared path, so /workspace paths are rewritten.
+        var script = command.replace(WORKSPACE_PATH, sharedRoot)
+        if (stdin != null) script = "printf '%s' " + shellQuote(stdin) + " | { $script; }"
+        val result = try {
+            t.run(script, sharedDir.absolutePath, timeout, label = command.take(80))
+        } catch (e: TermuxException) {
+            return fail("termux: ${e.message}", cwd, 126)
+        } finally {
+            runCatching { m.pull() }
+        }
+        var text = buildString {
+            append(result.stdout)
+            if (result.stderr.isNotEmpty()) {
+                if (isNotEmpty() && !endsWith('\n')) append('\n')
+                append(result.stderr)
+            }
+        }
+        if (result.stdoutTruncated) text = "[earlier output truncated by Termux]\n$text"
+        if (text.length > MAX_OUTPUT) text = text.take(MAX_OUTPUT) + "\n[output truncated]"
+        text = text.replace(sharedRoot, "/workspace").replace(ws.root.canonicalPath, "/workspace")
+        // Termux-internal errors (allow-external-apps off, service killed, bootstrap missing).
+        if (result.err != -1 && result.errmsg.isNotBlank()) {
+            return fail((text.trimEnd() + "\n" + "termux error ${result.err}: " + result.errmsg.trim()).trim(), cwd, if (result.exitCode > 0) result.exitCode else 1)
+        }
+        if (result.exitCode == 124) {
+            return fail(text.trimEnd() + "\n[timed out after ${timeout}s]", cwd, result.exitCode)
+        }
+        return ShellResult(text.trimEnd('\n'), result.exitCode, cwd)
+    }
+
+    /** Runs a command line for real with the device shell, inside the workspace directory. */
+    private fun systemShell(command: String, cwd: String, stdin: String?): ShellResult {
         val shellBin = listOf("/system/bin/sh", "/bin/sh").firstOrNull { java.io.File(it).canExecute() }
             ?: return fail("sh: no system shell available", cwd, 127)
         val dir = ws.resolve(cwd)
@@ -239,14 +304,15 @@ class SandboxShell(private val ws: Workspace) : Shell {
                 }
             }
         }.apply { start() }
-        val finished = process.waitFor(TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        val timeout = timeoutFor(command)
+        val finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.SECONDS)
         if (!finished) process.destroyForcibly()
         reader.join(2_000)
         var text = synchronized(output) { output.toString() }
         if (text.length >= MAX_OUTPUT) text = text.take(MAX_OUTPUT) + "\n[output truncated]"
         // Present real absolute paths as /workspace paths.
         text = text.replace(ws.root.canonicalPath, "/workspace").replace(ws.root.absolutePath, "/workspace")
-        if (!finished) return fail(text.trimEnd() + "\n[timed out after ${TIMEOUT_SECONDS}s]", cwd, 124)
+        if (!finished) return fail(text.trimEnd() + "\n[timed out after ${timeout}s]", cwd, 124)
         return ShellResult(text.trimEnd('\n'), process.exitValue(), cwd)
     }
 
@@ -286,10 +352,28 @@ class SandboxShell(private val ws: Workspace) : Shell {
             "pwd", "cd", "ls", "tree", "cat", "head", "tail", "wc", "grep", "find", "echo", "printf",
             "mkdir", "touch", "rm", "rmdir", "mv", "cp", "date", "open", "edit", "help", "clear",
         )
-        private const val TIMEOUT_SECONDS = 60L
+        const val TIMEOUT_SECONDS = 60L
+        /** apt/pkg/pip installs download and unpack packages, so they get a longer budget. */
+        const val INSTALL_TIMEOUT_SECONDS = 300L
         private const val MAX_OUTPUT = 64_000
+        private val WORKSPACE_PATH = Regex("(?<![\\w./-])/workspace(?=/|\\s|$|[\"';:)])")
+        private val TERMUX_PROGRAMS = setOf(
+            "apt", "apt-get", "apt-cache", "dpkg", "pkg", "pip", "pip3", "python", "python3", "termux-setup-storage",
+        )
+        private val INSTALL = Regex("(^|[;&|\\s])(apt|apt-get|pkg|pip|pip3)\\s+(install|upgrade|update|reinstall)\\b|-m\\s+pip\\s+install\\b|dpkg\\s+-i\\b")
+
+        fun timeoutFor(command: String): Long =
+            if (INSTALL.containsMatchIn(command)) INSTALL_TIMEOUT_SECONDS else TIMEOUT_SECONDS
+
+        /** Commands that only make sense in the Termux environment and must never fall back. */
+        fun needsTermux(command: String): Boolean =
+            command.split("&&", "||", ";", "|").any { seg -> seg.trim().split(Regex("\\s+")).firstOrNull() in TERMUX_PROGRAMS }
+
+        fun shellQuote(s: String) = "'" + s.replace("'", "'\\''") + "'"
+
         const val HELP = "Built-ins: pwd  cd  ls  tree  cat  head  tail  wc  grep  find  echo  printf\n" +
             "mkdir  touch  rm  rmdir  mv  cp  open  edit  date  clear\n" +
-            "Anything else runs with the device shell (/system/bin/sh) in the workspace."
+            "Anything else runs in Termux (bash, apt, pkg, pip, python) when it is set up,\n" +
+            "otherwise with the device shell (/system/bin/sh). Both run in this workspace."
     }
 }

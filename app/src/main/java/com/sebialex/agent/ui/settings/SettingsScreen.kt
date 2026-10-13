@@ -57,6 +57,7 @@ import com.sebialex.agent.ui.theme.softSurface
 fun SettingsScreen(
     settings: SecureSettings,
     models: OpenRouterModels,
+    termux: com.sebialex.agent.data.shell.TermuxBridge,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
 ) {
@@ -123,6 +124,7 @@ fun SettingsScreen(
                     ),
                 )
             }
+            SandboxSetting(termux)
             Text(
                 "Delete all conversations and workspaces",
                 style = MaterialTheme.typography.bodyLarge,

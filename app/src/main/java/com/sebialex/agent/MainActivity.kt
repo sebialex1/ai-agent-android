@@ -99,6 +99,7 @@ fun AppRoot(container: AppContainer) {
                 Screen.Settings -> SettingsScreen(
                     settings = container.settings,
                     models = container.models,
+                    termux = container.termux,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
                 )

@@ -8,6 +8,8 @@ import com.sebialex.agent.data.persistence.FileAuditLog
 import com.sebialex.agent.data.persistence.SessionStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.data.shell.SandboxShell
+import com.sebialex.agent.data.shell.TermuxBridge
+import com.sebialex.agent.data.shell.WorkspaceMirror
 import com.sebialex.agent.data.web.RoutingWebGateway
 import com.sebialex.agent.data.workspace.Workspace
 import com.sebialex.agent.domain.agent.AgentOrchestrator
@@ -17,12 +19,17 @@ import com.sebialex.agent.domain.tools.ToolExecutor
 
 /**
  * Everything that belongs to one conversation: its own workspace directory (and snapshots),
- * shell, tool executor (which carries the shell's working directory) and audit log.
- * Runtimes are never shared between conversations.
+ * the mirror of that workspace that Termux works in, shell, tool executor (which carries the
+ * shell's working directory) and audit log. Runtimes are never shared between conversations.
  */
-class SessionRuntime(val sessionId: String, dir: java.io.File, web: RoutingWebGateway) {
+class SessionRuntime(val sessionId: String, dir: java.io.File, web: RoutingWebGateway, termux: TermuxBridge) {
     val workspace = Workspace(dir)
-    val shell = SandboxShell(workspace)
+    val mirror = WorkspaceMirror(
+        local = workspace.root,
+        shared = java.io.File(java.io.File(termux.sharedRoot, sessionId), "workspace"),
+        manifestFile = java.io.File(dir, "mirror.manifest"),
+    )
+    val shell = SandboxShell(workspace, termux, mirror)
     val audit = FileAuditLog(dir)
     val tools = ToolExecutor(workspace, shell, web)
 }
@@ -30,6 +37,8 @@ class SessionRuntime(val sessionId: String, dir: java.io.File, web: RoutingWebGa
 /** Manual dependency container. */
 class AppContainer(app: Application) {
     val settings = SecureSettings(app)
+    /** The real on-device environment: Termux's bash, apt/dpkg, pkg, Python and pip. */
+    val termux = TermuxBridge(app)
     val sessions = SessionStore(app.filesDir)
     private val web = RoutingWebGateway(keyProvider = { settings.tinyFishKey() })
     val policy = PermissionPolicy(askBeforeWebAccess = { settings.askBeforeWeb() })
@@ -51,16 +60,19 @@ class AppContainer(app: Application) {
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
-        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web) }
+        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux) }
 
     @Synchronized
     fun forget(sessionId: String) {
         runtimes.remove(sessionId)
+        // The shared Termux copy of a deleted conversation goes with it.
+        Thread { runCatching { java.io.File(termux.sharedRoot, sessionId).deleteRecursively() } }.start()
     }
 
     @Synchronized
     fun forgetAll() {
         runtimes.clear()
+        Thread { runCatching { termux.sharedRoot.listFiles()?.forEach { it.deleteRecursively() } } }.start()
     }
 
     fun newOrchestrator(sessionId: String): AgentOrchestrator {
