@@ -65,7 +65,7 @@ The "2B/4B" Gemma models are Gemma 4 E2B / E4B (effective 2B / 4B parameters), t
 - **Loading**: one model is in memory at a time. It loads on first use (or on "Use"/"Load") on the GPU; if the GPU path is unavailable (no OpenCL, driver error) it falls back to the CPU and says why. Picking a cloud model unloads it to free memory.
 - **Context window**: 2K to 32K tokens (default 4K), capped by each model. Long histories and tool outputs are trimmed to fit.
 - **Faster decoding (MTP)**: optional multi-token prediction for models that include it (Gemma 4) on the GPU.
-- **Agent behaviour** is the same as with cloud models: the same system prompt and a compact tool set (web, shell, python, read/write/edit/list files, device info), tool calls returned to the app (LiteRT-LM never runs them), approvals and the audit log unchanged. Gemma 4's thinking mode is off by default and can be switched on with the Reasoning/Thinking toggle.
+- **Agent behaviour** is the same as with cloud models: a compact version of the system prompt (same rules, artifacts included, no long tool guide) and a compact tool set (web, shell, python, read/write/edit/list files, device info, check_tools, attach_files), tool calls returned to the app (LiteRT-LM never runs them), approvals and the audit log unchanged. Gemma 4's thinking mode is off by default and can be switched on with the Reasoning/Thinking toggle.
 
 Build notes: LiteRT-LM 0.18.0 is compiled with a newer Kotlin than earlier versions of this project, so the build uses Kotlin 2.2.21, AGP 8.8.2 and Gradle 8.10.2, with `-Xskip-metadata-version-check` (as the AI Edge Gallery does). The manifest declares `libOpenCL.so` and `libvndksupport.so` as optional native libraries for GPU access. Native code ships for `arm64-v8a` (and `x86_64` emulators).
 
@@ -219,18 +219,22 @@ app/src/main/java/com/sebialex/agent
 ├── domain/
 │   ├── model/                  Turn, Step, ToolCall, ToolResult, FileAttachment, SourceRef
 │   ├── agent/                  AgentOrchestrator (loop + approvals + audit), AgentBrain, RoutingBrain
-│   ├── tools/ToolExecutor.kt   dispatches tool calls to workspace / shell / web / memory
+│   ├── agent/KeyPool           several keys per provider, rotation on key errors
+│   ├── tools/ToolExecutor.kt   dispatches tool calls to workspace / shell / web / memory / image model
+│   ├── tools/ExtraTools        copy_file, file_info, zip_files, unzip_file, generate_image
 │   ├── tools/ConversationMemory  read-only interface for the conversation_memory tool
 │   ├── permission/             PermissionPolicy (pure, unit tested)
 │   └── markdown/               block + inline parser, LCS line diff
 ├── data/
 │   ├── secure/SecureSettings   Keystore-backed EncryptedSharedPreferences (keys, provider, model, on-device options)
 │   ├── workspace/Workspace     path-jailed file store with snapshots for diffs
-│   ├── shell/                  SandboxShell (jailed built-ins, then Termux or /system/bin/sh),
+│   ├── shell/                  SandboxShell (jailed built-ins, then Termux or /system/bin/sh), ToolCheck (command -v pre-check),
 │   │                           TermuxBridge (RUN_COMMAND + result receiver), WorkspaceMirror
 │   ├── web/                    TinyFishClient, DirectWebClient, RoutingWebGateway
 │   ├── llm/OpenRouterBrain     OpenAI-compatible tool-calling client (OpenRouter and Ollama Cloud)
 │   ├── llm/OllamaCloud         Ollama Cloud model list, capabilities, OllamaBrain
+│   ├── llm/CustomProviders     presets, URL normalisation and auto-detection of OpenAI-compatible APIs
+│   ├── llm/OpenRouterImages    generate_image through OpenRouter's Image API
 │   ├── local/                  LocalModels catalog, ModelStore (downloads/imports), LocalEngine (LiteRT-LM, GPU/CPU), LocalBrain
 │   └── persistence/            per-conversation session store, JSONL audit log,
 │                               ConversationMemoryReader (capped list/summary/paged read)

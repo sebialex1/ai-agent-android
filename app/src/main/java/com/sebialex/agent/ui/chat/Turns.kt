@@ -232,13 +232,18 @@ fun AssistantTurn(
             if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
         }
         // Files and sources follow the answer once it has been revealed.
-        if (turn.attachments.isNotEmpty() || turn.sources.isNotEmpty() || turn.artifacts.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
+        // A file that is attached as an artifact is not repeated as a file pill below it.
+        val pills = remember(turn.attachments, turn.artifacts) {
+            val attached = turn.artifacts.map { it.path }.toSet()
+            turn.attachments.filterNot { it.path in attached }
+        }
+        if (pills.isNotEmpty() || turn.sources.isNotEmpty() || turn.artifacts.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // Attached artifacts first: what the agent produced for you, one tap away.
                 if (turn.artifacts.isNotEmpty()) ArtifactChips(turn.artifacts, resolveFile, onOpen = onOpenFile)
-                if (turn.attachments.isNotEmpty()) {
+                if (pills.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        turn.attachments.forEach { FilePill(it, onClick = { onOpenFile(it) }) }
+                        pills.forEach { FilePill(it, onClick = { onOpenFile(it) }) }
                     }
                 }
                 if (turn.sources.isNotEmpty()) {
