@@ -51,6 +51,7 @@ jobs:
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: agent-debug-apk
           path: dist/*.apk
