@@ -38,7 +38,7 @@ import com.sebialex.agent.ui.theme.Palette
 sealed interface Screen {
     data object Chat : Screen
     data class File(val path: String, val baseSnapshot: String?) : Screen
-    data object Settings : Screen
+    data class Settings(val tab: com.sebialex.agent.ui.settings.SettingsTab = com.sebialex.agent.ui.settings.SettingsTab.GENERAL) : Screen
     data object Workspace : Screen
     data object Conversations : Screen
 }
@@ -108,10 +108,10 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     store = container.modelStore,
                     engine = container.localEngine,
-                    onOpenOnDevice = { push(Screen.Settings) },
+                    onOpenOnDevice = { push(Screen.Settings(com.sebialex.agent.ui.settings.SettingsTab.ON_DEVICE)) },
                 )
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)
-                Screen.Settings -> SettingsScreen(
+                is Screen.Settings -> SettingsScreen(
                     settings = container.settings,
                     models = container.models,
                     termux = container.termux,
@@ -120,6 +120,7 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
+                    initialTab = screen.tab,
                 )
                 Screen.Workspace -> WorkspaceScreen(
                     shell = runtime.shell,
@@ -143,7 +144,7 @@ fun AppRoot(container: AppContainer) {
                     onOpen = { vm.open(it); backToChat() },
                     onNew = { vm.newConversation(); backToChat() },
                     onStartWith = { text -> vm.newConversation(); vm.send(text); backToChat() },
-                    onSettings = { push(Screen.Settings) },
+                    onSettings = { push(Screen.Settings()) },
                     settings = container.settings,
                 )
             }

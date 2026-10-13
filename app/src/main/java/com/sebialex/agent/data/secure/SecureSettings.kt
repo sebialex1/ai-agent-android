@@ -56,6 +56,10 @@ class SecureSettings(context: Context) {
         val localContext: Int,
         /** Multi-token prediction for models that ship it (faster decoding on GPU). */
         val localSpeculative: Boolean,
+        /** New conversations start with memory of past chats on. Each chat can still change it. */
+        val memoryForNewChats: Boolean = false,
+        /** Let the model write conversation titles. */
+        val autoTitles: Boolean = true,
     )
 
     private val _state = MutableStateFlow(read())
@@ -88,6 +92,10 @@ class SecureSettings(context: Context) {
     fun localBackend(): String = prefs.getString(KEY_LOCAL_BACKEND, null)?.takeIf { it == BACKEND_CPU } ?: BACKEND_GPU
     fun localContext(): Int = prefs.getInt(KEY_LOCAL_CONTEXT, DEFAULT_LOCAL_CONTEXT).takeIf { it in LOCAL_CONTEXTS } ?: DEFAULT_LOCAL_CONTEXT
     fun localSpeculative(): Boolean = prefs.getBoolean(KEY_LOCAL_SPECULATIVE, false)
+    fun memoryForNewChats(): Boolean = prefs.getBoolean(KEY_MEMORY_NEW_CHATS, false)
+    fun autoTitles(): Boolean = prefs.getBoolean(KEY_AUTO_TITLES, true)
+    fun setMemoryForNewChats(value: Boolean) = edit { putBoolean(KEY_MEMORY_NEW_CHATS, value) }
+    fun setAutoTitles(value: Boolean) = edit { putBoolean(KEY_AUTO_TITLES, value) }
 
     /** Reasoning on/off and effort are stored per model id, so each model keeps its own setting. */
     fun reasoning(model: String = model()): ReasoningPreference = ReasoningPreference(
@@ -178,6 +186,8 @@ class SecureSettings(context: Context) {
         localBackend = localBackend(),
         localContext = localContext(),
         localSpeculative = localSpeculative(),
+        memoryForNewChats = memoryForNewChats(),
+        autoTitles = autoTitles(),
     )
 
     private fun hint(key: String?): String = if (key == null) "" else "\u2022\u2022\u2022\u2022 " + key.takeLast(4)
@@ -197,6 +207,8 @@ class SecureSettings(context: Context) {
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"
         private const val KEY_OLLAMA_CUSTOM = "ollama_model_custom"
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
+        private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
+        private const val KEY_AUTO_TITLES = "auto_titles"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"

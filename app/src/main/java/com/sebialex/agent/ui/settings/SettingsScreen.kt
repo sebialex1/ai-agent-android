@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +63,15 @@ import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
+/** Settings, split into tabs so no single page carries everything. */
+enum class SettingsTab(val label: String) {
+    GENERAL("General"),
+    MODELS("Models"),
+    ON_DEVICE("On-device"),
+    CHATS("Chats"),
+    ABOUT("About"),
+}
+
 @Composable
 fun SettingsScreen(
     settings: SecureSettings,
@@ -72,12 +82,14 @@ fun SettingsScreen(
     ollama: OllamaCloud,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
+    initialTab: SettingsTab = SettingsTab.GENERAL,
 ) {
     val snap by settings.state.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf(SettingsTab.GENERAL) }
-    val generalScroll = rememberScrollState()
-    val onDeviceScroll = rememberScrollState()
+    var tab by rememberSaveable { mutableStateOf(initialTab) }
+    // One scroll position per tab, so switching tabs never jumps.
+    val scrolls = SettingsTab.entries.associateWith { rememberScrollState() }
     var picking by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxSize()
@@ -95,8 +107,9 @@ fun SettingsScreen(
             label = { it.label },
             onSelect = { tab = it },
             modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp),
+            scrollable = true,
         )
-        val scroll = if (tab == SettingsTab.GENERAL) generalScroll else onDeviceScroll
+        val scroll = scrolls.getValue(tab)
         Column(
             Modifier
                 .fillMaxSize()
@@ -117,76 +130,103 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            if (tab == SettingsTab.ON_DEVICE) {
-                OnDeviceSettings(settings, modelStore, localEngine)
-            } else {
-                ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
-                ReasoningSetting(
-                    model = snap.model,
-                    pref = snap.reasoning,
-                    models = models,
-                    onEnabled = { settings.setReasoningEnabled(snap.model, it) },
-                    onEffort = { settings.setReasoningEffort(snap.model, it) },
-                )
-                CloudProviderSetting(snap, settings)
-                KeyField(
-                    label = "TinyFish API key",
-                    saved = snap.hasTinyFishKey,
-                    hint = snap.tinyFishHint,
-                    onSave = settings::setTinyFishKey,
-                    onClear = { settings.setTinyFishKey(null) },
-                )
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAskBeforeWeb(!snap.askBeforeWeb) }.padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Ask before web access", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = snap.askBeforeWeb,
-                        onCheckedChange = settings::setAskBeforeWeb,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Palette.OnAccent,
-                            checkedTrackColor = Palette.Accent,
-                            uncheckedThumbColor = Palette.IconMuted,
-                            uncheckedTrackColor = Palette.SurfaceHigh,
-                            uncheckedBorderColor = Palette.SurfaceHighest,
-                        ),
-                    )
-                }
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAutoApprove(!snap.autoApprove) }.padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Auto-approve agent actions", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-                        Text(
-                            "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Palette.TextTertiary,
-                            modifier = Modifier.padding(top = 2.dp, end = 12.dp),
+            when (tab) {
+                SettingsTab.GENERAL -> {
+                    Group("Permissions") {
+                        SwitchRow(
+                            title = "Ask before web access",
+                            subtitle = "Every web search and page fetch waits for Allow.",
+                            checked = snap.askBeforeWeb,
+                            onChange = settings::setAskBeforeWeb,
+                        )
+                        SwitchRow(
+                            title = "Auto-approve agent actions",
+                            subtitle = "Installs, deletions and network commands run without the Allow/Deny card. Each one is marked in the steps. Blocked actions stay blocked. Off by default.",
+                            checked = snap.autoApprove,
+                            onChange = settings::setAutoApprove,
                         )
                     }
-                    Switch(
-                        checked = snap.autoApprove,
-                        onCheckedChange = settings::setAutoApprove,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Palette.OnAccent,
-                            checkedTrackColor = Palette.Accent,
-                            uncheckedThumbColor = Palette.IconMuted,
-                            uncheckedTrackColor = Palette.SurfaceHigh,
-                            uncheckedBorderColor = Palette.SurfaceHighest,
-                        ),
-                    )
+                    Group("Web search") {
+                        KeyField(
+                            label = "TinyFish API key",
+                            saved = snap.hasTinyFishKey,
+                            hint = snap.tinyFishHint,
+                            onSave = settings::setTinyFishKey,
+                            onClear = { settings.setTinyFishKey(null) },
+                        )
+                        Note("Optional. Without it, search and fetch go directly from this phone.")
+                    }
+                    SandboxSetting(termux)
                 }
-                SandboxSetting(termux)
-                Text(
-                    "Delete all conversations and workspaces",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Palette.Danger,
-                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClearConversations).padding(vertical = 8.dp),
-                )
-                Spacer(Modifier.height(24.dp))
+                SettingsTab.MODELS -> {
+                    ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
+                    ReasoningSetting(
+                        model = snap.model,
+                        pref = snap.reasoning,
+                        models = models,
+                        onEnabled = { settings.setReasoningEnabled(snap.model, it) },
+                        onEffort = { settings.setReasoningEffort(snap.model, it) },
+                    )
+                    Group("OpenRouter") {
+                        KeyField(
+                            label = "OpenRouter API key",
+                            saved = snap.hasOpenRouterKey,
+                            hint = snap.openRouterHint,
+                            onSave = settings::setOpenRouterKey,
+                            onClear = { settings.setOpenRouterKey(null) },
+                        )
+                        Note("Hundreds of hosted models; the list in the picker is pulled live from openrouter.ai.")
+                    }
+                    Group("Ollama Cloud") {
+                        KeyField(
+                            label = "Ollama Cloud API key",
+                            saved = snap.hasOllamaKey,
+                            hint = snap.ollamaHint,
+                            onSave = settings::setOllamaKey,
+                            onClear = { settings.setOllamaKey(null) },
+                        )
+                        Note("Hosted Ollama models at ollama.com (native /api/chat). Create a key at ollama.com/settings/keys. Some large models need a paid Ollama plan; the app shows Ollama's own message if a model is not included.")
+                    }
+                }
+                SettingsTab.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
+                SettingsTab.CHATS -> {
+                    Group("Memory of past chats") {
+                        SwitchRow(
+                            title = "On for new chats",
+                            subtitle = "Memory is set per conversation in its options (\u22ef in the chat or the list). With it on, the agent can list, summarize and read your earlier conversations, read-only.",
+                            checked = snap.memoryForNewChats,
+                            onChange = settings::setMemoryForNewChats,
+                        )
+                    }
+                    Group("Titles") {
+                        SwitchRow(
+                            title = "Model-written titles",
+                            subtitle = "After the first answer, the model names the conversation from what it is about. Renamed chats keep your title.",
+                            checked = snap.autoTitles,
+                            onChange = settings::setAutoTitles,
+                        )
+                    }
+                    Group("Data") {
+                        if (!confirmClear) {
+                            Text(
+                                "Delete all conversations and workspaces",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Palette.Danger,
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { confirmClear = true }.padding(vertical = 8.dp),
+                            )
+                        } else {
+                            com.sebialex.agent.ui.components.SheetConfirm(
+                                message = "Every conversation, its workspace files and history will be deleted. This cannot be undone.",
+                                confirm = "Delete all",
+                                onConfirm = { confirmClear = false; onClearConversations() },
+                                onCancel = { confirmClear = false },
+                            )
+                        }
+                    }
+                }
+                SettingsTab.ABOUT -> AboutTab()
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
     if (picking) {
@@ -202,50 +242,63 @@ fun SettingsScreen(
     }
 }
 
-/**
- * Cloud provider switch (OpenRouter or Ollama Cloud) with that provider's API key. On-device
- * models are not a provider here; they live in their own tab and section of the picker.
- */
 @Composable
-private fun CloudProviderSetting(snap: SecureSettings.Snapshot, settings: SecureSettings) {
+private fun Group(title: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionLabel("Cloud provider")
-        SegmentedText(
-            options = listOf(SecureSettings.PROVIDER_OPENROUTER, SecureSettings.PROVIDER_OLLAMA),
-            selected = snap.cloudProvider,
-            label = { if (it == SecureSettings.PROVIDER_OLLAMA) "Ollama Cloud" else "OpenRouter" },
-            onSelect = settings::setCloudProvider,
-            modifier = Modifier.fillMaxWidth(),
-            fill = true,
-        )
-        if (snap.cloudProvider == SecureSettings.PROVIDER_OLLAMA) {
-            KeyField(
-                label = "Ollama Cloud API key",
-                saved = snap.hasOllamaKey,
-                hint = snap.ollamaHint,
-                onSave = settings::setOllamaKey,
-                onClear = { settings.setOllamaKey(null) },
-            )
-            Text(
-                "Hosted Ollama models at ollama.com. Create a key at ollama.com/settings/keys. Nothing runs on this phone.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
-            )
-        } else {
-            KeyField(
-                label = "OpenRouter API key",
-                saved = snap.hasOpenRouterKey,
-                hint = snap.openRouterHint,
-                onSave = settings::setOpenRouterKey,
-                onClear = { settings.setOpenRouterKey(null) },
-            )
-        }
+        SectionLabel(title)
+        content()
     }
 }
 
-private enum class SettingsTab(val label: String) {
-    GENERAL("General"),
-    ON_DEVICE("On-device"),
+@Composable
+private fun Note(text: String) {
+    Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+}
+
+@Composable
+private fun AboutTab() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val version = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "dev"
+    }
+    fun open(url: String) {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+    Group("Agent for Android") {
+        Note("Version $version. A tool-using agent with a private workspace per conversation. Keys are stored encrypted with the Android Keystore and never leave this phone except to the provider they belong to.")
+    }
+    Group("Agent tools") {
+        Note(com.sebialex.agent.data.llm.OpenRouterBrain.TOOL_SUMMARY)
+    }
+    Group("Links") {
+        LinkRow("Source code", "github.com/sebialex1/ai-agent-android") { open("https://github.com/sebialex1/ai-agent-android") }
+        LinkRow("Ollama Cloud docs", "docs.ollama.com/cloud") { open("https://docs.ollama.com/cloud") }
+        LinkRow("Ollama API keys", "ollama.com/settings/keys") { open(OllamaCloud.KEYS_URL) }
+        LinkRow("OpenRouter models", "openrouter.ai/models") { open("https://openrouter.ai/models") }
+    }
+}
+
+@Composable
+private fun LinkRow(title: String, detail: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        }
+        AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 16.dp)
+    }
 }
 
 private sealed interface ModelCheck {

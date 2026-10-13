@@ -37,9 +37,12 @@ internal fun <T> SegmentedText(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
     fill: Boolean = false,
+    /** Many options (the Settings tabs): the pill scrolls sideways instead of squeezing labels. */
+    scrollable: Boolean = false,
 ) {
     Row(
         modifier
+            .then(if (scrollable) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
             .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 2.dp)
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),

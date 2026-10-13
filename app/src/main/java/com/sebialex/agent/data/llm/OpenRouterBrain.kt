@@ -457,7 +457,7 @@ class OpenRouterBrain(
             Rules:
             - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
             - If a command reports that Termux is not available or permission is denied, tell the user what to set up
-              (Settings > Sandbox) instead of pretending it worked.
+              (Settings > General > Sandbox) instead of pretending it worked.
             - Only cite websites you actually fetched in this conversation.
             - Keep the final answer short and direct. Do not narrate the tools you used; the app shows them.
         """.trimIndent()
@@ -504,6 +504,10 @@ class OpenRouterBrain(
                 }
             }
         }
+
+        /** One-line list of the agent's tools, shown in Settings > About. */
+        const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
+            "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
 

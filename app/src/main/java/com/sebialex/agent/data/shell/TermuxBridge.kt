@@ -23,11 +23,11 @@ enum class TermuxProblem(val message: String) {
     ),
     NO_RUN_PERMISSION(
         "permission denied: this app is not allowed to run commands in Termux. Grant " +
-            "\"Run commands in Termux environment\" in Settings > Sandbox.",
+            "\"Run commands in Termux environment\" in Settings > General > Sandbox.",
     ),
     NO_STORAGE(
         "permission denied: shared storage access is off, so the workspace cannot be shared with " +
-            "Termux. Allow \"All files access\" in Settings > Sandbox.",
+            "Termux. Allow \"All files access\" in Settings > General > Sandbox.",
     ),
 }
 
@@ -189,7 +189,7 @@ class TermuxBridge(private val context: Context) {
         const val SHARED_DIR_NAME = "AgentSandbox"
         const val PROP_ALLOW_EXTERNAL_APPS = "allow-external-apps"
         const val EXTERNAL_APPS_HINT =
-            "Fix: open Termux and run the setup command from Settings > Sandbox. If it was already run, Termux " +
+            "Fix: open Termux and run the setup command from Settings > General > Sandbox. If it was already run, Termux " +
                 "is still using its old settings: run termux-reload-settings in Termux, or force stop Termux " +
                 "(App info > Force stop), open it again, then tap Check."
 

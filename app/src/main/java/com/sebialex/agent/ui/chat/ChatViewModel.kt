@@ -74,6 +74,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         cache[currentId] = _state.value.session
+        if (container.settings.memoryForNewChats()) container.settings.setConversationMemory(currentId, true)
         viewModelScope.launch(Dispatchers.IO) {
             for (op in io) runCatching { op() }
         }
@@ -94,6 +95,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             list.forEach { summaries[it.id] = it }
             if (active != null && cache[currentId]?.turns.isNullOrEmpty()) {
                 cache.remove(currentId)
+                container.settings.forgetConversation(currentId)
                 cache[active.id] = active
                 currentId = active.id
             }
@@ -123,7 +125,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     /** Starts a fresh, empty conversation with its own empty workspace. */
     fun newConversation() {
         if (cache[currentId]?.turns.isNullOrEmpty()) return
-        val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+        val fresh = freshSession()
         cache[fresh.id] = fresh
         currentId = fresh.id
         expanded = emptySet()
@@ -137,7 +139,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         summaries.remove(id)
         container.forget(id)
         if (id == currentId) {
-            val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+            val fresh = freshSession()
             cache[fresh.id] = fresh
             currentId = fresh.id
             expanded = emptySet()
@@ -177,7 +179,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         cache.clear()
         summaries.clear()
         container.forgetAll()
-        val fresh = Session(newId(), "", emptyList(), System.currentTimeMillis())
+        val fresh = freshSession()
         cache[fresh.id] = fresh
         currentId = fresh.id
         expanded = emptySet()
@@ -325,7 +327,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun dropIfEmpty(id: String) {
-        if (cache[id]?.turns.isNullOrEmpty() && !runs.containsKey(id)) cache.remove(id)
+        if (cache[id]?.turns.isNullOrEmpty() && !runs.containsKey(id)) {
+            cache.remove(id)
+            // An empty chat that was never used leaves no per-conversation settings behind.
+            container.settings.forgetConversation(id)
+        }
     }
 
     private fun publish() {
@@ -366,6 +372,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
      */
     private fun maybeWriteTitle(sessionId: String) {
         val s = cache[sessionId] ?: return
+        if (!container.settings.autoTitles()) return
         if (s.customTitle || s.generatedTitle || sessionId in titling) return
         if (s.turns.none { it.role == com.sebialex.agent.domain.model.Role.ASSISTANT && it.complete && it.text.isNotBlank() }) return
         titling += sessionId
@@ -382,6 +389,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 titling -= sessionId
             }
         }
+    }
+
+    /** An empty conversation; memory of past chats starts as set in Settings > Chats. */
+    private fun freshSession(): Session {
+        val s = Session(newId(), "", emptyList(), System.currentTimeMillis())
+        if (container.settings.memoryForNewChats()) container.settings.setConversationMemory(s.id, true)
+        return s
     }
 
     private fun newId() = UUID.randomUUID().toString().replace("-", "").take(16)
