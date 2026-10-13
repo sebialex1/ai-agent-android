@@ -9,6 +9,9 @@ sealed interface ToolCall {
     data class Shell(override val callId: String, val command: String) : ToolCall
     data class ReadFile(override val callId: String, val path: String) : ToolCall
     data class WriteFile(override val callId: String, val path: String, val content: String) : ToolCall
+
+    /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
+    data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
 
 /** Result returned to the brain after a tool call. */

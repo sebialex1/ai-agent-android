@@ -14,9 +14,11 @@ interface Shell {
 }
 
 /**
- * A Termux-like command interpreter that never spawns real processes. It implements the common
- * coreutils subset directly against the sandboxed [Workspace], and simulates interpreters and
- * package managers deterministically. Commands are only reached after the permission policy.
+ * Workspace shell. The common coreutils subset is implemented directly against the sandboxed
+ * [Workspace] (path-jailed). Anything else is executed for real by the device's `/system/bin/sh`
+ * with the workspace as working directory, a timeout and an output cap. Nothing is simulated:
+ * a missing program reports "not found" with its real exit code.
+ * Commands are only reached after the permission policy.
  */
 class SandboxShell(private val ws: Workspace) : Shell {
 
@@ -66,6 +68,11 @@ class SandboxShell(private val ws: Workspace) : Shell {
 
     private fun runPipeline(segment: String, cwd: String): ShellResult {
         val stages = segment.split(Regex("\\s\\|\\s"))
+        // Anything that is not purely built-ins goes to the real shell untouched, so pipes,
+        // quoting and redirections keep their exact shell semantics.
+        if (stages.any { tokenize(it).firstOrNull() !in BUILTINS }) {
+            return try { external(segment, cwd, stdin = null) } catch (e: WorkspaceException) { ShellResult(e.message ?: "error", 1, cwd) }
+        }
         var r = runSingle(stages.first(), cwd, stdin = null)
         for (stage in stages.drop(1)) {
             if (r.exitCode != 0) break
@@ -102,7 +109,7 @@ class SandboxShell(private val ws: Workspace) : Shell {
             cmd = raw.substring(0, it.range.first)
         }
         val r = try {
-            dispatch(tokenize(cmd), cwd, stdin)
+            dispatch(cmd, tokenize(cmd), cwd, stdin)
         } catch (e: WorkspaceException) {
             ShellResult(e.message ?: "error", 1, cwd)
         } catch (e: Exception) {
@@ -121,7 +128,7 @@ class SandboxShell(private val ws: Workspace) : Shell {
         return r
     }
 
-    private fun dispatch(args: List<String>, cwd: String, stdin: String?): ShellResult {
+    private fun dispatch(raw: String, args: List<String>, cwd: String, stdin: String?): ShellResult {
         if (args.isEmpty()) return ok("", cwd)
         val name = args[0]
         val rest = args.drop(1)
@@ -187,23 +194,60 @@ class SandboxShell(private val ws: Workspace) : Shell {
             "mv" -> if (operands.size < 2) fail("usage: mv SRC DST", cwd) else { ws.move(operands[0], operands[1], cwd); ok("", cwd) }
             "cp" -> if (operands.size < 2) fail("usage: cp SRC DST", cwd) else { ws.copy(operands[0], operands[1], cwd); ok("", cwd) }
             "date" -> ok(SimpleDateFormat("EEE MMM d HH:mm:ss zzz yyyy", Locale.US).format(Date()), cwd)
-            "whoami" -> ok("agent", cwd)
-            "uname" -> ok(if ('a' in flags) "Linux localhost 6.1.0-android aarch64 Android" else "Linux", cwd)
-            "env" -> ok("HOME=/workspace\nPWD=/workspace$cwd\nSHELL=/system/bin/sh\nPREFIX=/workspace/.usr", cwd)
             "open", "edit" -> {
                 val target = operands.firstOrNull() ?: return fail("usage: $name FILE", cwd)
                 val f = ws.resolve(target, cwd)
                 if (!f.exists()) ws.write(target, "", cwd)
                 ShellResult("", 0, cwd, openFile = ws.virtualOf(f))
             }
-            "python", "python3" -> python(operands, cwd)
-            "pip", "pip3", "pkg", "apt", "apt-get", "npm" -> install(name, operands, cwd)
-            "curl", "wget" -> ok("$name: network access is routed through the web tool in this sandbox", cwd).copy(exitCode = 0)
-            "git" -> ok(gitStub(operands), cwd)
             "help" -> ok(HELP, cwd)
             "clear" -> ok("\u000c", cwd)
-            else -> fail("$name: command not found", cwd, 127)
+            else -> external(raw, cwd, stdin)
         }
+    }
+
+    /** Runs a command line for real with the device shell, inside the workspace directory. */
+    private fun external(command: String, cwd: String, stdin: String?): ShellResult {
+        val shellBin = listOf("/system/bin/sh", "/bin/sh").firstOrNull { java.io.File(it).canExecute() }
+            ?: return fail("sh: no system shell available", cwd, 127)
+        val dir = ws.resolve(cwd)
+        val tmp = java.io.File(ws.root, ".tmp").apply { mkdirs() }
+        val pb = ProcessBuilder(shellBin, "-c", command).directory(dir).redirectErrorStream(true)
+        pb.environment().apply {
+            put("HOME", ws.root.absolutePath)
+            put("TMPDIR", tmp.absolutePath)
+            put("PWD", dir.absolutePath)
+        }
+        val process = try {
+            pb.start()
+        } catch (e: java.io.IOException) {
+            return fail("sh: ${e.message}", cwd, 126)
+        }
+        Thread {
+            runCatching { process.outputStream.use { out -> if (stdin != null) out.write(stdin.toByteArray()) } }
+        }.start()
+        val output = StringBuilder()
+        val reader = Thread {
+            runCatching {
+                process.inputStream.bufferedReader().use { r ->
+                    val buf = CharArray(8192)
+                    while (true) {
+                        val n = r.read(buf)
+                        if (n < 0) break
+                        synchronized(output) { if (output.length < MAX_OUTPUT) output.append(buf, 0, n) }
+                    }
+                }
+            }
+        }.apply { start() }
+        val finished = process.waitFor(TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        if (!finished) process.destroyForcibly()
+        reader.join(2_000)
+        var text = synchronized(output) { output.toString() }
+        if (text.length >= MAX_OUTPUT) text = text.take(MAX_OUTPUT) + "\n[output truncated]"
+        // Present real absolute paths as /workspace paths.
+        text = text.replace(ws.root.canonicalPath, "/workspace").replace(ws.root.absolutePath, "/workspace")
+        if (!finished) return fail(text.trimEnd() + "\n[timed out after ${TIMEOUT_SECONDS}s]", cwd, 124)
+        return ShellResult(text.trimEnd('\n'), process.exitValue(), cwd)
     }
 
     private fun ls(paths: List<String>, cwd: String, long: Boolean, all: Boolean): String = paths.joinToString("\n") { p ->
@@ -234,38 +278,18 @@ class SandboxShell(private val ws: Workspace) : Shell {
         return sb.toString().trimEnd('\n')
     }
 
-    private fun python(operands: List<String>, cwd: String): ShellResult {
-        val script = operands.firstOrNull() ?: return ok("Python 3.11.9 (sandbox)", cwd)
-        if (script == "-c") return ok(operands.drop(1).joinToString(" ").substringAfter("print(").substringBeforeLast(")").trim('"', '\''), cwd)
-        val source = ws.read(script, cwd)
-        // Deterministic simulation: echo every print("...") literal in order.
-        val prints = Regex("print\\(\\s*[fr]?([\"'])(.*?)\\1\\s*\\)").findAll(source).map { it.groupValues[2] }.toList()
-        val outFile = Regex("open\\(\\s*[\"']([^\"']+)[\"']\\s*,\\s*[\"']w[\"']").find(source)?.groupValues?.get(1)
-        val body = Regex("CONTENT\\s*=\\s*\"\"\"([\\s\\S]*?)\"\"\"").find(source)?.groupValues?.get(1)
-        if (outFile != null && body != null) ws.write(outFile, body.trimStart('\n'), cwd)
-        return ok(prints.joinToString("\n"), cwd)
-    }
-
-    private fun install(manager: String, operands: List<String>, cwd: String): ShellResult {
-        val pkgs = operands.filterNot { it == "install" || it == "i" || it == "add" }
-        if (pkgs.isEmpty()) return ok("$manager: nothing to do", cwd)
-        val lines = pkgs.flatMap { listOf("Collecting $it", "Installing $it into /workspace/.usr") } + "Successfully installed ${pkgs.joinToString(" ")}"
-        ws.mkdir(".usr", "/")
-        ws.write(".usr/installed.txt", pkgs.joinToString("\n", postfix = "\n"), "/", append = true)
-        return ok(lines.joinToString("\n"), cwd)
-    }
-
-    private fun gitStub(operands: List<String>) = when (operands.firstOrNull()) {
-        "status" -> "On branch main\nnothing to commit, working tree clean"
-        "log" -> "commit 4f1c2ab (HEAD -> main)\n    Initial workspace"
-        else -> "git: '${operands.firstOrNull() ?: ""}' is not available in the sandbox"
-    }
-
     private fun ok(output: String, cwd: String) = ShellResult(output, 0, cwd)
     private fun fail(output: String, cwd: String, code: Int = 1) = ShellResult(output, code, cwd)
 
     companion object {
-        const val HELP = "pwd  cd  ls  tree  cat  head  tail  wc  grep  find  echo  printf\n" +
-            "mkdir  touch  rm  rmdir  mv  cp  open  edit  python  pip  pkg  git  date  clear"
+        private val BUILTINS = setOf(
+            "pwd", "cd", "ls", "tree", "cat", "head", "tail", "wc", "grep", "find", "echo", "printf",
+            "mkdir", "touch", "rm", "rmdir", "mv", "cp", "date", "open", "edit", "help", "clear",
+        )
+        private const val TIMEOUT_SECONDS = 60L
+        private const val MAX_OUTPUT = 64_000
+        const val HELP = "Built-ins: pwd  cd  ls  tree  cat  head  tail  wc  grep  find  echo  printf\n" +
+            "mkdir  touch  rm  rmdir  mv  cp  open  edit  date  clear\n" +
+            "Anything else runs with the device shell (/system/bin/sh) in the workspace."
     }
 }

@@ -3,7 +3,6 @@ package com.sebialex.agent.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sebialex.agent.AppContainer
-import com.sebialex.agent.data.sample.SampleData
 import com.sebialex.agent.domain.agent.AgentEvent
 import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
@@ -43,7 +42,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             val session = withContext(Dispatchers.IO) {
-                container.sessions.load() ?: SampleData.seed(container.workspace).also { container.sessions.save(it) }
+                // The old pre-loaded sample conversation ("seed") is never shown.
+                container.sessions.load()?.takeIf { it.id != "seed" }
+                    ?: Session(id(), "", emptyList(), System.currentTimeMillis()).also { container.sessions.save(it) }
             }
             _state.update { it.copy(session = session) }
         }

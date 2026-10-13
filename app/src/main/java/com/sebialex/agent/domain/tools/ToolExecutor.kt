@@ -33,7 +33,10 @@ class ToolExecutor(
                 }
                 is ToolCall.WebFetch -> {
                     val page = web.fetch(call.url)
-                    ToolResult(call.callId, true, page.text, sources = listOf(SourceRef(page.url, hostOf(page.url), page.title)))
+                    val text = page.text.ifBlank { "(the page had no readable text)" }
+                    // A page only counts as a source when it actually returned readable content.
+                    val sources = if (page.text.isNotBlank()) listOf(SourceRef(page.url, hostOf(page.url), page.title)) else emptyList()
+                    ToolResult(call.callId, true, text, sources = sources)
                 }
                 is ToolCall.Shell -> {
                     val r = shell.execute(call.command, cwd)
@@ -55,7 +58,10 @@ class ToolExecutor(
                     )
                     ToolResult(call.callId, true, "wrote ${call.content.length} bytes to ${w.virtualPath}", attachment = attachment)
                 }
+                is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             ToolResult(call.callId, false, e.message ?: e.javaClass.simpleName, exitCode = if (call is ToolCall.Shell) 1 else null)
         }

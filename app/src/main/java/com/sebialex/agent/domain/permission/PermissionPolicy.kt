@@ -37,6 +37,7 @@ class PermissionPolicy(
         } else PermissionDecision.Allow
         is ToolCall.WebSearch -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, call.query) else PermissionDecision.Allow
         is ToolCall.WebFetch -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, call.url) else PermissionDecision.Allow
+        is ToolCall.Invalid -> PermissionDecision.Allow
     }
 
     fun evaluateShell(command: String): PermissionDecision {

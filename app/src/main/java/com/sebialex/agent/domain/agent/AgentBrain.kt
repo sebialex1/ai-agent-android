@@ -4,7 +4,12 @@ import com.sebialex.agent.domain.model.ToolCall
 import com.sebialex.agent.domain.model.ToolResult
 import com.sebialex.agent.domain.model.Turn
 
-data class Observation(val call: ToolCall, val result: ToolResult)
+/**
+ * One executed tool call and its real result. [batch] groups calls that the model requested
+ * together in a single assistant message (parallel tool calls), so the exact exchange can be
+ * replayed to the model on the next request.
+ */
+data class Observation(val call: ToolCall, val result: ToolResult, val batch: Int = 0)
 
 data class BrainContext(
     val task: String,
@@ -14,7 +19,10 @@ data class BrainContext(
 )
 
 sealed interface BrainDecision {
-    data class Act(val call: ToolCall) : BrainDecision
+    /** Execute every call, in order, then ask the brain again. */
+    data class Act(val calls: List<ToolCall>) : BrainDecision {
+        constructor(call: ToolCall) : this(listOf(call))
+    }
     data class Answer(val text: String) : BrainDecision
 }
 
@@ -23,19 +31,27 @@ interface AgentBrain {
     suspend fun next(ctx: BrainContext): BrainDecision
 }
 
-/** Uses OpenRouter when a key is configured, otherwise the deterministic scripted brain. */
+/**
+ * Uses OpenRouter whenever a key is configured. There is no offline or scripted fallback:
+ * without a key the turn ends with a plain notice and nothing is executed.
+ */
 class RoutingBrain(
     private val openRouterKey: () -> String?,
     private val model: () -> String,
     private val remote: (key: String, model: String) -> AgentBrain,
-    private val local: AgentBrain,
 ) : AgentBrain {
     override suspend fun next(ctx: BrainContext): BrainDecision {
-        val key = openRouterKey() ?: return local.next(ctx)
+        val key = openRouterKey() ?: return BrainDecision.Answer(NO_KEY_NOTICE)
         return try {
             remote(key, model()).next(ctx)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            BrainDecision.Answer("I couldn't reach the model (${e.message ?: e.javaClass.simpleName}). Check the OpenRouter key in settings.")
+            BrainDecision.Answer("The model request failed: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    companion object {
+        const val NO_KEY_NOTICE = "Add an OpenRouter API key in Settings to run the agent. Nothing was executed."
     }
 }

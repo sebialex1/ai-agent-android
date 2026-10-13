@@ -10,7 +10,6 @@ import com.sebialex.agent.data.web.RoutingWebGateway
 import com.sebialex.agent.data.workspace.Workspace
 import com.sebialex.agent.domain.agent.AgentOrchestrator
 import com.sebialex.agent.domain.agent.RoutingBrain
-import com.sebialex.agent.domain.agent.ScriptedBrain
 import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.domain.tools.ToolExecutor
 
@@ -28,7 +27,6 @@ class AppContainer(app: Application) {
         openRouterKey = { settings.openRouterKey() },
         model = { settings.model() },
         remote = { key, model -> OpenRouterBrain(key, model) },
-        local = ScriptedBrain(),
     )
 
     fun newOrchestrator() = AgentOrchestrator(

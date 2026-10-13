@@ -13,7 +13,6 @@ import com.sebialex.agent.domain.model.Turn
 import com.sebialex.agent.domain.permission.PermissionDecision
 import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.domain.tools.ToolExecutor
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 
@@ -45,8 +44,7 @@ class AgentOrchestrator(
     private val policy: PermissionPolicy,
     private val workspace: Workspace,
     private val audit: AuditSink,
-    private val pacing: suspend (ToolCall) -> Unit = { delay(pacingFor(it)) },
-    private val maxSteps: Int = 20,
+    private val maxSteps: Int = 30,
 ) {
     private var seq = 0L
 
@@ -54,8 +52,10 @@ class AgentOrchestrator(
         val observations = mutableListOf<Observation>()
         val attachments = linkedMapOf<String, FileAttachment>()
         val sources = linkedMapOf<String, SourceRef>()
+        var executed = 0
+        var batch = 0
 
-        for (i in 0 until maxSteps) {
+        while (executed < maxSteps) {
             val ctx = BrainContext(task, history, observations.toList(), workspaceFiles())
             when (val decision = brain.next(ctx)) {
                 is BrainDecision.Answer -> {
@@ -63,56 +63,63 @@ class AgentOrchestrator(
                     return@channelFlow
                 }
                 is BrainDecision.Act -> {
-                    val call = decision.call
-                    val allowed = when (val d = policy.evaluate(call)) {
-                        PermissionDecision.Allow -> true
-                        is PermissionDecision.Deny -> {
-                            val s = permissionStep(d.summary, d.reason.label).copy(
-                                status = StepStatus.FAILED, output = "blocked by policy: ${d.reason.label}", finishedAt = now(),
-                            )
-                            send(AgentEvent.StepAdded(s)); audit.record(s)
-                            false
+                    batch++
+                    for (call in decision.calls) {
+                        executed++
+                        if (call is ToolCall.Invalid) {
+                            observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
+                            continue
                         }
-                        is PermissionDecision.Ask -> {
-                            val s = permissionStep(d.summary, d.reason.label)
-                            send(AgentEvent.StepAdded(s))
-                            val ok = gate.request(ApprovalRequest(s.id, d.summary, d.reason.label))
-                            val done = s.copy(
-                                status = if (ok) StepStatus.DONE else StepStatus.DENIED,
-                                output = if (ok) "allowed by user" else "denied by user",
-                                finishedAt = now(),
-                            )
-                            send(AgentEvent.StepUpdated(done)); audit.record(done)
-                            ok
+                        val allowed = when (val d = policy.evaluate(call)) {
+                            PermissionDecision.Allow -> true
+                            is PermissionDecision.Deny -> {
+                                val s = permissionStep(d.summary, d.reason.label).copy(
+                                    status = StepStatus.FAILED, output = "blocked by policy: ${d.reason.label}", finishedAt = now(),
+                                )
+                                send(AgentEvent.StepAdded(s)); audit.record(s)
+                                false
+                            }
+                            is PermissionDecision.Ask -> {
+                                val s = permissionStep(d.summary, d.reason.label)
+                                send(AgentEvent.StepAdded(s))
+                                val ok = gate.request(ApprovalRequest(s.id, d.summary, d.reason.label))
+                                val done = s.copy(
+                                    status = if (ok) StepStatus.DONE else StepStatus.DENIED,
+                                    output = if (ok) "allowed by user" else "denied by user",
+                                    finishedAt = now(),
+                                )
+                                send(AgentEvent.StepUpdated(done)); audit.record(done)
+                                ok
+                            }
                         }
+                        if (!allowed) {
+                            observations += Observation(call, ToolResult(call.callId, false, "Permission denied. Do not retry this action."), batch)
+                            continue
+                        }
+                        val step = stepFor(call)
+                        send(AgentEvent.StepAdded(step))
+                        val result = tools.execute(call)
+                        val finished = step.copy(
+                            status = if (result.ok) StepStatus.DONE else StepStatus.FAILED,
+                            output = result.output,
+                            exitCode = result.exitCode,
+                            finishedAt = now(),
+                            url = result.sources.firstOrNull()?.url ?: step.url,
+                            path = result.attachment?.path ?: step.path,
+                        )
+                        send(AgentEvent.StepUpdated(finished)); audit.record(finished)
+                        result.attachment?.let { a ->
+                            val prior = attachments[a.path]
+                            attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
+                        }
+                        // Only pages that were actually fetched and read become website sources.
+                        if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
+                        observations += Observation(call, result, batch)
                     }
-                    if (!allowed) {
-                        observations += Observation(call, ToolResult(call.callId, false, "Permission denied by user. Do not retry this action."))
-                        continue
-                    }
-                    val step = stepFor(call)
-                    send(AgentEvent.StepAdded(step))
-                    pacing(call)
-                    val result = tools.execute(call)
-                    val finished = step.copy(
-                        status = if (result.ok) StepStatus.DONE else StepStatus.FAILED,
-                        output = result.output,
-                        exitCode = result.exitCode,
-                        finishedAt = now(),
-                        url = result.sources.firstOrNull()?.url ?: step.url,
-                        path = result.attachment?.path ?: step.path,
-                    )
-                    send(AgentEvent.StepUpdated(finished)); audit.record(finished)
-                    result.attachment?.let { a ->
-                        val prior = attachments[a.path]
-                        attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
-                    }
-                    result.sources.forEach { sources.putIfAbsent(it.url, it) }
-                    observations += Observation(call, result)
                 }
             }
         }
-        send(AgentEvent.Finished("I stopped after $maxSteps steps.", attachments.values.toList(), sources.values.toList()))
+        send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList()))
     }
 
     private fun workspaceFiles(): List<String> =
@@ -135,18 +142,8 @@ class AgentOrchestrator(
             nextId(), StepKind.FILE_WRITE, call.path.substringAfterLast('/'), "write_file",
             "{\"path\": \"${esc(call.path)}\", \"bytes\": ${call.content.length}}\n\n${call.content}", path = call.path, startedAt = now(),
         )
+        is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
 
     private fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
-
-    companion object {
-        /** Deterministic pacing for the offline simulation so steps append at a natural rhythm. */
-        fun pacingFor(call: ToolCall): Long = when (call) {
-            is ToolCall.WebSearch -> 620L
-            is ToolCall.WebFetch -> 760L
-            is ToolCall.Shell -> 380L
-            is ToolCall.ReadFile -> 240L
-            is ToolCall.WriteFile -> 420L
-        }
-    }
 }
