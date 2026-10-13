@@ -69,6 +69,9 @@ fun FileViewerScreen(
     val scope = rememberCoroutineScope()
     val name = path.substringAfterLast('/')
     val isMarkdown = name.endsWith(".md", ignoreCase = true) || name.endsWith(".markdown", ignoreCase = true)
+    val kind = remember(name) { FileKind.of(name) }
+    var file by remember { mutableStateOf<java.io.File?>(null) }
+    var size by remember { mutableStateOf<Long?>(null) }
     var content by remember { mutableStateOf<String?>(null) }
     var base by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -77,10 +80,19 @@ fun FileViewerScreen(
 
     LaunchedEffect(path, baseSnapshot) {
         withContext(Dispatchers.IO) {
-            runCatching { workspace.read(path) }
-                .onSuccess { content = it }
-                .onFailure { error = it.message }
-            base = baseSnapshot?.let { workspace.snapshot(it) }
+            runCatching { workspace.resolve(path) }.getOrNull()?.takeIf { it.isFile }?.let {
+                file = it
+                size = it.length()
+            }
+            // Media is shown from the file itself; only text is read into memory.
+            if (kind == FileKind.TEXT) {
+                runCatching { workspace.read(path) }
+                    .onSuccess { content = it }
+                    .onFailure { error = it.message }
+                base = baseSnapshot?.let { workspace.snapshot(it) }
+            } else if (file == null) {
+                error = "$path: no such file"
+            }
         }
     }
 
@@ -107,15 +119,24 @@ fun FileViewerScreen(
             } else {
                 QuietIconButton(R.drawable.ic_back, "Back", onClick = onBack)
             }
-            Text(
-                name,
-                style = MaterialTheme.typography.titleSmall,
-                color = Palette.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Start,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-            )
+            Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Palette.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Start,
+                )
+                // Type and size under the name, quiet like the file list's detail line.
+                Text(
+                    typeLabel(name, kind) + (size?.let { " \u00b7 " + formatSize(it) } ?: ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (mode == ViewMode.EDIT) {
                 QuietIconButton(R.drawable.ic_check, "Save", onClick = {
                     save(draft)
@@ -145,6 +166,7 @@ fun FileViewerScreen(
             error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
             }
+            kind == FileKind.IMAGE -> file?.let { ImagePreview(it, Modifier.weight(1f)) } ?: Spacer(Modifier.fillMaxSize())
             text == null -> Spacer(Modifier.fillMaxSize())
             else -> AnimatedContent(
                 targetState = mode,
