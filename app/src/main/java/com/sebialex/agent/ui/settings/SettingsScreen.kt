@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.R
 import com.sebialex.agent.data.llm.ModelReasoning
+import com.sebialex.agent.data.llm.OllamaCloud
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningPreference
 import com.sebialex.agent.data.llm.ReasoningRules
@@ -68,6 +69,7 @@ fun SettingsScreen(
     termux: com.sebialex.agent.data.shell.TermuxBridge,
     modelStore: ModelStore,
     localEngine: LocalEngine,
+    ollama: OllamaCloud,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
 ) {
@@ -75,6 +77,7 @@ fun SettingsScreen(
     var tab by remember { mutableStateOf(SettingsTab.GENERAL) }
     val generalScroll = rememberScrollState()
     val onDeviceScroll = rememberScrollState()
+    var picking by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxSize()
@@ -117,32 +120,21 @@ fun SettingsScreen(
             if (tab == SettingsTab.ON_DEVICE) {
                 OnDeviceSettings(settings, modelStore, localEngine)
             } else {
-                KeyField(
-                    label = "TinyFish API key",
-                    saved = snap.hasTinyFishKey,
-                    hint = snap.tinyFishHint,
-                    onSave = settings::setTinyFishKey,
-                    onClear = { settings.setTinyFishKey(null) },
-                )
-                KeyField(
-                    label = "OpenRouter API key",
-                    saved = snap.hasOpenRouterKey,
-                    hint = snap.openRouterHint,
-                    onSave = settings::setOpenRouterKey,
-                    onClear = { settings.setOpenRouterKey(null) },
-                )
-                PlainField(
-                    label = "Model",
-                    value = snap.model,
-                    placeholder = SecureSettings.DEFAULT_MODEL,
-                    onSave = settings::setModel,
-                )
+                ModelPickerRow(snap.model, snap.localBackend, onClick = { picking = true })
                 ReasoningSetting(
                     model = snap.model,
                     pref = snap.reasoning,
                     models = models,
                     onEnabled = { settings.setReasoningEnabled(snap.model, it) },
                     onEffort = { settings.setReasoningEffort(snap.model, it) },
+                )
+                CloudProviderSetting(snap, settings)
+                KeyField(
+                    label = "TinyFish API key",
+                    saved = snap.hasTinyFishKey,
+                    hint = snap.tinyFishHint,
+                    onSave = settings::setTinyFishKey,
+                    onClear = { settings.setTinyFishKey(null) },
                 )
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { settings.setAskBeforeWeb(!snap.askBeforeWeb) }.padding(vertical = 6.dp),
@@ -195,6 +187,57 @@ fun SettingsScreen(
                 )
                 Spacer(Modifier.height(24.dp))
             }
+        }
+    }
+    if (picking) {
+        ModelPickerSheet(
+            settings = settings,
+            ollama = ollama,
+            store = modelStore,
+            engine = localEngine,
+            onOpenOnDevice = { tab = SettingsTab.ON_DEVICE },
+            onDismiss = { picking = false },
+        )
+    }
+}
+
+/**
+ * Cloud provider switch (OpenRouter or Ollama Cloud) with that provider's API key. On-device
+ * models are not a provider here; they live in their own tab and section of the picker.
+ */
+@Composable
+private fun CloudProviderSetting(snap: SecureSettings.Snapshot, settings: SecureSettings) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionLabel("Cloud provider")
+        SegmentedText(
+            options = listOf(SecureSettings.PROVIDER_OPENROUTER, SecureSettings.PROVIDER_OLLAMA),
+            selected = snap.cloudProvider,
+            label = { if (it == SecureSettings.PROVIDER_OLLAMA) "Ollama Cloud" else "OpenRouter" },
+            onSelect = settings::setCloudProvider,
+            modifier = Modifier.fillMaxWidth(),
+            fill = true,
+        )
+        if (snap.cloudProvider == SecureSettings.PROVIDER_OLLAMA) {
+            KeyField(
+                label = "Ollama Cloud API key",
+                saved = snap.hasOllamaKey,
+                hint = snap.ollamaHint,
+                onSave = settings::setOllamaKey,
+                onClear = { settings.setOllamaKey(null) },
+            )
+            Text(
+                "Hosted Ollama models at ollama.com. Create a key at ollama.com/settings/keys. Nothing runs on this phone.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+            )
+        } else {
+            KeyField(
+                label = "OpenRouter API key",
+                saved = snap.hasOpenRouterKey,
+                hint = snap.openRouterHint,
+                onSave = settings::setOpenRouterKey,
+                onClear = { settings.setOpenRouterKey(null) },
+            )
         }
     }
 }
@@ -347,7 +390,7 @@ private fun KeyField(label: String, saved: Boolean, hint: String, onSave: (Strin
 }
 
 @Composable
-private fun PlainField(label: String, value: String, placeholder: String, onSave: (String) -> Unit) {
+internal fun PlainField(label: String, value: String, placeholder: String, onSave: (String) -> Unit) {
     var draft by remember(value) { mutableStateOf(value) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary)

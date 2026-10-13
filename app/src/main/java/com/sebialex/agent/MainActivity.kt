@@ -113,6 +113,7 @@ fun AppRoot(container: AppContainer) {
                     termux = container.termux,
                     modelStore = container.modelStore,
                     localEngine = container.localEngine,
+                    ollama = container.ollama,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
                 )
