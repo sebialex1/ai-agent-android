@@ -21,6 +21,8 @@ class ToolExecutor(
     private val web: WebGateway,
     /** Earlier conversations, read-only. Null when this runtime has no access to them. */
     private val memory: ConversationMemory? = null,
+    /** Image model for generate_image; null when none is set up. */
+    private val images: ImageGenerator? = null,
 ) {
     private var cwd = "/"
 
@@ -55,6 +57,11 @@ class ToolExecutor(
                     }
                 }
                 is ToolCall.AttachFiles -> attach(call)
+                is ToolCall.CopyFile -> ExtraTools.copy(workspace, call)
+                is ToolCall.FileInfo -> ExtraTools.info(workspace, call)
+                is ToolCall.ZipFiles -> ExtraTools.zip(workspace, call)
+                is ToolCall.UnzipFile -> ExtraTools.unzip(workspace, call)
+                is ToolCall.GenerateImage -> ExtraTools.image(workspace, images, call)
                 is ToolCall.CheckTools -> {
                     val names = call.tools.map { it.trim() }.filter { it.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) }.distinct()
                     if (names.isEmpty()) ToolResult(call.callId, false, "No valid program names given.")

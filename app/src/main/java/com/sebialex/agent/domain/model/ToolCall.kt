@@ -58,6 +58,26 @@ sealed interface ToolCall {
     /** Moves or renames a workspace file or folder. */
     data class MoveFile(override val callId: String, val from: String, val to: String) : ToolCall
 
+    /** Copies a workspace file or folder. */
+    data class CopyFile(override val callId: String, val from: String, val to: String) : ToolCall
+
+    /** Size, type, dates and media facts (dimensions, duration) of a workspace file or folder. */
+    data class FileInfo(override val callId: String, val path: String) : ToolCall
+
+    /** Packs workspace files and folders into a zip archive at [output]. */
+    data class ZipFiles(override val callId: String, val paths: List<String>, val output: String) : ToolCall
+
+    /** Extracts a zip archive inside the workspace ([to], default: a folder named after it). */
+    data class UnzipFile(override val callId: String, val path: String, val to: String? = null) : ToolCall
+
+    /** Makes a picture from [prompt] with an image model and saves it (attached to the answer). */
+    data class GenerateImage(
+        override val callId: String,
+        val prompt: String,
+        val filename: String? = null,
+        val aspectRatio: String? = null,
+    ) : ToolCall
+
     /** Deletes a workspace file or folder (asks first). */
     data class DeleteFile(override val callId: String, val path: String) : ToolCall
 

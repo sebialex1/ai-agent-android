@@ -41,6 +41,7 @@ class SessionRuntime(
     web: RoutingWebGateway,
     termux: TermuxBridge,
     sessions: SessionStore,
+    images: com.sebialex.agent.domain.tools.ImageGenerator? = null,
 ) {
     val workspace = Workspace(dir)
     val mirror = WorkspaceMirror(
@@ -52,7 +53,7 @@ class SessionRuntime(
     val audit = FileAuditLog(dir)
     /** Read-only view of the other conversations, used only when memory is on for this one. */
     val memory = ConversationMemoryReader(sessions, sessionId)
-    val tools = ToolExecutor(workspace, shell, web, memory)
+    val tools = ToolExecutor(workspace, shell, web, memory, images)
 }
 
 /** Manual dependency container. */
@@ -182,7 +183,10 @@ class AppContainer(app: Application) {
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
-        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions) }
+        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images) }
+
+    /** generate_image: OpenRouter's Image API with the OpenRouter key ring. */
+    private val images = com.sebialex.agent.data.llm.OpenRouterImages(settings)
 
     @Synchronized
     fun forget(sessionId: String) {

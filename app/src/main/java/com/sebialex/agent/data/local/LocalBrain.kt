@@ -214,14 +214,14 @@ class LocalBrain(
     private fun systemPrompt(ctx: BrainContext, loaded: LoadedModel): String {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val files = ctx.workspaceFiles.take(MAX_FILES)
-        val base = if (loaded.toolCalling) OpenRouterBrain.SYSTEM_PROMPT else NO_TOOLS_PROMPT
+        val base = if (loaded.toolCalling) OpenRouterBrain.COMPACT_SYSTEM_PROMPT else NO_TOOLS_PROMPT
         val memory = if (loaded.toolCalling && ctx.memoryTool) "\n" + OpenRouterBrain.MEMORY_PROMPT else ""
         return base + memory + "\nYou run fully on this phone (${loaded.name}, ${loaded.backend}). Today is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
     private fun systemPromptLength(ctx: BrainContext) =
-        OpenRouterBrain.SYSTEM_PROMPT.length + 200 + ctx.workspaceFiles.take(MAX_FILES).sumOf { it.length + 1 } + TOOL_SCHEMA_CHARS +
+        OpenRouterBrain.COMPACT_SYSTEM_PROMPT.length + 200 + ctx.workspaceFiles.take(MAX_FILES).sumOf { it.length + 1 } + TOOL_SCHEMA_CHARS +
             if (ctx.memoryTool) OpenRouterBrain.MEMORY_PROMPT.length + MEMORY_SCHEMA_CHARS else 0
 
     /** The tool call's arguments as plain Kotlin values for LiteRT-LM's chat template. */
@@ -262,7 +262,7 @@ class LocalBrain(
         private const val MAX_FILES = 60
         private const val CANCEL_WAIT_MS = 5_000L
         /** Approximate size of the compact tool schemas once rendered into the prompt. */
-        private const val TOOL_SCHEMA_CHARS = 3_600
+        private const val TOOL_SCHEMA_CHARS = 4_600
         private const val MEMORY_SCHEMA_CHARS = 700
         private val STRICT = Json
 

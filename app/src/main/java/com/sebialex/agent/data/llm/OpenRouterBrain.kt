@@ -419,6 +419,11 @@ class OpenRouterBrain(
             is ToolCall.DeviceInfo -> "device_info"
             is ToolCall.CheckTools -> "check_tools"
             is ToolCall.AttachFiles -> "attach_files"
+            is ToolCall.CopyFile -> "copy_file"
+            is ToolCall.FileInfo -> "file_info"
+            is ToolCall.ZipFiles -> "zip_files"
+            is ToolCall.UnzipFile -> "unzip_file"
+            is ToolCall.GenerateImage -> "generate_image"
             is ToolCall.ViewImage -> "view_image"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
@@ -456,6 +461,15 @@ class OpenRouterBrain(
                 c.body?.let { put("body", it) }
             }.toString()
             is ToolCall.DeviceInfo -> "{}"
+            is ToolCall.CopyFile -> buildJsonObject { put("from", c.from); put("to", c.to) }.toString()
+            is ToolCall.FileInfo -> buildJsonObject { put("path", c.path) }.toString()
+            is ToolCall.ZipFiles -> buildJsonObject { putJsonArray("paths") { c.paths.forEach { add(it) } }; put("output", c.output) }.toString()
+            is ToolCall.UnzipFile -> buildJsonObject { put("path", c.path); c.to?.let { put("to", it) } }.toString()
+            is ToolCall.GenerateImage -> buildJsonObject {
+                put("prompt", c.prompt)
+                c.filename?.let { put("filename", it) }
+                c.aspectRatio?.let { put("aspect_ratio", it) }
+            }.toString()
             is ToolCall.AttachFiles -> buildJsonObject {
                 putJsonArray("files") {
                     c.files.forEach { f -> add(buildJsonObject { put("path", f.path); f.name?.let { put("name", it) } }) }
@@ -534,6 +548,22 @@ class OpenRouterBrain(
                     ToolCall.HttpRequest(id, (arg("method") ?: "GET").trim().uppercase(), url, headers, body)
                 }
                 "device_info" -> ToolCall.DeviceInfo(id)
+                "copy_file" -> {
+                    val from = arg("from")?.takeIf { it.isNotBlank() } ?: return missing("from")
+                    val to = arg("to")?.takeIf { it.isNotBlank() } ?: return missing("to")
+                    ToolCall.CopyFile(id, from, to)
+                }
+                "file_info" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.FileInfo(id, it) } ?: missing("path")
+                "zip_files" -> {
+                    val paths = stringList(args["paths"]).ifEmpty { listOfNotNull(arg("path")?.takeIf { it.isNotBlank() }) }
+                    if (paths.isEmpty()) return missing("paths")
+                    val output = arg("output")?.takeIf { it.isNotBlank() } ?: return missing("output")
+                    ToolCall.ZipFiles(id, paths, output)
+                }
+                "unzip_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.UnzipFile(id, it, arg("to")?.takeIf { t -> t.isNotBlank() }) } ?: missing("path")
+                "generate_image" -> arg("prompt")?.takeIf { it.isNotBlank() }?.let {
+                    ToolCall.GenerateImage(id, it, arg("filename")?.takeIf { f -> f.isNotBlank() }, arg("aspect_ratio")?.takeIf { a -> a.isNotBlank() })
+                } ?: missing("prompt")
                 "attach_files", "attach_file" -> {
                     // files: [{path, name?}] or plain path strings; a single `path` (+ `name`) works too.
                     val specs = when (val f = args["files"] ?: args["paths"]) {
@@ -570,48 +600,101 @@ class OpenRouterBrain(
         private const val MAX_HISTORY_TURNS = 24
         private const val MAX_TOOL_OUTPUT = 16_000
 
-        /** The agent instructions, shared with the on-device brain. */
+        /** The agent instructions for cloud models (OpenRouter, Ollama Cloud, custom providers). */
         internal val SYSTEM_PROMPT = """
-            You are an agent running on an Android device with a private, sandboxed workspace at /workspace.
-            You act through tools and every tool call is really executed:
-            - web_search: real web search. Returns titles, URLs and snippets.
-            - web_fetch: downloads a page and returns its text. Fetch pages before relying on them.
-            - shell: runs a command in the workspace. Built-ins (ls, cat, grep, ...) run directly; everything else runs
-              in the real Termux environment (bash, apt, apt-get, dpkg, pkg, pip, python) inside this workspace.
-              Install system tools with `pkg install -y <pkg>` (or `apt install -y <pkg>`) and Python packages with
-              `pip install <pkg>`, e.g. `pip install yt-dlp` then `yt-dlp -o "%(title)s.%(ext)s" <url>`.
-              Always pass -y to apt/pkg; there is no interactive input. Commands time out after 60 s (installs 300 s).
-              If python or pip is missing, install it with `pkg install -y python` first. Do not claim that packages
-              cannot be installed unless a real command failed; quote the real error if it did.
-            - python: runs Python code with Termux's Python in the workspace; list pip packages in `packages` to install
-              them first. Real imports, file I/O and subprocess. Files it writes land in the workspace.
-            - read_file / write_file: read and write workspace files. Write documents as Markdown.
-            - edit_file: replace an exact snippet in a file (prefer it over rewriting a whole file for small changes).
-            - list_files / search_files: list a folder (optionally recursive) and grep text across workspace files.
-            - move_file / delete_file: rename, move or delete workspace files and folders (deleting asks the user).
-            - download_file: save any URL (PDF, image, archive, dataset) into the workspace.
-            - http_request: call a web API (GET, POST, PUT, PATCH, DELETE) with headers and a body; returns status,
-              headers and the response text. Non-GET requests ask the user first.
+            You are a capable, autonomous agent running on the user's Android phone. You get things done by calling
+            tools; every tool call is really executed on the device or the web, and you see the real output.
+            Work in /workspace, this conversation's private folder (the user sees it in the app's file manager).
+
+            # How to work
+            - Understand the goal, then act. For anything beyond a quick answer, plan the steps briefly in your head
+              and carry them out with tools until the task is actually done; do not stop at instructions for the user
+              when you can do it yourself.
+            - Verify instead of guessing: search and fetch before stating facts that may have changed, check that
+              files exist, read command output. Never invent facts, sources, files, URLs or command output.
+            - If a step fails, read the error, fix the cause and retry a different way (another flag, another
+              source, install what is missing). Give up only after a real attempt, and then say exactly what failed.
+            - Ask the user only when the request is truly ambiguous or an action is risky and not clearly wanted.
+            - Prefer several independent tool calls in one step when they do not depend on each other.
+
+            # Tools
+            Web
+            - web_search: real web search (titles, URLs, snippets). Use it to find pages, videos, docs, current facts.
+            - web_fetch: read a page's text. Fetch the pages you rely on; only cite pages you actually fetched.
+            - download_file: save any URL (PDF, image, video file, archive, dataset) into the workspace.
+            - http_request: call a web API (GET/POST/PUT/PATCH/DELETE, headers, JSON body). Non-GET asks the user.
+            Commands and code
+            - shell: run a command in /workspace. Built-ins (ls, cat, grep, find, mv, cp, rm, ...) run directly; the
+              rest runs in the real Termux environment (bash, apt, pkg, pip, python, ffmpeg, yt-dlp, git, ...).
+              Always pass -y to apt/pkg (no interactive input). Commands time out after 60 s (installs 300 s), so
+              keep long jobs short or split them (e.g. download one video at a time).
+            - check_tools: check that programs (yt-dlp, ffmpeg, git, node, ...) are installed before a command that
+              needs them. A shell command whose program is missing is not run; you get the install command instead.
+              Then install it yourself (`pip install -U yt-dlp`, `pkg install -y ffmpeg`) when the task clearly needs
+              it, or offer to. If python/pip itself is missing: `pkg install -y python`.
+            - python: run Python 3 code (Termux's Python) in /workspace; list pip packages in `packages` to install
+              them first. Real imports, file I/O and subprocess. Use it for data work, conversions and calculations.
+            Files (paths are relative to /workspace)
+            - list_files / search_files / file_info: browse folders, grep text, get size/type/dimensions/duration.
+            - read_file / write_file / edit_file: read text, write whole files, replace an exact snippet (prefer
+              edit_file for small changes). Write documents as Markdown unless another format is asked for.
+            - move_file / copy_file / delete_file: rename, move, copy, delete (deleting asks the user).
+            - zip_files / unzip_file: pack files into a .zip or extract one.
+            - view_image: look at a workspace image (or frames of a video) when the task needs to see it. Imports the
+              user asked you to look at are already shown with their message; never look when told not to.
+            Results
+            - attach_files: attach the files you produced to your answer (see Artifacts).
+            - generate_image: create a picture from a description; it is saved and attached automatically.
             - device_info: current date, time, time zone, locale and Android version.
-            - attach_files: attach files you produced to your answer (see "Artifacts" below).
-            - check_tools: check that programs (yt-dlp, ffmpeg, git, node, ...) are installed before relying on them.
-              A shell command whose program is missing is not run; you get the install command instead. Offer to
-              install it, or install it right away when the task clearly needs it.
-            - view_image: look at a workspace image (or a few frames of a video). Imported files the user asked you to
-              look at are already shown with their message; call it only when the task really needs to see one that
-              was not shown, and never when the user said not to look at it.
-            Rules:
-            - Never invent facts, sources, files or command output. If a tool fails, say so plainly.
-            - If a command reports that Termux is not available or permission is denied, tell the user what to set up
+
+            # Artifacts
+            - When you produce a file the user wants (a downloaded video or song, a converted or generated image, a
+              PDF, a report, an archive), finish by calling attach_files with it, so it appears under your answer as a
+              tappable chip that opens the built-in viewer/player. Attach several files at once if there are several.
+            - Do not paste file contents, base64 or a code block instead of attaching, and do not tell the user to dig
+              through the workspace.
+            - Files often get ugly auto-generated names (`video_7312345678901.mp4`, `out.mp4`, `tmpa8f3.png`,
+              `%(title)s` leftovers). Give every attached file a short, human-readable `name`, e.g.
+              "Cat jumps into the pool.mp4"; the file is renamed in place. Keep the right extension.
+
+            # Example: "download this TikTok video" (or YouTube, Instagram, X, ...)
+            1. If you only have a description, web_search for the video and take its page URL from the results.
+            2. check_tools ["yt-dlp", "ffmpeg"]; install what is missing (`pip install -U yt-dlp`,
+               `pkg install -y ffmpeg`).
+            3. shell: `yt-dlp -o "downloads/%(title).80s.%(ext)s" "<url>"` (add `-f "bv*+ba/b"` or
+               `--merge-output-format mp4` when needed). Read the output; on an error, update yt-dlp
+               (`pip install -U yt-dlp`) and retry once.
+            4. list_files downloads/ to get the exact file name.
+            5. attach_files with that path and a clean name.
+            6. Answer in one or two sentences ("Here's the video: …"). No code blocks, no instructions.
+
+            # Mentions and imports
+            - The user can mention workspace files as @path or @"path with spaces"; that is the file they mean.
+            - Imported files arrive as @imports/<id>/<name>; work with them by path.
+
+            # Rules
+            - If a command says Termux is not available or permission is denied, tell the user what to set up
               (Settings > General > Sandbox) instead of pretending it worked.
-            - Only cite websites you actually fetched in this conversation.
-            - Keep the final answer short and direct. Do not narrate the tools you used; the app shows them.
-            Artifacts:
-            - When you produce a file the user asked for (a downloaded video, a converted image, a PDF, a report),
-              call attach_files with it before answering, so it appears under your answer as a tappable chip. You can
-              attach several files at once. Do not paste the file's content or a code block instead.
-            - Files often get ugly auto-generated names (`video_7312345678.mp4`, `out.mp4`, `tmpa8f3.png`). Give each
-              attached file a short, human-readable `name` (e.g. "Funny cat compilation.mp4"); it is renamed in place.
+            - Respect the permission prompts: if the user denies an action, do not retry it; find another way or stop.
+            - Keep the final answer short, direct and in the user's language. Do not narrate the tools you used;
+              the app shows every step. Use Markdown only when it helps (lists, tables, short code the user asked for).
+        """.trimIndent()
+
+        /**
+         * Shorter instructions for on-device models, whose context windows are small (often 4K tokens):
+         * the same rules and the artifacts habit, without the long tool guide.
+         */
+        internal val COMPACT_SYSTEM_PROMPT = """
+            You are an agent on an Android phone with a private workspace at /workspace. Tool calls are really executed.
+            - web_search / web_fetch: find and read pages; only cite pages you fetched.
+            - shell: run commands (Termux: bash, pkg, pip, python). Pass -y to pkg/apt. Programs that are missing are
+              reported with their install command (check_tools checks first); install them when the task needs it.
+            - python: run Python code; `packages` are pip-installed first.
+            - read_file / write_file / edit_file / list_files: work with workspace files (paths relative to /workspace).
+            - attach_files: attach files you produced to your answer with a short human-readable `name` (rename ugly
+              auto-generated names). Do not paste file contents instead.
+            - device_info: date, time and device facts.
+            Never invent facts, files or command output. If something fails, say so plainly. Keep answers short.
         """.trimIndent()
 
         private fun fn(name: String, description: String, vararg params: Pair<String, String>): JsonElement = buildJsonObject {
@@ -659,10 +742,12 @@ class OpenRouterBrain(
 
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
-            "search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, attach_files, view_image"
+            "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
+            "device_info, check_tools, attach_files, generate_image, view_image"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
-            "edit_file, list_files, search_files, move_file, delete_file, download_file, http_request, device_info, check_tools, attach_files, view_image, " +
+            "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
+            "http_request, device_info, check_tools, attach_files, generate_image, view_image, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -838,6 +923,46 @@ class OpenRouterBrain(
                 ),
                 typedFn("device_info", "Current date, time, time zone, locale and Android version of this phone."),
                 ATTACH_TOOL,
+                typedFn(
+                    "copy_file", "Copy a workspace file or folder.",
+                    Param("from", "string", "Source path relative to /workspace"),
+                    Param("to", "string", "Destination path relative to /workspace"),
+                ),
+                typedFn(
+                    "file_info", "Facts about a workspace file or folder: size, type, modified time, image dimensions, " +
+                        "video/audio duration and resolution, line count for text.",
+                    Param("path", "string", "Path relative to /workspace"),
+                ),
+                buildJsonObject {
+                    put("type", "function")
+                    putJsonObject("function") {
+                        put("name", "zip_files")
+                        put("description", "Pack workspace files and folders into a .zip archive.")
+                        putJsonObject("parameters") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("paths") {
+                                    put("type", "array"); putJsonObject("items") { put("type", "string") }
+                                    put("description", "Files or folders to include, relative to /workspace")
+                                }
+                                putJsonObject("output") { put("type", "string"); put("description", "Archive path, e.g. exports/photos.zip") }
+                            }
+                            putJsonArray("required") { add("paths"); add("output") }
+                        }
+                    }
+                },
+                typedFn(
+                    "unzip_file", "Extract a .zip archive inside the workspace.",
+                    Param("path", "string", "Archive path relative to /workspace"),
+                    Param("to", "string", "Target folder; default: a folder named after the archive", required = false),
+                ),
+                typedFn(
+                    "generate_image", "Create a picture from a text description with an image model. The image is saved in " +
+                        "the workspace and attached to your answer automatically.",
+                    Param("prompt", "string", "Detailed description of the picture: subject, style, composition, lighting"),
+                    Param("filename", "string", "Optional human-readable path, e.g. images/Red panda astronaut.png", required = false),
+                    Param("aspect_ratio", "string", "Optional, e.g. 1:1, 16:9, 9:16, 4:3", required = false),
+                ),
                 arrayFn(
                     "check_tools",
                     "Check whether command-line programs (yt-dlp, ffmpeg, git, node, ...) are installed in the sandbox. " +

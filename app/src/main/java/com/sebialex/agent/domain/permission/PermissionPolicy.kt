@@ -72,6 +72,17 @@ class PermissionPolicy(
         is ToolCall.DeviceInfo -> PermissionDecision.Allow
         // Only runs `command -v` lookups; changes nothing.
         is ToolCall.CheckTools -> PermissionDecision.Allow
+        is ToolCall.CopyFile -> if (isOutside(call.from) || isOutside(call.to)) {
+            PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, "${call.from} \u2192 ${call.to}")
+        } else PermissionDecision.Allow
+        is ToolCall.FileInfo -> outsideOr(call.path)
+        is ToolCall.ZipFiles -> (call.paths + call.output).firstOrNull { isOutside(it) }
+            ?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it) } ?: PermissionDecision.Allow
+        is ToolCall.UnzipFile -> listOfNotNull(call.path, call.to).firstOrNull { isOutside(it) }
+            ?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it) } ?: PermissionDecision.Allow
+        // Uses the network (and OpenRouter credit): follows the web setting.
+        is ToolCall.GenerateImage -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, "generate image: ${call.prompt.take(80)}")
+        else PermissionDecision.Allow
         // Attaching only references (and may rename) files inside the workspace.
         is ToolCall.AttachFiles -> call.files.firstOrNull { isOutside(it.path) }?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it.path) }
             ?: PermissionDecision.Allow
