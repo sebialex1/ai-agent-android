@@ -149,6 +149,8 @@ The folder button in the chat top bar opens the workspace: a segmented switch fo
 
 Settings live on the conversations screen. System Back walks up: file viewer, workspace or settings, then the chat, then the conversations list, and only leaves the app from there.
 
+**The input is never blocked.** While an answer is running you can keep typing and send: the message is **queued**, shown dimmed at the bottom of the chat with a small *Queued* badge and a remove button, and sent automatically as soon as the running turn finishes (several queue up in order; stopping the run sends the next one right away). The send button is the only button there: it queues when there is text and turns into Stop when the input is empty.
+
 **Long-press one of your messages** for a themed sheet with a quoted preview and **Copy message**, **Edit message** and **Delete message**. Edit puts the text back into the input (its imports back above it) with a slim *Editing* strip and a cancel button; sending replaces that message and everything after it in the history, then runs it again. Delete removes the message and its reply. Edit and Delete wait while an answer is running; Copy always works.
 
 When you send a new message, all earlier step groups collapse. Answers, files, and sources stay visible. Only pages the agent actually fetched become website sources.

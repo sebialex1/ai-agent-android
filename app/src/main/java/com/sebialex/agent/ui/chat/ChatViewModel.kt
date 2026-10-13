@@ -36,7 +36,12 @@ data class ChatUiState(
      * app or coming back from another screen always shows the saved text immediately.
      */
     val revealing: Set<String> = emptySet(),
+    /** Messages sent while the agent was busy; each one is sent, in order, when the turn before it finishes. */
+    val queued: List<QueuedMessage> = emptyList(),
 )
+
+/** A message typed and sent while an answer was still running. [task] already holds its import mentions. */
+data class QueuedMessage(val id: String, val task: String)
 
 data class ConversationsUiState(
     val items: List<SessionSummary> = emptyList(),
@@ -153,6 +158,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         summaries.remove(id)
         pendingBySession.remove(id)
         drafts.remove(id)
+        queues.remove(id)
         container.forget(id)
         if (id == currentId) {
             val fresh = freshSession()
@@ -196,6 +202,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         summaries.clear()
         pendingBySession.clear()
         drafts.clear()
+        queues.clear()
         container.forgetAll()
         val fresh = freshSession()
         cache[fresh.id] = fresh
@@ -207,15 +214,43 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     // ---- Agent turn ---------------------------------------------------------------------
 
+    /** Messages waiting for the running turn of each conversation to finish. */
+    private val queues = HashMap<String, List<QueuedMessage>>()
+
     fun send(text: String) {
         val sessionId = currentId
-        if (runs.containsKey(sessionId)) return
         // Imports travel as @path mentions at the start of the message (the bubble shows them
         // as previews). A message may be only imports.
         val imports = pendingBySession[sessionId].orEmpty()
         val task = (imports.joinToString(" ") { "@$it" } + " " + text.trim()).trim()
         if (task.isEmpty()) return
         pendingBySession.remove(sessionId)
+        // Busy: the message waits (shown with a "Queued" badge) and goes out when this turn ends.
+        if (runs.containsKey(sessionId)) {
+            queues[sessionId] = queues[sessionId].orEmpty() + QueuedMessage(newId(), task)
+            publish()
+            return
+        }
+        startTurn(sessionId, task)
+    }
+
+    /** Removes a queued message before it is sent. */
+    fun removeQueued(id: String) {
+        queues[currentId]?.let { q -> queues[currentId] = q.filterNot { it.id == id } }
+        publish()
+    }
+
+    /** Sends the next queued message of [sessionId], if any, once nothing runs there. */
+    private fun drainQueue(sessionId: String) {
+        if (runs.containsKey(sessionId)) return
+        val q = queues[sessionId].orEmpty()
+        val next = q.firstOrNull() ?: return
+        queues[sessionId] = q.drop(1)
+        if (cache[sessionId] == null) return
+        startTurn(sessionId, next.task)
+    }
+
+    private fun startTurn(sessionId: String, task: String) {
         val now = System.currentTimeMillis()
         val user = Turn(newId(), Role.USER, task, createdAt = now)
         val assistant = Turn(newId(), Role.ASSISTANT, "", createdAt = now + 1, complete = false)
@@ -227,8 +262,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             updatedAt = now,
         )
         // Sending a new message collapses every previous execution group.
-        expanded = setOf(assistant.id)
-        io.trySend { container.sessions.setActive(sessionId) }
+        if (sessionId == currentId) {
+            expanded = setOf(assistant.id)
+            io.trySend { container.sessions.setActive(sessionId) }
+        }
         persist(sessionId)
 
         val gate = object : ApprovalGate {
@@ -313,6 +350,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         }
         runs.remove(sessionId)
         publish()
+        // The turn is over (answered or stopped): the next queued message goes out now.
+        drainQueue(sessionId)
     }
 
     fun stop() {
@@ -470,6 +509,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             expanded = expanded,
             pendingApproval = run?.pending,
             revealing = revealing,
+            queued = queues[currentId].orEmpty(),
         )
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)

@@ -119,6 +119,50 @@ fun UserMessage(
 }
 
 /**
+ * A message sent while the agent was busy: shown like your own message, dimmed, with a small
+ * "Queued" badge and a remove button. It is sent as soon as the running turn finishes.
+ */
+@Composable
+fun QueuedBubble(message: com.sebialex.agent.ui.chat.QueuedMessage, resolveFile: (String) -> java.io.File?, onRemove: () -> Unit) {
+    val paths = remember(message.task) { com.sebialex.agent.domain.agent.Mentions.paths(message.task).filter { resolveFile(it) != null } }
+    val body = remember(message.task, paths) { com.sebialex.agent.domain.agent.Mentions.strip(message.task, paths) }
+    Column(
+        Modifier.fillMaxWidth().padding(start = 56.dp),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Column(
+            Modifier
+                .alpha(0.72f)
+                .softSurface(RoundedCornerShape(22.dp), Palette.SurfaceHigh, elevation = 1.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        ) {
+            if (paths.isNotEmpty()) Text(
+                paths.joinToString("  ") { "\u2022 " + it.substringAfterLast('/') },
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                maxLines = 2,
+            )
+            if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Queued",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextSecondary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Palette.SurfaceHighest)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+            com.sebialex.agent.ui.components.QuietIconButton(
+                R.drawable.ic_close, "Remove queued message", onClick = onRemove, size = 28.dp, iconSize = 13.dp, tint = Palette.IconMuted,
+            )
+        }
+    }
+}
+
+/**
  * Fixed visual order: execution row, answer, file attachments, website sources.
  */
 @Composable

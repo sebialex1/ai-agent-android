@@ -46,7 +46,11 @@ fun InputPill(
     /** Imports are waiting above the input, so an empty message can still be sent. */
     hasAttachments: Boolean = false,
 ) {
-    val canSend = (value.text.isNotBlank() || hasAttachments) && !running
+    // The input is never blocked: while an answer runs, a typed message is queued (one button:
+    // the arrow queues it when there is something to send, otherwise it is the stop button).
+    val hasContent = value.text.isNotBlank() || hasAttachments
+    val canSend = hasContent
+    val showStop = running && !hasContent
     val fill by animateColorAsState(if (canSend || running) Palette.Accent else Palette.SurfaceHighest, label = "send")
     Row(
         modifier = modifier
@@ -78,7 +82,7 @@ fun InputPill(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                 decorationBox = { inner ->
                     if (value.text.isEmpty()) {
-                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                        Text(if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
                     }
                     inner()
                 },
@@ -91,12 +95,16 @@ fun InputPill(
                 .size(36.dp)
                 .clip(CircleShape)
                 .background(fill)
-                .clickable(enabled = canSend || running) { if (running) onStop() else onSend() },
+                .clickable(enabled = canSend || running) { if (showStop) onStop() else onSend() },
             contentAlignment = Alignment.Center,
         ) {
             AppIcon(
-                if (running) R.drawable.ic_stop else R.drawable.ic_arrow_up,
-                contentDescription = if (running) "Stop" else "Send",
+                if (showStop) R.drawable.ic_stop else R.drawable.ic_arrow_up,
+                contentDescription = when {
+                    showStop -> "Stop"
+                    running -> "Queue message"
+                    else -> "Send"
+                },
                 tint = if (canSend || running) Palette.OnAccent else Palette.IconMuted,
                 size = 20.dp,
             )

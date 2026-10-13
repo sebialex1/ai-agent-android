@@ -170,6 +170,10 @@ fun ChatScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(26.dp, androidx.compose.ui.Alignment.Bottom),
         ) {
+            // Queued messages sit at the very bottom (reverse layout), under the running turn.
+            items(state.queued.asReversed(), key = { "queued:" + it.id }) { q ->
+                QueuedBubble(q, resolveFile = vm::workspaceFile, onRemove = { vm.removeQueued(q.id) })
+            }
             items(turns.asReversed(), key = { it.id }) { turn ->
                 if (turn.role == Role.USER) {
                     UserMessage(
