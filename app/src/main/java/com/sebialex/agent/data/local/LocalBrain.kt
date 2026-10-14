@@ -269,7 +269,8 @@ class LocalBrain(
         private val NO_TOOLS_PROMPT = """
             You are a helpful assistant running fully on an Android phone. This model has no tool access here:
             you cannot browse, run commands or read files. Answer from what you know, say so plainly when you
-            are unsure, and keep answers short and direct.
+            are unsure, and keep answers short and direct. Do not write tool calls or tool-call JSON
+            ({"action": ...}) into your answer: nothing would run them.
         """.trimIndent()
 
         /**

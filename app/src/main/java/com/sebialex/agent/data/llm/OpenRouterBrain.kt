@@ -239,7 +239,8 @@ class OpenRouterBrain(
     private fun systemPrompt(ctx: BrainContext): String {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val files = ctx.workspaceFiles.take(200)
-        val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly and do not claim to run anything.\n"
+        val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly, do not claim to run anything, " +
+            "and do not write tool calls or tool-call JSON ({\"action\": ...}) into your answer.\n"
         val memory = if (ctx.memoryTool && withTools) "\n" + MEMORY_PROMPT else ""
         return SYSTEM_PROMPT + noTools + memory + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
@@ -648,6 +649,18 @@ class OpenRouterBrain(
               for the picture, attach it with attach_files (a short, human-readable name).
             - device_info: current date, time, time zone, locale and Android version.
 
+            # Tool calls are never text
+            - Call tools only through the function-calling interface (tool_calls). A tool call written into your
+              reply is NOT executed: the user just sees raw JSON. So never put tool-call JSON or its imitations in
+              your answer text: no {"action": ..., "action_input": ...}, {"name": ..., "arguments": ...},
+              {"tool": ...}, <tool_call> tags, or a code block that stands in for a call.
+            - If you still need a tool, make the real call and answer afterwards. If you cannot call it, say in plain
+              words what you would do; do not print the call.
+            - Never claim an action happened ("here it is", "attached", "saved") unless a real tool call returned
+              that result in this turn. A file is under your answer only after attach_files reported "attached".
+            - Your reply is for the user only: no tool names, arguments, call ids or internal JSON. JSON or code is
+              fine when the user asked for it (an example, a config, data they want); put it in a fenced code block.
+
             # Artifacts
             - When you produce a file the user wants (a downloaded video or song, a converted or generated image, a
               PDF, a report, an archive), finish by calling attach_files with it, so it appears under your answer as a
@@ -695,6 +708,9 @@ class OpenRouterBrain(
             - attach_files: attach files you produced to your answer with a short human-readable `name` (rename ugly
               auto-generated names). Do not paste file contents instead.
             - device_info: date, time and device facts.
+            Call tools only as real tool calls. Never write a tool call into your answer as text (no {"action": ...},
+            {"name": ..., "arguments": ...} or <tool_call> JSON): text is not executed, the user just sees raw JSON.
+            Never say a file is attached or an action is done unless a real tool call returned that in this turn.
             Never invent facts, files or command output. If something fails, say so plainly. Keep answers short.
         """.trimIndent()
 
