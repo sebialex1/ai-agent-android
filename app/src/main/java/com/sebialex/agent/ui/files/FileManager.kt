@@ -51,6 +51,7 @@ import com.sebialex.agent.ui.components.SheetDivider
 import com.sebialex.agent.ui.components.SheetOption
 import com.sebialex.agent.ui.components.SheetSwitch
 import com.sebialex.agent.ui.components.SheetTextField
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 import kotlinx.coroutines.Dispatchers
@@ -97,7 +98,8 @@ fun FileManager(
     LaunchedEffect(dir, showHidden, reload, refreshKey) {
         items = withContext(Dispatchers.IO) {
             runCatching {
-                workspace.list(dir).filter { showHidden || !it.name.startsWith(".") }.map { f ->
+                workspace.list(dir).filter { showHidden || !it.name.startsWith(".") }
+                    .sortedWith(compareByDescending<java.io.File> { it.isDirectory }.thenBy { it.name.lowercase() }).map { f ->
                     Item(
                         name = f.name,
                         path = workspace.virtualOf(f),
@@ -144,32 +146,31 @@ fun FileManager(
                 dir = dir,
                 onNavigate = { dir = it },
                 onUp = { dir = dir.substringBeforeLast('/', "").ifEmpty { "/" } },
-                onRefresh = ::refresh,
                 onMenu = { action = Action.Folder },
             )
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().fadeTopEdge(listState), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                 if (dir == "/" && latestArtifacts.isNotEmpty()) {
-                    item(key = "h:artifacts") { Label("Made by the agent") }
-                    items(latestArtifacts.take(6), key = { "a:" + it.path }) { a ->
+                    item(key = "h:artifacts") { Label("From the agent") }
+                    items(latestArtifacts.take(3), key = { "a:" + it.path }) { a ->
                         Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onOpenFile(a.path, a.baseSnapshot) }
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onOpenFile(a.path, a.baseSnapshot) }
+                                .padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            AppIcon(R.drawable.ic_file_edit, null, tint = Palette.IconActive, size = 18.dp)
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
-                                FadingText(a.name, MaterialTheme.typography.bodyMedium, Palette.TextPrimary)
-                                FadingText(
-                                    a.path + if (a.baseSnapshot != null) "   +${a.added} \u2212${a.removed}" else "",
-                                    MaterialTheme.typography.labelSmall,
-                                    Palette.TextTertiary,
-                                )
-                            }
+                            AppIcon(R.drawable.ic_file_edit, null, tint = Palette.IconActive, size = 20.dp)
+                            Spacer(Modifier.width(16.dp))
+                            FadingText(a.name, MaterialTheme.typography.bodyLarge, Palette.TextPrimary, Modifier.weight(1f))
+                            if (a.baseSnapshot != null) Text(
+                                "+${a.added} \u2212${a.removed}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Palette.TextTertiary,
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
                             QuietIconButton(R.drawable.ic_download, "Download ${a.name}", onClick = { download(a.path) }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
                         }
                     }
-                    item(key = "h:files") { Label("Files") }
+                    item(key = "h:files") { Label("All files") }
                 }
                 if (items.isEmpty()) item(key = "empty") {
                     Text(
@@ -198,7 +199,7 @@ fun FileManager(
                 toast.orEmpty(),
                 style = MaterialTheme.typography.labelLarge,
                 color = Palette.TextPrimary,
-                modifier = Modifier.softSurface(RoundedCornerShape(50), Palette.SurfaceHighest, elevation = 8.dp)
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Palette.SurfaceHighest)
                     .padding(horizontal = 18.dp, vertical = 12.dp),
             )
         }
@@ -230,6 +231,7 @@ fun FileManager(
             showHidden = showHidden,
             onShowHidden = { showHidden = it },
             onDismiss = { action = null },
+            onRefresh = { action = null; refresh() },
             onDownload = { action = null; download(dir) },
             onClear = {
                 action = null
@@ -249,23 +251,24 @@ fun FileManager(
 
 @Composable
 private fun Label(text: String) {
-    Text(text, style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp))
+    Text(text, style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp))
 }
 
-/** Breadcrumb ("workspace › notes › drafts") with up, refresh and the folder menu. */
+/**
+ * Breadcrumb ("workspace › notes › drafts") on the page background: no container, an Up
+ * button only inside a folder, and one overflow menu for everything else.
+ */
 @Composable
-private fun PathBar(dir: String, onNavigate: (String) -> Unit, onUp: () -> Unit, onRefresh: () -> Unit, onMenu: () -> Unit) {
+private fun PathBar(dir: String, onNavigate: (String) -> Unit, onUp: () -> Unit, onMenu: () -> Unit) {
     val parts = dir.split('/').filter { it.isNotEmpty() }
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 2.dp)
-            .height(44.dp)
-            .padding(start = 4.dp, end = 2.dp),
+            .height(48.dp)
+            .padding(start = if (parts.isEmpty()) 20.dp else 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        QuietIconButton(R.drawable.ic_folder_up, "Up", onClick = onUp, enabled = parts.isNotEmpty(), tint = Palette.IconActive, size = 38.dp, iconSize = 18.dp)
+        if (parts.isNotEmpty()) QuietIconButton(R.drawable.ic_folder_up, "Up", onClick = onUp, tint = Palette.IconActive, size = 40.dp, iconSize = 20.dp)
         Row(
             Modifier.weight(1f).horizontalScroll(rememberScrollState(), reverseScrolling = true),
             verticalAlignment = Alignment.CenterVertically,
@@ -276,8 +279,7 @@ private fun PathBar(dir: String, onNavigate: (String) -> Unit, onUp: () -> Unit,
                 Crumb(p, current = i == parts.lastIndex) { onNavigate("/" + parts.take(i + 1).joinToString("/")) }
             }
         }
-        QuietIconButton(R.drawable.ic_refresh, "Refresh", onClick = onRefresh, tint = Palette.IconMuted, size = 38.dp, iconSize = 18.dp)
-        QuietIconButton(R.drawable.ic_more, "Folder options", onClick = onMenu, tint = Palette.IconMuted, size = 38.dp, iconSize = 18.dp)
+        QuietIconButton(R.drawable.ic_more, "Folder options", onClick = onMenu, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
     }
 }
 
@@ -297,20 +299,18 @@ private fun ItemRow(item: Item, onClick: () -> Unit, onMore: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(start = 8.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Palette.SurfaceHigh),
-            contentAlignment = Alignment.Center,
-        ) {
-            AppIcon(if (item.dir) R.drawable.ic_folder else iconFor(item.name), null, tint = if (item.dir) Palette.IconActive else Palette.IconMuted, size = 18.dp)
-        }
-        Spacer(Modifier.width(14.dp))
+        AppIcon(
+            if (item.dir) R.drawable.ic_folder else iconFor(item.name), null,
+            tint = if (item.dir) Palette.IconActive else Palette.IconMuted, size = 22.dp,
+        )
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            FadingText(item.name, MaterialTheme.typography.bodyMedium, Palette.TextPrimary)
+            FadingText(item.name, MaterialTheme.typography.bodyLarge, Palette.TextPrimary)
             Text(
                 (if (item.dir) "${item.children} item" + (if (item.children == 1) "" else "s") else formatSize(item.size)) +
                     " \u00b7 " + formatAge(item.modified),
@@ -365,6 +365,7 @@ private fun FolderSheet(
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
     onDownload: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -379,6 +380,7 @@ private fun FolderSheet(
                 onCancel = { confirm = false },
             )
         } else {
+            SheetOption(R.drawable.ic_refresh, "Refresh", onClick = onRefresh)
             SheetOption(R.drawable.ic_download, "Download folder", subtitle = "As $name.zip in Download/${Downloads.SUBDIR}", onClick = onDownload, enabled = count > 0)
             SheetSwitch(R.drawable.ic_file, "Show hidden files", checked = showHidden, onChange = onShowHidden, subtitle = "Scripts and caches that start with a dot")
             SheetDivider()
