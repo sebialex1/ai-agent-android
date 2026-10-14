@@ -15,13 +15,29 @@ android {
         applicationId = "com.sebialex.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI passes VERSION_CODE (the run number) so every build is accepted as an update over the last.
+        versionCode = (findProperty("VERSION_CODE") as String? ?: System.getenv("VERSION_CODE"))?.toIntOrNull() ?: 1
+        versionName = (findProperty("VERSION_NAME") as String? ?: System.getenv("VERSION_NAME")) ?: "0.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
+    // A stable key makes builds from any machine install over each other. It comes from the
+    // environment (CI decodes the KEYSTORE_BASE64 secret) or Gradle properties; the keystore is never
+    // committed. Without it the release build falls back to the debug key, so forks and local builds work.
+    fun signingValue(name: String): String? = (findProperty(name) as String? ?: System.getenv(name))?.takeIf { it.isNotBlank() }
+    val keystorePath = signingValue("KEYSTORE_PATH")
+    val releaseSigning = if (keystorePath != null && file(keystorePath).isFile) {
+        signingConfigs.create("release") {
+            storeFile = file(keystorePath)
+            storePassword = signingValue("KEYSTORE_PASSWORD")
+            keyAlias = signingValue("KEY_ALIAS")
+            keyPassword = signingValue("KEY_PASSWORD") ?: signingValue("KEYSTORE_PASSWORD")
+        }
+    } else null
+
     buildTypes {
         release {
+            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

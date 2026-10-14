@@ -41,19 +41,45 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Assemble debug APK
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Decode signing keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::KEYSTORE_BASE64 secret is not set: the APK is signed with the runner's temporary debug key and cannot update an install signed with another key. See docs/signing.md."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Always higher than the previous run, so Android accepts the build as an update.
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('0.1.{0}', github.run_number) }}
+        run: ./gradlew --no-daemon assembleRelease
 
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/agent-${{ env.RELEASE_TAG }}-debug.apk
+          SUFFIX=${{ steps.keystore.outputs.signed == 'true' && 'signed' || 'debugkey' }}
+          cp app/build/outputs/apk/release/app-release.apk dist/agent-${{ env.RELEASE_TAG }}-$SUFFIX.apk
+
+      - name: Show signing certificate
+        run: |
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs dist/*.apk | grep -E "SHA-256|Signer #1 certificate DN"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: agent-debug-apk
+          name: agent-apk
           path: dist/*.apk
 
       - name: Publish pre-release
