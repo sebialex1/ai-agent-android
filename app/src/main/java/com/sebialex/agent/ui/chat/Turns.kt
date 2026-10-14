@@ -213,16 +213,14 @@ fun AssistantTurn(
     resolveFile: (String) -> java.io.File? = { null },
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Real order, as it happened: tool calls run together in a group, each think block sits
-        // where it occurred (tool, think, tool, tool, think). Blank or repeated thinking is dropped.
-        val segments = remember(turn.steps) { stepSegments(turn.steps) }
-        segments.forEach { seg ->
-            when {
-                seg.size == 1 && seg[0].kind == StepKind.REASONING -> ThinkingSection(seg[0], onOpen = { onOpenStep(seg[0]) })
-                seg.size == 1 -> StepRow(seg[0], onClick = { onOpenStep(seg[0]) })
-                else -> StepsGroup(seg, seg.size, expanded, onToggle, onOpenStep)
-            }
-        }
+        // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
+        // real order it happened. Only the step still in flight stays visible below the group so
+        // live thinking / a running tool remains seen; it joins the group once it finishes.
+        val ordered = remember(turn.steps) { stepSegments(turn.steps).flatten() }
+        val live = ordered.lastOrNull()?.takeIf { it.status == StepStatus.RUNNING || it.status == StepStatus.AWAITING_APPROVAL }
+        val grouped = if (live != null) ordered.dropLast(1) else ordered
+        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenStep)
+        if (live != null) StepRow(live, onClick = { onOpenStep(live) })
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
         }
