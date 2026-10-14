@@ -37,6 +37,7 @@ import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.domain.model.FileAttachment
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.SourceRef
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -174,7 +175,8 @@ fun ChatScreen(
         LazyColumn(
             state = listState,
             reverseLayout = true,
-            modifier = Modifier.fillMaxSize(),
+            // Older messages dissolve under the top bar instead of being cut off at its edge.
+            modifier = Modifier.fillMaxSize().fadeTopEdge(listState, reverse = true),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(26.dp, androidx.compose.ui.Alignment.Bottom),
         ) {

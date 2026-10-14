@@ -28,3 +28,34 @@ fun Modifier.fadeTopEdge(height: Dp = 28.dp): Modifier = this
             blendMode = BlendMode.DstIn,
         )
     }
+
+/**
+ * Top fade for a scrolling list: only active once the list has scrolled, so the first item is
+ * never dimmed at rest. [reverse] is for `reverseLayout` lists (the chat), where the content
+ * hidden above the visible top is what [LazyListState.canScrollForward] reports.
+ */
+fun Modifier.fadeTopEdge(state: androidx.compose.foundation.lazy.LazyListState, reverse: Boolean = false, height: Dp = 28.dp): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        val hidden = if (reverse) state.canScrollForward else state.canScrollBackward
+        val h = height.toPx().coerceAtMost(size.height)
+        if (hidden && h > 0f) drawRect(
+            brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = h),
+            size = Size(size.width, h),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+/** Same for a [androidx.compose.foundation.verticalScroll] container. */
+fun Modifier.fadeTopEdge(state: androidx.compose.foundation.ScrollState, height: Dp = 28.dp): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        val h = height.toPx().coerceAtMost(size.height)
+        if (state.value > 0 && h > 0f) drawRect(
+            brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = h),
+            size = Size(size.width, h),
+            blendMode = BlendMode.DstIn,
+        )
+    }

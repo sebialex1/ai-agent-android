@@ -66,6 +66,7 @@ import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
@@ -143,18 +144,7 @@ fun SettingsScreen(
                 Modifier
                     .fillMaxSize()
                     // Rows scrolling under the header dissolve instead of showing a cut-off line.
-                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    .drawWithContent {
-                        drawContent()
-                        if (scroll.value > 0) {
-                            val fade = 28.dp.toPx().coerceAtMost(size.height)
-                            drawRect(
-                                brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = fade),
-                                size = androidx.compose.ui.geometry.Size(size.width, fade),
-                                blendMode = BlendMode.DstIn,
-                            )
-                        }
-                    }
+                    .fadeTopEdge(scroll)
                     .verticalScroll(scroll)
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (page == null) 8.dp else 28.dp),

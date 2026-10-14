@@ -259,7 +259,7 @@ private fun TerminalTab(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.fillMaxSize().fadeTopEdge(),
+                modifier = Modifier.fillMaxSize().fadeTopEdge(listState),
             ) {
                 items(entries, key = { it.id }) { e ->
                     Column(Modifier.fillMaxWidth()) {
@@ -364,7 +364,8 @@ private fun GroupHeader(icon: Int, label: String, count: Int, expanded: Boolean,
 @Composable
 private fun SourcesTab(sources: List<SourceRef>, onOpen: (SourceRef) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(true) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+    val listState = rememberLazyListState()
+    LazyColumn(Modifier.fillMaxSize().fadeTopEdge(listState), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
         item { GroupHeader(R.drawable.ic_globe, "Web", sources.size, expanded) { expanded = !expanded } }
         if (expanded) items(sources, key = { it.url }) { s ->
             Row(

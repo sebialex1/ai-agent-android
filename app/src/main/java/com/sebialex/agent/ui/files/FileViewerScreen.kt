@@ -64,6 +64,7 @@ import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.markdown.MarkdownBlockView
 import com.sebialex.agent.ui.theme.MonoBody
 import com.sebialex.agent.ui.theme.MonoSmall
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -265,10 +266,12 @@ fun FileViewerScreen(
 @Composable
 private fun RenderedMarkdown(source: String, onToggleTask: (Int) -> Unit) {
     val blocks = remember(source) { MarkdownParser.parse(source) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyColumn(
+        state = listState,
         contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().fadeTopEdge(listState),
     ) {
         items(blocks.size) { i -> MarkdownBlockView(blocks[i], compact = false, onToggleTask = onToggleTask) }
     }
@@ -276,7 +279,8 @@ private fun RenderedMarkdown(source: String, onToggleTask: (Int) -> Unit) {
 
 @Composable
 private fun RawText(source: String) {
-    SelectionContainer {
+    val vScroll = rememberScrollState()
+    SelectionContainer(Modifier.fadeTopEdge(vScroll)) {
         Text(
             source,
             style = MonoBody,
@@ -284,7 +288,7 @@ private fun RawText(source: String) {
             softWrap = false,
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(vScroll)
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp, vertical = 8.dp),
         )
@@ -316,7 +320,8 @@ private fun DiffView(old: String, new: String) {
             Spacer(Modifier.width(10.dp))
             Text("\u2212$removed", style = MaterialTheme.typography.labelMedium, color = Palette.DiffRemoveText)
         }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        LazyColumn(Modifier.fillMaxSize().fadeTopEdge(listState), state = listState, contentPadding = PaddingValues(bottom = 48.dp)) {
             items(lines.size) { i -> DiffRow(lines[i]) }
         }
     }
