@@ -76,6 +76,9 @@ class AppContainer(app: Application) {
 
     /** On-device model files (downloads, imports) and the engine that runs them on the GPU. */
     val modelStore = ModelStore(app, appScope)
+
+    /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
+    val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
     val localEngine = LocalEngine(modelStore, settings, appScope)
 
     /** Reasoning support of an on-device model: an on/off switch when it has a thinking mode. */

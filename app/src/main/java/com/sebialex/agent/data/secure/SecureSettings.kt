@@ -234,6 +234,64 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
 
     private fun newKeyId() = java.lang.Long.toString(System.nanoTime(), 36) + java.lang.Long.toString((Math.random() * 46656).toLong(), 36)
 
+    // ---- Backup support -------------------------------------------------------------------------
+
+    /** Every non-secret preference (models, switches, custom providers, per-model reasoning, ...). */
+    @Synchronized
+    fun exportPlain(): Map<String, Any?> =
+        prefs.all.filterKeys { !com.sebialex.agent.data.backup.BackupBundle.isSecretPref(it) }
+
+    /** Writes backed-up preferences over the current ones. Secrets in [values] are ignored. */
+    @Synchronized
+    fun importPlain(values: Map<String, Any>) {
+        edit {
+            values.forEach { (k, v) ->
+                if (com.sebialex.agent.data.backup.BackupBundle.isSecretPref(k)) return@forEach
+                when (v) {
+                    is Boolean -> putBoolean(k, v)
+                    is Int -> putInt(k, v)
+                    is String -> putString(k, v)
+                }
+            }
+        }
+        _memoryChats.value = prefs.all.keys.filter { it.startsWith(KEY_MEMORY_PREFIX) && prefs.getBoolean(it, false) }
+            .map { it.removePrefix(KEY_MEMORY_PREFIX) }.toSet()
+    }
+
+    /** All key rings for an encrypted backup. */
+    @Synchronized
+    fun exportSecrets(): com.sebialex.agent.data.backup.BackupBundle.Secrets {
+        val providers = listOf(PROVIDER_OPENROUTER, PROVIDER_OLLAMA, PROVIDER_TINYFISH) +
+            customProviders().map { com.sebialex.agent.domain.agent.KeyPool.CUSTOM_PREFIX + it.id }
+        return com.sebialex.agent.data.backup.BackupBundle.Secrets(
+            providers.associateWith { p ->
+                val active = activeKey(p)
+                storedKeys(p).map { com.sebialex.agent.data.backup.BackupBundle.SecretKey(it.key, it.label, it.addedAt, it.key == active) }
+            }.filterValues { it.isNotEmpty() },
+        )
+    }
+
+    /** Merges backed-up keys in (duplicates are ignored); a backed-up active key becomes active if the provider had none. */
+    @Synchronized
+    fun importSecrets(secrets: com.sebialex.agent.data.backup.BackupBundle.Secrets) {
+        secrets.keys.forEach { (provider, list) ->
+            val hadKeys = storedKeys(provider).isNotEmpty()
+            list.forEach { addKey(provider, it.key, it.label) }
+            if (!hadKeys) list.firstOrNull { it.active }?.let { a ->
+                storedKeys(provider).firstOrNull { it.key == a.key }?.let { setActiveKey(provider, it.id) }
+            }
+        }
+    }
+
+    /** Passphrase for encrypting API keys in backups. Lives in the Keystore-backed store only, so it never leaves the phone. */
+    fun backupPassphrase(): String? = prefs.getString(KEY_BACKUP_PASSPHRASE, null)?.takeIf { it.isNotEmpty() }
+    fun setBackupPassphrase(value: String?) = prefs.edit().apply {
+        if (value.isNullOrEmpty()) remove(KEY_BACKUP_PASSPHRASE) else putString(KEY_BACKUP_PASSPHRASE, value)
+    }.apply()
+
+    /** True while nothing was ever configured: no keys, no model chosen, no custom providers. */
+    fun isPristine(): Boolean = prefs.all.isEmpty()
+
     // ---- Custom OpenAI-compatible providers ----------------------------------------------------
 
     @kotlinx.serialization.Serializable
@@ -388,6 +446,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
+        private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"

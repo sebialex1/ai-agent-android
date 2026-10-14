@@ -27,6 +27,19 @@ class SessionStore(private val baseDir: File) {
     private val activeFile = File(root, "active")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    /** Called (on the saving thread) after a conversation was saved, deleted or all were cleared; used to schedule backups. */
+    @Volatile var onChanged: (() -> Unit)? = null
+
+    /** Last-updated time of every saved conversation, by id. */
+    @Synchronized
+    fun updatedAtById(): Map<String, Long> = (root.listFiles() ?: emptyArray())
+        .filter { it.isDirectory }.mapNotNull { load(it.name) }.associate { it.id to it.updatedAt }
+
+    /** All conversations that have messages, for a backup. Workspace files and audit logs are not included. */
+    @Synchronized
+    fun loadAll(): List<Session> = (root.listFiles() ?: emptyArray())
+        .filter { it.isDirectory }.mapNotNull { load(it.name) }.filter { it.turns.isNotEmpty() }
+
     fun dirFor(id: String): File {
         require(id.isNotBlank() && !id.contains('/') && !id.contains("..")) { "bad session id" }
         return File(root, id)
@@ -45,6 +58,7 @@ class SessionStore(private val baseDir: File) {
         if (!tmp.renameTo(File(dir, SESSION_FILE))) {
             File(dir, SESSION_FILE).writeText(tmp.readText()); tmp.delete()
         }
+        onChanged?.invoke()
     }
 
     /** Saved conversations with at least one message, most recently updated first. */
@@ -61,6 +75,7 @@ class SessionStore(private val baseDir: File) {
     fun delete(id: String) {
         dirFor(id).deleteRecursively()
         if (activeId() == id) activeFile.delete()
+        onChanged?.invoke()
     }
 
     fun activeId(): String? = runCatching { activeFile.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
@@ -72,6 +87,7 @@ class SessionStore(private val baseDir: File) {
     @Synchronized
     fun clearAll() {
         root.listFiles()?.forEach { it.deleteRecursively() }
+        onChanged?.invoke()
     }
 
     /**
