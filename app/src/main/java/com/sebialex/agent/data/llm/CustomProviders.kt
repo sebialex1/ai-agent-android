@@ -117,20 +117,25 @@ object CustomProviders {
         val message: String,
         /** The endpoint answered but refused the key (401/403). */
         val needsKey: Boolean = false,
+        /** Capability metadata the model list (and, for Gemini, its native list) published. */
+        val meta: Map<String, ProviderModelMeta> = emptyMap(),
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     private class Reply(val code: Int, val body: String)
 
-    private fun request(url: String, key: String?, method: String = "GET", body: String? = null): Reply? = runCatching {
+    private fun request(url: String, key: String?, method: String = "GET", body: String? = null, bearer: Boolean = true): Reply? = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
             conn.connectTimeout = 8_000
             conn.readTimeout = 12_000
             conn.setRequestProperty("Accept", "application/json")
-            if (!key.isNullOrBlank()) {
+            if (!key.isNullOrBlank() && !bearer) {
+                // Gemini's native API reads an API key from x-goog-api-key, not from a bearer token.
+                conn.setRequestProperty("x-goog-api-key", key.trim())
+            } else if (!key.isNullOrBlank()) {
                 conn.setRequestProperty("Authorization", "Bearer ${key.trim()}")
                 // Anthropic's own endpoints (model list) read the key from x-api-key.
                 if ("anthropic.com" in url) {
@@ -196,6 +201,7 @@ object CustomProviders {
                     return@withContext Detection(
                         true, root, name, preset?.id ?: CUSTOM_PRESET, ids.sorted(),
                         "OpenAI-compatible \u00b7 ${ids.size} model${if (ids.size == 1) "" else "s"} at ${root.substringAfter("://")}",
+                        meta = metadata(root, r.body, key),
                     )
                 }
                 r.code == 401 || r.code == 403 -> if (refused == null) refused = root
@@ -234,10 +240,28 @@ object CustomProviders {
     }
 
     /** Re-reads a saved provider's model list with its active key; null on failure. */
-    suspend fun fetchModels(baseUrl: String, key: String?): List<String>? = withContext(Dispatchers.IO) {
-        val r = request(baseUrl.trimEnd('/') + "/models", key) ?: return@withContext null
+    suspend fun fetchModels(baseUrl: String, key: String?): List<String>? = fetchCatalog(baseUrl, key)?.first
+
+    /** Model ids plus their capability metadata (see [ProviderMetadata]); null on failure. */
+    suspend fun fetchCatalog(baseUrl: String, key: String?): Pair<List<String>, Map<String, ProviderModelMeta>>? = withContext(Dispatchers.IO) {
+        val root = baseUrl.trimEnd('/')
+        val r = request("$root/models", key) ?: return@withContext null
         if (r.code !in 200..299) return@withContext null
-        modelIds(r.body)?.first?.sorted()
+        val ids = modelIds(r.body)?.first?.sorted() ?: return@withContext null
+        ids to metadata(root, r.body, key)
+    }
+
+    /**
+     * Capability metadata from the `/models` answer, plus Gemini's native model list (a free GET
+     * with the same key) because Gemini's OpenAI-compatible list has no capability fields. No
+     * chat or generation request is ever made to find out what a model can do.
+     */
+    private fun metadata(root: String, body: String, key: String?): Map<String, ProviderModelMeta> {
+        val listed = ProviderMetadata.fromModelList(body)
+        if (!ProviderMetadata.isGeminiHost(root) || key.isNullOrBlank()) return listed
+        val native = request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", key, bearer = false)
+            ?.takeIf { it.code in 200..299 }?.let { ProviderMetadata.fromGeminiNative(it.body) }.orEmpty()
+        return native + listed
     }
 
     private fun hostName(url: String): String =

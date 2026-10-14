@@ -66,6 +66,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val keys: Map<String, List<KeyView>> = emptyMap(),
         /** User-added OpenAI-compatible providers. */
         val customProviders: List<CustomProvider> = emptyList(),
+        /** generate_image's model as saved; null while the default ([MediaModels.DEFAULT]) applies. */
+        val mediaImage: com.sebialex.agent.data.llm.MediaModelRef? = null,
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -119,6 +121,26 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         enabled = if (prefs.contains(reasoningOnKey(model))) prefs.getBoolean(reasoningOnKey(model), false) else null,
         effort = prefs.getString(reasoningEffortKey(model), null)?.takeIf { it.isNotBlank() },
     )
+
+    /**
+     * The image model generate_image uses: provider (`openrouter` or `custom:<id>`) plus model id,
+     * stored together so equal ids on different providers never collide. [MediaModels.DEFAULT]
+     * until the user picks one (what the app used before the picker existed).
+     */
+    fun mediaImageModel(): com.sebialex.agent.data.llm.MediaModelRef = storedMediaImageModel() ?: com.sebialex.agent.data.llm.MediaModels.DEFAULT
+
+    /** The saved choice, or null while the default applies. */
+    fun storedMediaImageModel(): com.sebialex.agent.data.llm.MediaModelRef? {
+        val provider = prefs.getString(KEY_MEDIA_IMAGE_PROVIDER, null)?.takeIf { it.isNotBlank() } ?: return null
+        val model = prefs.getString(KEY_MEDIA_IMAGE_MODEL, null)?.takeIf { it.isNotBlank() } ?: return null
+        return com.sebialex.agent.data.llm.MediaModelRef(provider, model)
+    }
+
+    /** Saves (or with null clears, back to the default) the image model. */
+    fun setMediaImageModel(ref: com.sebialex.agent.data.llm.MediaModelRef?) = edit {
+        if (ref == null) { remove(KEY_MEDIA_IMAGE_PROVIDER); remove(KEY_MEDIA_IMAGE_MODEL) }
+        else { putString(KEY_MEDIA_IMAGE_PROVIDER, ref.provider); putString(KEY_MEDIA_IMAGE_MODEL, ref.model) }
+    }
 
     /** Adds a key (null or blank removes every key of that provider), kept for older call sites. */
     fun setTinyFishKey(value: String?) = setSingle(PROVIDER_TINYFISH, value)
@@ -306,6 +328,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val models: List<String> = emptyList(),
         /** What auto-detection found, shown under the name. */
         val detected: String = "",
+        /** Capability metadata from the provider's own model list (image output, reasoning), by model id. */
+        val modelInfo: Map<String, com.sebialex.agent.data.llm.ProviderModelMeta> = emptyMap(),
     )
 
     fun customProviders(): List<CustomProvider> =
@@ -417,6 +441,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         autoTitles = autoTitles(),
         keys = keyViews(),
         customProviders = customProviders(),
+        mediaImage = storedMediaImageModel(),
     )
 
     private fun hint(key: String?): String = if (key == null) "" else "\u2022\u2022\u2022\u2022 " + key.takeLast(4)
@@ -447,6 +472,9 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
+        /** generate_image model: provider id and model id (plain settings, so they are backed up). */
+        const val KEY_MEDIA_IMAGE_PROVIDER = "media_image_provider"
+        const val KEY_MEDIA_IMAGE_MODEL = "media_image_model"
         /** Same prefix as OllamaCloud.PREFIX. */
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"

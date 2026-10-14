@@ -195,6 +195,8 @@ fun SettingsScreen(
                         }
                         // Any other OpenAI-compatible provider: presets or a URL that is auto-detected.
                         CustomProvidersGroup(settings, snap)
+                        // generate_image's provider and model (only models that can make images).
+                        ImageModelGroup(settings, snap, models)
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
                     SettingsSection.CHATS -> {

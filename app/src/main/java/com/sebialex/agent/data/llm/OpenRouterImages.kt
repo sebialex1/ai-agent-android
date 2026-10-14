@@ -5,12 +5,7 @@ import com.sebialex.agent.domain.tools.GeneratedImage
 import com.sebialex.agent.domain.tools.ImageGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -23,10 +18,9 @@ import java.net.URL
  */
 class OpenRouterImages(
     private val keys: KeyPool,
+    /** Chosen in Settings > Models > Image generation; [DEFAULT_MODEL] until the user picks one. */
     private val model: () -> String = { DEFAULT_MODEL },
 ) : ImageGenerator {
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-
     override suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage = withContext(Dispatchers.IO) {
         var key = keys.activeKey(KeyPool.OPENROUTER) ?: throw IOException("no OpenRouter key: add one in Settings > Models")
         val tried = HashSet<String>()
@@ -65,30 +59,13 @@ class OpenRouterImages(
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
-                val detail = runCatching {
-                    ((json.parseToJsonElement(text).jsonObject["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.content
-                }.getOrNull()
+                val detail = MediaModels.errorDetail(text)
                 throw IOException("HTTP $code" + if (!detail.isNullOrBlank()) ": $detail" else "")
             }
-            val root = json.parseToJsonElement(text).jsonObject
-            val first = (root["data"] as? JsonArray)?.firstOrNull() as? JsonObject ?: throw IOException("the image model returned no image")
-            val mime = (first["media_type"] as? JsonPrimitive)?.content ?: "image/png"
-            (first["b64_json"] as? JsonPrimitive)?.content?.let { b64 ->
-                return GeneratedImage(android.util.Base64.decode(b64.substringAfter("base64,"), android.util.Base64.DEFAULT), mime)
-            }
             // Some models answer with a URL (or a data URL) instead of inline bytes.
-            val url = (first["url"] as? JsonPrimitive)?.content ?: throw IOException("the image model returned no image data")
-            if (url.startsWith("data:")) {
-                return GeneratedImage(android.util.Base64.decode(url.substringAfter("base64,"), android.util.Base64.DEFAULT), url.substringAfter("data:").substringBefore(';'))
-            }
-            val img = URL(url).openConnection() as HttpURLConnection
-            try {
-                img.connectTimeout = 20_000
-                img.readTimeout = 60_000
-                if (img.responseCode !in 200..299) throw IOException("could not download the generated image (HTTP ${img.responseCode})")
-                return GeneratedImage(img.inputStream.use { it.readBytes() }, img.contentType ?: mime)
-            } finally {
-                img.disconnect()
+            return when (val p = MediaModels.parseImageResponse(text)) {
+                is MediaModels.Payload.Bytes -> GeneratedImage(p.bytes, p.mime)
+                is MediaModels.Payload.Link -> downloadImage(p.url, p.mime)
             }
         } finally {
             conn.disconnect()
@@ -98,5 +75,18 @@ class OpenRouterImages(
     companion object {
         const val ENDPOINT = "https://openrouter.ai/api/v1/images"
         const val DEFAULT_MODEL = "google/gemini-2.5-flash-image"
+    }
+}
+
+/** Downloads an image that a model returned as a link. */
+internal fun downloadImage(url: String, mime: String): GeneratedImage {
+    val img = URL(url).openConnection() as HttpURLConnection
+    try {
+        img.connectTimeout = 20_000
+        img.readTimeout = 60_000
+        if (img.responseCode !in 200..299) throw IOException("could not download the generated image (HTTP ${img.responseCode})")
+        return GeneratedImage(img.inputStream.use { it.readBytes() }, img.contentType ?: mime)
+    } finally {
+        img.disconnect()
     }
 }

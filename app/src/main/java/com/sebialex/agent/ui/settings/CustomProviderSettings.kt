@@ -156,6 +156,7 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
             SecureSettings.CustomProvider(
                 id = id, name = finalName, baseUrl = base, preset = presetId,
                 models = d?.models.orEmpty(), detected = d?.message.orEmpty(),
+                modelInfo = d?.meta.orEmpty(),
             ),
         )
         if (key.isNotBlank()) settings.addKey(CustomProviders.keyRing(id), key.trim())

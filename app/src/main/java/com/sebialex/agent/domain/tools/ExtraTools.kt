@@ -12,7 +12,7 @@ import java.util.zip.ZipOutputStream
 /** A picture made by an image model: its bytes and MIME type (image/png, image/jpeg, ...). */
 class GeneratedImage(val bytes: ByteArray, val mime: String)
 
-/** Text-to-image backend for the generate_image tool (OpenRouter's Image API in this app). */
+/** Text-to-image backend for the generate_image tool (the image model picked in Settings > Models). */
 fun interface ImageGenerator {
     suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage
 }
@@ -123,7 +123,7 @@ internal object ExtraTools {
 
     /** Asks the image model for a picture and saves it; the file is attached to the answer as an artifact. */
     suspend fun image(ws: Workspace, generator: ImageGenerator?, call: ToolCall.GenerateImage): ToolResult {
-        val gen = generator ?: return ToolResult(call.callId, false, "Image generation is not available: add an OpenRouter key in Settings > Models.")
+        val gen = generator ?: return ToolResult(call.callId, false, "Image generation is not available: pick an image model in Settings > Models > Image generation.")
         val img = gen.generate(call.prompt, call.aspectRatio)
         val ext = when {
             "jpeg" in img.mime || "jpg" in img.mime -> "jpg"

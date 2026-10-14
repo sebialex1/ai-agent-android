@@ -206,6 +206,34 @@ class OpenRouterModels(
         return all[model] ?: all[model.substringBefore(':')]?.takeIf { model.contains(':') } ?: ModelReasoning.unsupported(model)
     }
 
+    private var images: List<MediaModelOption> = emptyList()
+    private var imagesAt = 0L
+
+    /**
+     * OpenRouter's image models, from the Image API's own catalog (`GET /api/v1/images/models`),
+     * so only models that `POST /api/v1/images` serves are offered for generate_image.
+     */
+    suspend fun imageModels(refresh: Boolean = false): List<MediaModelOption> = lock.withLock {
+        if (!refresh && images.isNotEmpty() && System.currentTimeMillis() - imagesAt < ttlMs) return@withLock images
+        val body = withContext(Dispatchers.IO) {
+            val conn = URL(MediaModels.IMAGES_ENDPOINT_OPENROUTER).openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 30_000
+                conn.setRequestProperty("Accept", "application/json")
+                apiKey()?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+                val code = conn.responseCode
+                if (code !in 200..299) throw IOException("HTTP $code while reading OpenRouter's image models")
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        images = MediaModels.parseOpenRouterImageModels(body)
+        imagesAt = System.currentTimeMillis()
+        images
+    }
+
     private suspend fun catalog(refresh: Boolean): Map<String, ModelReasoning> = lock.withLock {
         val fresh = System.currentTimeMillis() - fetchedAt < ttlMs
         if (!refresh && fresh && cache.isNotEmpty()) return@withLock cache

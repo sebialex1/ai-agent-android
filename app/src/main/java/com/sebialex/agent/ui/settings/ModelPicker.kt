@@ -204,10 +204,13 @@ fun ModelList(
     LaunchedEffect(attempt, customs.map { it.id to it.baseUrl }) {
         customs.forEach { p ->
             val key = settings.activeKey(com.sebialex.agent.data.llm.CustomProviders.keyRing(p.id))
-            val fresh = runCatching { com.sebialex.agent.data.llm.CustomProviders.fetchModels(p.baseUrl, key) }.getOrNull()
+            val catalog = runCatching { com.sebialex.agent.data.llm.CustomProviders.fetchCatalog(p.baseUrl, key) }.getOrNull()
+            val fresh = catalog?.first
             if (!fresh.isNullOrEmpty()) {
                 customLists = customLists + (p.id to fresh)
-                if (fresh != p.models) settings.saveCustomProvider(p.copy(models = fresh))
+                // Capability metadata (image output, reasoning) is refreshed with the list.
+                val meta = catalog.second
+                if (fresh != p.models || meta != p.modelInfo) settings.saveCustomProvider(p.copy(models = fresh, modelInfo = meta))
             }
         }
     }
@@ -400,7 +403,7 @@ private fun SearchField(value: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-private fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit, enabled: Boolean = true) {
+internal fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit, enabled: Boolean = true) {
     Row(
         Modifier
             .fillMaxWidth()

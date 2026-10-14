@@ -190,8 +190,11 @@ class AppContainer(app: Application) {
     fun runtime(sessionId: String): SessionRuntime =
         runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images) }
 
-    /** generate_image: OpenRouter's Image API with the OpenRouter key ring. */
-    private val images = com.sebialex.agent.data.llm.OpenRouterImages(settings)
+    /**
+     * generate_image: the provider and model picked in Settings > Models > Image generation
+     * (OpenRouter's Image API or a custom provider's /images/generations), never a silent fallback.
+     */
+    private val images = com.sebialex.agent.data.llm.RoutedImageGenerator(settings)
 
     @Synchronized
     fun forget(sessionId: String) {
