@@ -43,6 +43,8 @@ enum class ImageApi {
  *   (`type: "image"`, `output_modalities: ["image"]`), or, for providers whose list has no such
  *   field, the image model families their docs name for `/images/generations`
  *   (OpenAI `gpt-image-*` / `dall-e-*`, Gemini `gemini-*-image*`, xAI `grok-*-image*`);
+ * - models the user marked by hand in Settings > Models > Image generation, only where the
+ *   provider's list says nothing about image output (labelled as manual wherever they show);
  * - Ollama Cloud, Anthropic and on-device models: none (see [LIMITATIONS]).
  */
 object MediaModels {
@@ -82,12 +84,23 @@ object MediaModels {
         }.sortedBy { it.name.lowercase() }
     }
 
+    /** Shown as the source of a model the user marked as an image model by hand. */
+    const val MANUAL_IMAGE = "Manual: marked as an image model in Settings"
+
     /**
      * Why [model] of [provider] can generate images, or null when it cannot (or nothing says so).
-     * Metadata from the provider's own list wins over the documented family rules.
+     * Order: the provider's own list metadata (an explicit "not image" is final), the documented
+     * family rules, then the user's manual mark ([manual] holds app model ids,
+     * `custom/<provider>/<model>`).
      */
-    fun imageSource(provider: SecureSettings.CustomProvider, model: String): String? {
+    fun imageSource(provider: SecureSettings.CustomProvider, model: String, manual: Set<String> = emptySet()): String? {
         provider.modelInfo[model]?.image?.let { return if (it) "${provider.name} model list" else null }
+        familySource(provider, model)?.let { return it }
+        if (ProviderMetadata.isAnthropicHost(provider.baseUrl)) return null
+        return if (CustomProviders.modelId(provider.id, model) in manual) MANUAL_IMAGE else null
+    }
+
+    private fun familySource(provider: SecureSettings.CustomProvider, model: String): String? {
         val id = model.lowercase()
         return when {
             ProviderMetadata.isOpenAiHost(provider.baseUrl) && (id.startsWith("gpt-image-") || id.startsWith("dall-e-")) ->
@@ -100,11 +113,20 @@ object MediaModels {
         }
     }
 
-    /** The image models of one custom provider (from its saved model list). */
-    fun customImageModels(provider: SecureSettings.CustomProvider): List<MediaModelOption> =
+    /** The image models of one custom provider (from its saved model list), manual marks included. */
+    fun customImageModels(provider: SecureSettings.CustomProvider, manual: Set<String> = emptySet()): List<MediaModelOption> =
         provider.models.mapNotNull { m ->
-            imageSource(provider, m)?.let { MediaModelOption(customRef(provider.id, m), provider.name, m, it) }
+            imageSource(provider, m, manual)?.let { MediaModelOption(customRef(provider.id, m), provider.name, m, it) }
         }
+
+    /**
+     * Models of [provider] the user may mark as image models by hand: those its list carries no
+     * image-output metadata for and no documented family rule covers. Models the list explicitly
+     * marks as text-only are not offered, nor is Anthropic (Claude has no image output).
+     */
+    fun markableModels(provider: SecureSettings.CustomProvider): List<String> =
+        if (ProviderMetadata.isAnthropicHost(provider.baseUrl)) emptyList()
+        else provider.models.filter { provider.modelInfo[it]?.image == null && familySource(provider, it) == null }
 
     /**
      * Request fields for an OpenAI-style `/images/generations` call. `response_format` is sent

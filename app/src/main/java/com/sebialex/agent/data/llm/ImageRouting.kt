@@ -83,7 +83,8 @@ class OpenAiCompatibleImages(
 /**
  * The generator behind generate_image: the provider and model picked in Settings > Models >
  * Image generation, read on every call. It never falls back to another provider: when the chosen
- * provider was removed, has no key, or no longer lists the model as an image model, the tool
+ * provider was removed, has no key, or no longer lists the model as an image model (nor is it
+ * marked as one by hand), the tool
  * fails with a message that says so.
  */
 class RoutedImageGenerator(
@@ -94,7 +95,7 @@ class RoutedImageGenerator(
 
     override suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage {
         val ref = settings.mediaImageModel()
-        val (name, provider) = resolve(ref, settings.customProviders(), settings::keyCount)
+        val (name, provider) = resolve(ref, settings.customProviders(), settings.imageOverrides(), settings::keyCount)
         return try {
             if (provider == null) openRouter(ref.model).generate(prompt, aspectRatio)
             else custom(provider, ref.model).generate(prompt, aspectRatio)
@@ -111,6 +112,7 @@ class RoutedImageGenerator(
         fun resolve(
             ref: MediaModelRef,
             providers: List<SecureSettings.CustomProvider>,
+            manualImage: Set<String> = emptySet(),
             keyCount: (String) -> Int,
         ): Pair<String, SecureSettings.CustomProvider?> {
             if (ref.provider == MediaModels.PROVIDER_OPENROUTER) {
@@ -126,8 +128,8 @@ class RoutedImageGenerator(
             val p = providers.firstOrNull { it.id == id } ?: throw IOException(
                 "The image model's provider was removed in Settings. Pick another image model in Settings > Models > Image generation. Nothing was generated.",
             )
-            if (MediaModels.imageSource(p, ref.model) == null) throw IOException(
-                "${p.name} no longer lists ${ref.model} as an image model. Pick another image model in Settings > Models > Image generation. Nothing was generated.",
+            if (MediaModels.imageSource(p, ref.model, manualImage) == null) throw IOException(
+                "${p.name} no longer lists ${ref.model} as an image model, and it is not marked as one in Settings. Pick another image model in Settings > Models > Image generation. Nothing was generated.",
             )
             if (keyCount(CustomProviders.keyRing(p.id)) == 0 && !CustomProviders.isLocalAddress(p.baseUrl)) throw IOException(
                 "The image model is ${p.name} \u00b7 ${ref.model}, but no ${p.name} key is saved. Add one in Settings > Models. Nothing was generated.",

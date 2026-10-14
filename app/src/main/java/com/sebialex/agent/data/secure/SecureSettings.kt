@@ -70,6 +70,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val mediaImage: com.sebialex.agent.data.llm.MediaModelRef? = null,
         /** Manual thinking-support overrides of custom-provider models, by app model id. */
         val reasoningOverrides: Map<String, String> = emptyMap(),
+        /** Custom-provider models marked as image models by hand, by app model id. */
+        val imageOverrides: Set<String> = emptySet(),
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -419,6 +421,18 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         if (k.startsWith(KEY_REASONING_OVERRIDE_PREFIX) && v is String && v.isNotBlank()) k.removePrefix(KEY_REASONING_OVERRIDE_PREFIX) to v else null
     }.toMap()
 
+    /**
+     * Manual "this is an image model" marks of custom-provider models (`custom/<provider>/<model>`),
+     * for providers whose model list says nothing about image output. A plain setting, so it is
+     * backed up like the thinking override.
+     */
+    fun imageOverrides(): Set<String> = prefs.all.mapNotNullTo(LinkedHashSet()) { (k, v) ->
+        if (k.startsWith(KEY_IMAGE_OVERRIDE_PREFIX) && v == IMAGE_OVERRIDE_ON) k.removePrefix(KEY_IMAGE_OVERRIDE_PREFIX) else null
+    }
+    fun setImageOverride(model: String, image: Boolean) = edit {
+        if (image) putString(KEY_IMAGE_OVERRIDE_PREFIX + model, IMAGE_OVERRIDE_ON) else remove(KEY_IMAGE_OVERRIDE_PREFIX + model)
+    }
+
     /** Stores a whole per-model choice; both fields null clears it (Auto / model default). */
     fun setReasoning(model: String, pref: ReasoningPreference) = edit {
         if (pref.enabled == null) remove(reasoningOnKey(model)) else putBoolean(reasoningOnKey(model), pref.enabled)
@@ -462,6 +476,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         customProviders = customProviders(),
         mediaImage = storedMediaImageModel(),
         reasoningOverrides = reasoningOverrides(),
+        imageOverrides = imageOverrides(),
     )
 
     private fun hint(key: String?): String = if (key == null) "" else "\u2022\u2022\u2022\u2022 " + key.takeLast(4)
@@ -485,6 +500,9 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_REASONING_ON_PREFIX = "reasoning_enabled::"
         private const val KEY_REASONING_EFFORT_PREFIX = "reasoning_effort::"
         const val KEY_REASONING_OVERRIDE_PREFIX = "reasoning_override::"
+        /** Manual image-model mark: `image_override::custom/<provider>/<model>` = [IMAGE_OVERRIDE_ON]. */
+        const val KEY_IMAGE_OVERRIDE_PREFIX = "image_override::"
+        const val IMAGE_OVERRIDE_ON = "image"
         private const val KEY_OLLAMA = "ollama_api_key"
         private const val KEY_PROVIDER = "cloud_provider"
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"

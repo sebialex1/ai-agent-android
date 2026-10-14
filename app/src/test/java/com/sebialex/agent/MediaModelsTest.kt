@@ -78,7 +78,7 @@ class MediaModelsTest {
         assertEquals("Oa" to oa, RoutedImageGenerator.resolve(MediaModels.customRef("oa", "gpt-image-1"), listOf(oa)) { keys[it] ?: 0 })
         fun fails(ref: MediaModelRef, providers: List<SecureSettings.CustomProvider>, count: (String) -> Int, text: String) {
             try {
-                RoutedImageGenerator.resolve(ref, providers, count)
+                RoutedImageGenerator.resolve(ref, providers, keyCount = count)
                 fail("expected a failure for $ref")
             } catch (e: IOException) {
                 assertTrue(e.message, e.message!!.contains(text))
@@ -113,6 +113,52 @@ class MediaModelsTest {
         val link = MediaModels.parseImageResponse("""{"data":[{"url":"https://x/y.png"}]}""") as MediaModels.Payload.Link
         assertEquals("https://x/y.png", link.url)
         try { MediaModels.parseImageResponse("""{"data":[]}"""); fail() } catch (_: IOException) {}
+    }
+
+    @Test fun manualImageOverrideEntersAndLeavesTheCandidateList() {
+        // A generic host whose /models says nothing about image output: no image models at all.
+        val lm = provider("lm", "https://llm.example.com/v1", listOf("flux-dev", "llama-3.3-70b"))
+        assertTrue(MediaModels.customImageModels(lm).isEmpty())
+        assertEquals(listOf("flux-dev", "llama-3.3-70b"), MediaModels.markableModels(lm))
+        val flux = MediaModels.customRef("lm", "flux-dev")
+        val marked = setOf("custom/lm/flux-dev")
+
+        // Marked: it enters the picker's candidates, labelled as manual, and a saved choice resolves.
+        val listed = MediaModels.customImageModels(lm, marked)
+        assertEquals(listOf("flux-dev"), listed.map { it.ref.model })
+        assertEquals(MediaModels.MANUAL_IMAGE, listed.single().source)
+        assertEquals(flux, listed.single().ref)
+        assertEquals("Lm", RoutedImageGenerator.resolve(flux, listOf(lm), marked) { 1 }.first)
+
+        // Unmarked: it leaves the candidates, and the saved choice fails instead of falling back.
+        assertTrue(MediaModels.customImageModels(lm, emptySet()).isEmpty())
+        try {
+            RoutedImageGenerator.resolve(flux, listOf(lm), emptySet()) { 1 }
+            fail("an unmarked model must not resolve")
+        } catch (e: IOException) {
+            assertTrue(e.message, e.message!!.contains("no longer lists flux-dev") && e.message!!.contains("not marked"))
+            assertFalse(e.message, e.message!!.contains("using OpenRouter"))
+        }
+
+        // A mark on another provider's model of the same id does not leak across providers.
+        val other = provider("other", "https://llm2.example.com/v1", listOf("flux-dev"))
+        assertTrue(MediaModels.customImageModels(other, marked).isEmpty())
+
+        // Only models with no image metadata can be marked; explicit metadata and Anthropic stay final.
+        val together = provider("tg", "https://api.together.xyz/v1", listOf("flux", "llama", "plain"),
+            mapOf("flux" to ProviderModelMeta(image = true), "llama" to ProviderModelMeta(image = false)))
+        assertEquals(listOf("plain"), MediaModels.markableModels(together))
+        assertTrue(MediaModels.customImageModels(together, setOf("custom/tg/llama")).none { it.ref.model == "llama" })
+        val anthropic = provider("an", "https://api.anthropic.com/v1", listOf("claude-sonnet-4-5"))
+        assertTrue(MediaModels.markableModels(anthropic).isEmpty())
+        assertTrue(MediaModels.customImageModels(anthropic, setOf("custom/an/claude-sonnet-4-5")).isEmpty())
+    }
+
+    @Test fun manualImageOverrideIsAPlainBackedUpSetting() {
+        val key = SecureSettings.KEY_IMAGE_OVERRIDE_PREFIX + "custom/lm/flux-dev"
+        assertFalse(BackupBundle.isSecretPref(key))
+        val p = BackupBundle.parse(BackupBundle.build(mapOf(key to SecureSettings.IMAGE_OVERRIDE_ON), emptyList(), null, null))
+        assertEquals(SecureSettings.IMAGE_OVERRIDE_ON, BackupBundle.primitiveValue(p.settings.getValue(key)))
     }
 
     @Test fun mediaSelectionIsAPlainBackedUpSetting() {

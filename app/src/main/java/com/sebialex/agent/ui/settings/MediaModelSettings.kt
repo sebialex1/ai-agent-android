@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
+import com.sebialex.agent.data.llm.CustomProviders
 import com.sebialex.agent.data.llm.MediaModelOption
 import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.OpenRouterModels
@@ -60,9 +61,10 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
             openRouterError = e.message ?: "could not read OpenRouter's image models"
         }
     }
-    val custom = snap.customProviders.associate { p -> p.id to MediaModels.customImageModels(p) }
+    val custom = snap.customProviders.associate { p -> p.id to MediaModels.customImageModels(p, snap.imageOverrides) }
+    val markable = snap.customProviders.associate { p -> p.id to MediaModels.markableModels(p) }
     // Is the saved choice usable right now? Shown under the row instead of switching providers.
-    val problem = runCatching { RoutedImageGenerator.resolve(current, snap.customProviders) { snap.keys[it].orEmpty().size } }
+    val problem = runCatching { RoutedImageGenerator.resolve(current, snap.customProviders, snap.imageOverrides) { snap.keys[it].orEmpty().size } }
         .exceptionOrNull()?.message
     val providerName = MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
     val currentName = (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
@@ -89,7 +91,9 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
         }
         if (problem != null) Text(problem, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
         if (open) {
-            val tabs = listOf(MediaModels.PROVIDER_OPENROUTER) + snap.customProviders.filter { custom[it.id].orEmpty().isNotEmpty() }.map { it.id }
+            // Custom providers with image models, or with models that may be marked as image models by hand.
+            val tabs = listOf(MediaModels.PROVIDER_OPENROUTER) +
+                snap.customProviders.filter { custom[it.id].orEmpty().isNotEmpty() || markable[it.id].orEmpty().isNotEmpty() }.map { it.id }
             var tab by remember(current.provider) {
                 mutableStateOf(MediaModels.customProviderId(current)?.takeIf { it in tabs } ?: MediaModels.PROVIDER_OPENROUTER)
             }
@@ -106,7 +110,7 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
                     QuietIconButton(R.drawable.ic_refresh, "Try again", onClick = { attempt++ }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
                 }
                 items == null -> Text("Loading image models\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-                items.isEmpty() -> Text("No image models listed.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+                items.isEmpty() -> Text(if (markable[tab].isNullOrEmpty()) "No image models listed." else "No image models listed. Mark one by hand below.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
                 else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
                     items(items, key = { it.ref.provider + "|" + it.ref.model }) { o ->
                         PickRow(
@@ -118,14 +122,79 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
                     }
                 }
             }
+            snap.customProviders.firstOrNull { it.id == tab }?.let { p ->
+                val marks = markable[p.id].orEmpty()
+                if (marks.isNotEmpty()) ManualImageMarks(p, marks, snap.imageOverrides, onToggle = { id, on -> settings.setImageOverride(id, on) })
+            }
             // Honest limits: providers that are connected but cannot generate images here.
             Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 4.dp)) {
-                snap.customProviders.filter { custom[it.id].isNullOrEmpty() }.forEach { p ->
+                snap.customProviders.filter { custom[it.id].isNullOrEmpty() && markable[it.id].isNullOrEmpty() }.forEach { p ->
                     LimitNote("${p.name}: its model list names no image models this app can call")
                 }
                 MediaModels.LIMITATIONS.forEach { (name, why) -> LimitNote("$name: $why") }
             }
         }
+    }
+}
+
+/**
+ * The manual "this is an image model" override for one custom provider: a single collapsed row
+ * that opens the models its list says nothing about, each with a check mark. Marked models join
+ * the picker above, labelled as manual.
+ */
+@Composable
+private fun ManualImageMarks(
+    provider: SecureSettings.CustomProvider,
+    models: List<String>,
+    overrides: Set<String>,
+    onToggle: (String, Boolean) -> Unit,
+) {
+    var open by remember(provider.id) { mutableStateOf(false) }
+    var showAll by remember(provider.id) { mutableStateOf(false) }
+    val marked = models.count { CustomProviders.modelId(provider.id, it) in overrides }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { open = !open }.padding(top = 8.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Mark image models by hand", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
+            Text(
+                "Manual override \u00b7 ${provider.name}'s model list says nothing about image output" +
+                    if (marked > 0) " \u00b7 $marked marked" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+            )
+        }
+        AppIcon(if (open) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right, if (open) "Close" else "Mark image models", tint = Palette.IconMuted, size = 16.dp)
+    }
+    if (!open) return
+    // Marked models first, so a mark is easy to undo.
+    val rows = models.sortedBy { if (CustomProviders.modelId(provider.id, it) in overrides) 0 else 1 }
+    val visible = if (showAll) rows else rows.take(12)
+    Column {
+        visible.forEach { m ->
+            val id = CustomProviders.modelId(provider.id, m)
+            val on = id in overrides
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onToggle(id, !on) }.padding(horizontal = 4.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(if (on) R.drawable.ic_checkbox_checked else R.drawable.ic_checkbox, if (on) "Marked as image model" else "Not marked", tint = if (on) Palette.IconActive else Palette.IconMuted, size = 18.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(m, style = MaterialTheme.typography.bodyMedium, color = if (on) Palette.TextPrimary else Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (rows.size > visible.size) Text(
+            "Show all ${rows.size} models",
+            style = MaterialTheme.typography.labelLarge,
+            color = Palette.TextSecondary,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { showAll = true }.padding(vertical = 8.dp),
+        )
+        Text(
+            "A marked model is called at ${provider.baseUrl.trimEnd('/')}/images/generations. If it is not an image model there, generate_image fails and says so.",
+            style = MaterialTheme.typography.labelSmall,
+            color = Palette.TextTertiary,
+        )
     }
 }
 
