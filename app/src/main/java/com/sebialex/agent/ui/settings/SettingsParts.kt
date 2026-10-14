@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.ui.theme.Palette
 
@@ -61,29 +62,43 @@ internal fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onCha
     }
 }
 
-/** Horizontally scrolling choice chips, same look as the reasoning effort chips. */
+/**
+ * Choice control: one quiet track with the selected option highlighted inside it (a segmented
+ * control), instead of a separate pill per option.
+ */
 @Composable
 internal fun <T> ChoiceChips(options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Palette.Surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         options.forEach { o ->
             val on = o == selected
             Text(
                 label(o),
                 style = MaterialTheme.typography.labelLarge,
-                color = if (on) Palette.OnAccent else Palette.TextSecondary,
+                color = if (on) Palette.TextPrimary else Palette.TextTertiary,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(if (on) Palette.Accent else Palette.SurfaceHigh)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (on) Palette.SurfaceHighest else Color.Transparent)
                     .clickable { onSelect(o) }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
     }
 }
 
-/** Small text button used inside cards ("Download", "Use", "Delete"). */
+/**
+ * Action button used in rows ("Download", "Use", "Delete", "Allow"). Only the one primary action
+ * of a row is filled; the others are plain text so a row never shows a cluster of pills.
+ */
 @Composable
-internal fun PillButton(text: String, onClick: () -> Unit, primary: Boolean = false, danger: Boolean = false, enabled: Boolean = true) {
+internal fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, primary: Boolean = false, danger: Boolean = false, enabled: Boolean = true) {
     Text(
         text,
         style = MaterialTheme.typography.labelLarge,
@@ -93,10 +108,19 @@ internal fun PillButton(text: String, onClick: () -> Unit, primary: Boolean = fa
             danger -> Palette.Danger
             else -> Palette.TextPrimary
         },
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(50))
-            .background(if (primary && enabled) Palette.Accent else Palette.SurfaceHighest)
+            .then(if (primary && enabled) Modifier.background(Palette.Accent) else Modifier)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     )
+}
+
+/** A titled group of settings: a quiet label, then its rows with even spacing. */
+@Composable
+internal fun SettingsGroup(title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionLabel(title)
+        content()
+    }
 }

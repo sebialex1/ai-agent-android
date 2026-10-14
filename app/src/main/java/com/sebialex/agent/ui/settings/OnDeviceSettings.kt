@@ -89,39 +89,24 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
 
         EngineRow(engineState, snap.model, store, engine)
 
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SectionLabel("Models")
-            (LocalModels.catalog + imported).forEach { m ->
-                ModelCard(
-                    model = m,
-                    status = statuses[m.id] ?: ModelStatus.Missing,
-                    selected = snap.model == m.id,
-                    ramGb = ramGb,
-                    onDownload = { message = store.download(m) },
-                    onCancel = { store.cancel(m) },
-                    onUse = {
-                        settings.setModel(m.id)
-                        engine.preload(m)
-                    },
-                    onDelete = {
-                        scope.launch {
-                            engine.unloadIf(m.id)
-                            store.delete(m)
-                            if (settings.model() == m.id) settings.setModel(settings.cloudModel())
-                        }
-                    },
-                    onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+            // Grouped by the RAM they are recommended for (a recommendation, never a limit).
+            val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
+            groups.forEach { (tier, models) ->
+                Text(
+                    if (tier == 1) "Ultra-light \u00b7 from 1 GB RAM" else "From $tier GB RAM",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Palette.TextTertiary,
+                    modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
                 )
+                models.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
             }
-            Text(
-                "Import a .litertlm file",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Palette.TextPrimary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { picker.launch(arrayOf("*/*")) }
-                    .padding(vertical = 8.dp),
-            )
+            if (imported.isNotEmpty()) {
+                Text("Imported", style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
+                imported.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
+            }
+            PillButton("Import a .litertlm file", onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.padding(top = 10.dp))
             message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary) }
         }
 
@@ -223,12 +208,11 @@ private fun EngineRow(state: EngineState, selectedModel: String, store: ModelSto
     Row(
         Modifier
             .fillMaxWidth()
-            .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 2.dp)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(14.dp))
+            .background(Palette.Surface)
+            .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(R.drawable.ic_shield, null, tint = Palette.IconMuted, size = 18.dp)
-        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
             Text(detail, style = MaterialTheme.typography.labelSmall, color = if (state is EngineState.Failed) Palette.Danger else Palette.TextTertiary)
@@ -244,7 +228,53 @@ private fun EngineRow(state: EngineState, selectedModel: String, store: ModelSto
 }
 
 @Composable
-private fun ModelCard(
+private fun ModelItem(
+    m: LocalModel,
+    statuses: Map<String, ModelStatus>,
+    selectedId: String,
+    ramGb: Int,
+    store: ModelStore,
+    engine: LocalEngine,
+    settings: SecureSettings,
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: Context,
+    onMessage: (String?) -> Unit,
+) {
+    ModelRow(
+        model = m,
+        status = statuses[m.id] ?: ModelStatus.Missing,
+        selected = selectedId == m.id,
+        ramGb = ramGb,
+        onDownload = { onMessage(store.download(m)) },
+        onCancel = { store.cancel(m) },
+        onUse = {
+            settings.setModel(m.id)
+            engine.preload(m)
+        },
+        onDelete = {
+            scope.launch {
+                engine.unloadIf(m.id)
+                store.delete(m)
+                if (settings.model() == m.id) settings.setModel(settings.cloudModel())
+            }
+        },
+        onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+    )
+}
+
+/** RAM tiers as a short range, e.g. "4\u20137 GB". */
+private fun tierText(tiers: List<Int>): String = when {
+    tiers.isEmpty() -> ""
+    tiers.min() == tiers.max() -> "${tiers.min()} GB"
+    else -> "${tiers.min()}\u2013${tiers.max()} GB"
+}
+
+/**
+ * One model as a flat row: name and size, one line of facts, then a single action line.
+ * No card, no per-field pills; only the main action (Download or Use) is filled.
+ */
+@Composable
+private fun ModelRow(
     model: LocalModel,
     status: ModelStatus,
     selected: Boolean,
@@ -255,29 +285,26 @@ private fun ModelCard(
     onDelete: () -> Unit,
     onOpenPage: (String) -> Unit,
 ) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .softSurface(RoundedCornerShape(18.dp), if (selected) Palette.SurfaceHighest else Palette.SurfaceHigh, elevation = 2.dp)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(model.name, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
-            val size = (status as? ModelStatus.Ready)?.bytes ?: model.sizeBytes
-            if (size > 0) Text(LocalModels.formatSize(size), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+            if (selected) AppIcon(R.drawable.ic_check, "In use", tint = Palette.IconActive, size = 16.dp)
         }
-        Text(model.tagline, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary)
-        val tags = buildList {
-            if (model.recommended) add("Recommended")
+        Text(model.tagline, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
+        val size = (status as? ModelStatus.Ready)?.bytes ?: model.sizeBytes
+        val facts = buildList {
+            if (size > 0) add(LocalModels.formatSize(size))
+            if (model.ramTiersGb.isNotEmpty()) add(tierText(model.ramTiersGb) + " RAM")
             if (model.toolCalling) add("Tools")
             if (model.thinking) add("Thinking")
-            if (!model.imported) add("${model.maxContext / 1000}K max context")
+            if (!model.imported) add("${model.maxContext / 1000}K context")
+            if (model.license.isNotEmpty()) add(model.license)
         }
-        if (tags.isNotEmpty()) Text(tags.joinToString(" \u00b7 "), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        if (facts.isNotEmpty()) Text(facts.joinToString(" \u00b7 "), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        // Non-blocking: the model can still be downloaded and used.
         if (model.minRamGb > 0 && ramGb in 1 until model.minRamGb) {
             Text(
-                "Needs about ${model.minRamGb} GB RAM; this phone has $ramGb GB, so it may fail to load or run slowly.",
+                "Recommended for ${model.minRamGb} GB or more; this phone has $ramGb GB, so it may load slowly or fail. You can still use it.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Warning,
             )
@@ -286,9 +313,9 @@ private fun ModelCard(
             is ModelStatus.Downloading -> {
                 LinearProgressIndicator(
                     progress = { status.fraction },
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
                     color = Palette.Accent,
-                    trackColor = Palette.Surface,
+                    trackColor = Palette.SurfaceHigh,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val progress = if (status.total > 0) "${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Starting\u2026"
@@ -299,9 +326,9 @@ private fun ModelCard(
             is ModelStatus.Importing -> {
                 LinearProgressIndicator(
                     progress = { status.fraction },
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
                     color = Palette.Accent,
-                    trackColor = Palette.Surface,
+                    trackColor = Palette.SurfaceHigh,
                 )
                 Text(
                     if (status.moving) "Moving to Downloads\u2026 ${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Importing\u2026",
@@ -309,17 +336,8 @@ private fun ModelCard(
                     color = Palette.TextTertiary,
                 )
             }
-            is ModelStatus.Ready -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (selected) {
-                    Text(
-                        "In use",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Palette.TextSecondary,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Palette.Surface).padding(horizontal = 14.dp, vertical = 8.dp),
-                    )
-                } else {
-                    PillButton("Use", onClick = onUse, primary = true)
-                }
+            is ModelStatus.Ready -> Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!selected) PillButton("Use", onClick = onUse, primary = true) else Text("In use", style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                 PillButton("Delete", onClick = onDelete, danger = true)
             }
             is ModelStatus.Failed -> {
@@ -327,9 +345,9 @@ private fun ModelCard(
                 if (model.url != null) PillButton("Try again", onClick = onDownload)
             }
             ModelStatus.Missing -> if (model.url != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton("Download \u00b7 ${LocalModels.formatSize(model.sizeBytes)}", onClick = onDownload, primary = true)
-                    model.pageUrl?.let { url -> PillButton("Model page", onClick = { onOpenPage(url) }) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PillButton("Download", onClick = onDownload, primary = true)
+                    model.pageUrl?.let { url -> PillButton("Model card", onClick = { onOpenPage(url) }) }
                 }
             }
         }

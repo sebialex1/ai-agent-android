@@ -175,8 +175,6 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                     .padding(start = 12.dp, end = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Monogram(preset?.name ?: "?")
-                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(preset?.name ?: "Custom / auto-detect", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
                     Text(

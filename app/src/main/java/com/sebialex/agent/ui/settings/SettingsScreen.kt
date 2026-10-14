@@ -243,8 +243,8 @@ private fun SectionRow(section: SettingsSection, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .softSurface(RoundedCornerShape(18.dp), Palette.Surface, elevation = 2.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(Palette.Surface)
             .clickable(onClick = onClick)
             .heightIn(min = 56.dp)
             .padding(start = 16.dp, end = 12.dp),
@@ -303,9 +303,9 @@ private fun LinkRow(title: String, detail: String, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 4.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

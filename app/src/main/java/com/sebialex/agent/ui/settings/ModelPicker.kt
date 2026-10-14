@@ -95,8 +95,8 @@ internal fun ModelPickerRow(model: String, backend: String, onClick: () -> Unit)
         Row(
             Modifier
                 .fillMaxWidth()
-                .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(Palette.Surface)
                 .clickable(onClick = onClick)
                 .heightIn(min = 56.dp)
                 .padding(start = 16.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
@@ -226,6 +226,7 @@ fun ModelList(
                 PickRow(
                     title = m.name,
                     subtitle = listOfNotNull(
+                        (statuses[m.id] as? ModelStatus.Ready)?.bytes?.takeIf { it > 0 }?.let { LocalModels.formatSize(it) },
                         if (snap.localBackend == SecureSettings.BACKEND_CPU) "CPU" else "GPU",
                         if (m.thinking) "thinking" else null,
                     ).joinToString(" \u00b7 "),
@@ -349,7 +350,7 @@ private fun Header(text: String, action: String? = null, onAction: () -> Unit = 
             action,
             style = MaterialTheme.typography.labelMedium,
             color = Palette.TextSecondary,
-            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onAction).padding(horizontal = 10.dp, vertical = 4.dp),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onAction).padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }
 }
@@ -373,7 +374,8 @@ private fun SearchField(value: String, onChange: (String) -> Unit) {
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp)
-            .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 2.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Palette.Surface)
             .heightIn(min = 44.dp)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -402,17 +404,16 @@ private fun PickRow(title: String, subtitle: String?, selected: Boolean, onClick
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Palette.SurfaceHigh else Palette.Surface)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(
                 title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (enabled) Palette.TextPrimary else Palette.TextTertiary,
+                color = if (!enabled) Palette.TextTertiary else if (selected) Palette.TextPrimary else Palette.TextSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -442,7 +443,8 @@ private fun ModelIdField(
         Row(
             Modifier
                 .fillMaxWidth()
-                .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Palette.Surface)
                 .heightIn(min = 48.dp)
                 .padding(start = 14.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

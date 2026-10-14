@@ -9,7 +9,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,83 +90,78 @@ fun SandboxSetting(termux: TermuxBridge) {
     }
     val askLegacyStorage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { status = termux.status() }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Sandbox", style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary)
-        StatusRow(
-            label = "Termux",
-            ok = status.installed,
-            action = "Get Termux",
-            onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
-        )
-        StatusRow(
-            label = "Run commands in Termux",
-            ok = status.runPermission,
-            action = "Allow",
-            enabled = status.installed,
-            onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
-        )
-        // The green checks above are Android-side only. Termux's own allow-external-apps
-        // setting cannot be read from here; it is known once Termux answers (tap Check).
-        StatusRow(
-            label = "Termux allows this app",
-            ok = status.externalApps == true,
-            unknown = status.externalApps == null,
-            action = "Open Termux",
-            enabled = status.installed,
-            onAction = { openTermux(context) },
-        )
-        StatusRow(
-            label = "All files access",
-            ok = status.storage,
-            action = "Allow",
-            onAction = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val ok = open(
-                        context,
-                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
-                    )
-                    if (!ok) open(context, Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                } else {
-                    askLegacyStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                }
-            },
-        )
-        // The Termux side cannot be configured from here; show the exact one-time command.
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.SurfaceHigh).padding(start = 14.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(TERMUX_SETUP, style = MonoSmall, color = Palette.TextSecondary, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
-            QuietIconButton(R.drawable.ic_copy, "Copy Termux setup command", onClick = {
-                clipboard.setText(AnnotatedString(TERMUX_SETUP))
-            }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionLabel("Termux sandbox")
+        // One list, one rhythm: status mark, label, and a plain text action only when something is missing.
+        Column {
+            StatusRow(
+                label = "Termux installed",
+                ok = status.installed,
+                action = "Get",
+                onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
+            )
+            StatusRow(
+                label = "Permission to run commands",
+                ok = status.runPermission,
+                action = "Allow",
+                enabled = status.installed,
+                onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
+            )
+            // The checks above are Android-side only. Termux's own allow-external-apps
+            // setting cannot be read from here; it is known once Termux answers (tap Check).
+            StatusRow(
+                label = "Termux allows this app",
+                ok = status.externalApps == true,
+                unknown = status.externalApps == null,
+                action = if (status.externalApps == false) "App info" else "Open",
+                enabled = status.installed,
+                onAction = {
+                    if (status.externalApps == false) {
+                        open(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${TermuxBridge.TERMUX_PACKAGE}")))
+                    } else openTermux(context)
+                },
+            )
+            StatusRow(
+                label = "All files access",
+                ok = status.storage,
+                action = "Allow",
+                onAction = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val ok = open(
+                            context,
+                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
+                        )
+                        if (!ok) open(context, Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    } else {
+                        askLegacyStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    }
+                },
+            )
         }
-        Text(
-            "Copy this, paste it in Termux and press Enter, then come back and tap Check. " +
-                "If Check still says allow-external-apps, force stop Termux (App info), reopen it and tap Check again.",
-            style = MaterialTheme.typography.labelSmall,
-            color = Palette.TextTertiary,
-        )
-        if (status.externalApps == false) Text(
-            "Termux app info",
-            style = MaterialTheme.typography.labelLarge,
-            color = Palette.TextPrimary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Palette.SurfaceHigh)
-                .clickable {
-                    open(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${TermuxBridge.TERMUX_PACKAGE}")))
-                }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        )
-        Text(
-            if (checking) "Checking\u2026" else "Check",
-            style = MaterialTheme.typography.labelLarge,
-            color = if (status.ready && !checking) Palette.TextPrimary else Palette.TextTertiary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Palette.SurfaceHigh)
-                .clickable(enabled = status.ready && !checking) {
+        // The Termux side cannot be configured from here: the exact one-time command, in a single block.
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.Surface).padding(start = 14.dp, top = 4.dp, bottom = 12.dp, end = 4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("One-time setup in Termux", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
+                QuietIconButton(R.drawable.ic_copy, "Copy Termux setup command", onClick = {
+                    clipboard.setText(AnnotatedString(TERMUX_SETUP))
+                }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
+            }
+            Text(TERMUX_SETUP, style = MonoSmall, color = Palette.TextTertiary, modifier = Modifier.padding(end = 10.dp))
+            Text(
+                "Paste it in Termux, press Enter, then tap Check. If Check still reports allow-external-apps, force stop Termux, reopen it and check again.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                modifier = Modifier.padding(top = 8.dp, end = 10.dp),
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PillButton(
+                if (checking) "Checking\u2026" else "Check",
+                primary = status.ready && !checking,
+                enabled = status.ready && !checking,
+                onClick = {
                     checking = true
                     scope.launch {
                         check = withContext(Dispatchers.IO) {
@@ -190,40 +187,31 @@ fun SandboxSetting(termux: TermuxBridge) {
                         checking = false
                         status = termux.status()
                     }
-                }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        )
+                },
+            )
+        }
         check?.let { Text(it, style = MonoSmall, color = Palette.TextSecondary) }
     }
 }
 
 @Composable
 private fun StatusRow(label: String, ok: Boolean, action: String, enabled: Boolean = true, unknown: Boolean = false, onAction: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (unknown) {
-            // Not verified yet: neither a check nor a cross.
-            Text("?", style = MaterialTheme.typography.labelLarge, color = Palette.TextTertiary, modifier = Modifier.width(16.dp))
-        } else AppIcon(
-            if (ok) R.drawable.ic_check else R.drawable.ic_close,
-            if (ok) "Ready" else "Missing",
-            tint = if (ok) Palette.IconMuted else Palette.TextTertiary,
-            size = 16.dp,
-        )
+    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(20.dp), contentAlignment = Alignment.CenterStart) {
+            if (unknown) Text("?", style = MaterialTheme.typography.labelLarge, color = Palette.TextTertiary)
+            else AppIcon(
+                if (ok) R.drawable.ic_check else R.drawable.ic_close,
+                if (ok) "Ready" else "Missing",
+                tint = if (ok) Palette.IconActive else Palette.Warning,
+                size = 16.dp,
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-            if (unknown) Text("Not checked yet. Tap Check below.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = if (ok) Palette.TextSecondary else Palette.TextPrimary)
+            if (unknown) Text("Not checked yet", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
         }
-        if (!ok) Text(
-            action,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (enabled) Palette.TextPrimary else Palette.TextTertiary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Palette.SurfaceHigh)
-                .clickable(enabled = enabled, onClick = onAction)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        )
+        if (!ok) PillButton(action, onClick = onAction, enabled = enabled)
     }
 }
 

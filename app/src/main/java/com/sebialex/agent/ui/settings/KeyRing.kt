@@ -76,7 +76,7 @@ internal fun KeyRingCard(
     Column(
         Modifier
             .fillMaxWidth()
-            .softSurface(shape, Palette.Surface, elevation = 3.dp)
+            .softSurface(shape, Palette.Surface, elevation = 0.dp, highlight = false)
             .clip(shape)
             .padding(vertical = 6.dp),
     ) {
@@ -84,8 +84,6 @@ internal fun KeyRingCard(
             Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Monogram(title)
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val detail = when {
@@ -134,51 +132,22 @@ internal fun KeyRingCard(
     }
 }
 
-/** The provider's initial on a soft rounded tile. */
-@Composable
-internal fun Monogram(name: String) {
-    Box(
-        Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(Palette.SurfaceHighest),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "?",
-            style = MaterialTheme.typography.titleSmall,
-            color = Palette.TextPrimary,
-        )
-    }
-}
-
 @Composable
 private fun KeyRow(index: Int, key: SecureSettings.KeyView, showUse: Boolean, onActivate: () -> Unit, onRemove: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 46.dp)
-            .padding(start = 14.dp, end = 4.dp),
+            .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // A thin rail ties the stacked keys to the provider above.
-        Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) {
-            Box(
-                Modifier.size(22.dp).clip(CircleShape).background(if (key.active) Palette.Accent else Palette.SurfaceHigh),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "$index",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (key.active) Palette.OnAccent else Palette.TextTertiary,
-                )
-            }
-        }
-        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(key.hint, style = MonoSmall, color = Palette.TextPrimary, maxLines = 1)
             if (key.label.isNotBlank()) Text(key.label, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         when {
-            key.failing -> Badge("Failing", Palette.Warning.copy(alpha = 0.14f), Palette.Warning)
-            key.active -> Badge("Active", Palette.SurfaceHighest, Palette.TextPrimary)
+            key.failing -> Badge("Failing", Color.Transparent, Palette.Warning)
+            key.active -> Badge("Active", Color.Transparent, Palette.TextSecondary)
         }
         if (showUse) {
             Text(
