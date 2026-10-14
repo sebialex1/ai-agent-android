@@ -26,8 +26,53 @@ object CustomReasoning {
         else -> ReasoningWire.OPENAI_EFFORT
     }
 
-    /** Gemini docs: `reasoning_effort: "none"` turns thinking off for 2.5 Flash / Flash-Lite only. */
+    /**
+     * Gemini OpenAI compatibility docs: `reasoning_effort: "none"` turns thinking off "for 2.5
+     * models"; "Reasoning cannot be turned off for Gemini 2.5 Pro or 3 models". So 2.5 Flash and
+     * Flash-Lite only.
+     */
     fun geminiCanDisable(model: String) = model.lowercase().startsWith("gemini-2.5-flash")
+
+    /**
+     * Effort levels for a Gemini model through `reasoning_effort` (low/medium/high map to
+     * `thinking_level` / `thinking_budget`). Gemini 3 Pro Preview supports only the low and high
+     * thinking levels (Gemini thinking docs), so medium is not offered there.
+     */
+    fun geminiLevels(model: String): List<String> =
+        if (Regex("^gemini-3-pro").containsMatchIn(model.lowercase())) listOf("high", "low") else LEVELS
+
+    /** Gemini thinking docs: 2.5 Flash-Lite does not think by default; the other thinking models do. */
+    fun geminiDefaultOn(model: String) = !model.lowercase().startsWith("gemini-2.5-flash-lite")
+
+    /**
+     * Whether a Claude model takes adaptive thinking (`thinking: {type: "adaptive"}`) rather than
+     * manual extended thinking (`{type: "enabled", budget_tokens}`), from Anthropic's per-model
+     * table when no `/v1/models` capabilities were saved: Claude 4.5 and earlier support only
+     * extended thinking and reject "adaptive"; 4.6 accepts both (extended deprecated); 4.7 and
+     * later reject "enabled" with a 400. Ids that carry no version (new families) are treated as
+     * current models, which use adaptive thinking.
+     */
+    fun claudeUsesAdaptive(model: String): Boolean {
+        val m = Regex("^claude-(?:[a-z]+-)?(\\d+)(?:-(\\d{1,2}))?(?=-|$)").find(model.lowercase()) ?: return true
+        val major = m.groupValues[1].toInt()
+        val minor = m.groupValues[2].toIntOrNull() ?: 0
+        return major > 4 || (major == 4 && minor >= 6)
+    }
+
+    /**
+     * What the thinking control can actually do through a provider's OpenAI-compatible endpoint,
+     * shown in Settings so the UI never claims a control the endpoint ignores. Null for providers
+     * with nothing specific to say.
+     */
+    fun compatibilityNote(baseUrl: String): String? = when (wireFor(baseUrl)) {
+        ReasoningWire.ANTHROPIC ->
+            "Anthropic's OpenAI-compatible endpoint ignores reasoning_effort, so Claude gets thinking on or off only, " +
+                "Off only where its capabilities allow it, and no thinking text comes back."
+        ReasoningWire.GEMINI ->
+            "Gemini's OpenAI-compatible endpoint takes reasoning_effort Low/Medium/High (Low/High on Gemini 3 Pro), " +
+                "Off only on 2.5 Flash and Flash-Lite, and returns no thought text with it."
+        else -> null
+    }
 
     fun detect(appModelId: String, provider: SecureSettings.CustomProvider?, override: String?): ModelReasoning {
         if (provider == null) return ModelReasoning.unknown(appModelId, "the provider was removed")
@@ -54,17 +99,21 @@ object CustomReasoning {
         meta: ProviderModelMeta?,
         source: String,
     ): ModelReasoning = when (wire) {
-        // Anthropic's OpenAI layer ignores reasoning_effort: thinking is on/off (adaptive where
-        // the model has it), and the layer returns no thinking text.
+        // Anthropic's OpenAI layer: `reasoning_effort` is "Ignored" (its field table), so no effort
+        // levels; the `thinking` parameter is passed on, and "the OpenAI SDK doesn't return Claude's
+        // thinking". Off is offered only where /v1/models says `thinking.types.disabled` is
+        // supported: several current models reject "disabled" with a 400 (always-on thinking).
+        // Adaptive vs manual comes from the capabilities, else Anthropic's per-model table.
         ReasoningWire.ANTHROPIC -> ModelReasoning.controlled(
-            appModelId, wire, emptyList(), canDisable = meta?.canDisable ?: true, defaultOn = false,
-            allowsAuto = true, surfacesText = false, source = source, adaptive = meta?.adaptive == true,
+            appModelId, wire, emptyList(), canDisable = meta?.canDisable == true, defaultOn = false,
+            allowsAuto = true, surfacesText = false, source = source,
+            adaptive = meta?.adaptive ?: claudeUsesAdaptive(model),
         )
-        // Gemini's OpenAI layer maps reasoning_effort low/medium/high; thought summaries are not
-        // returned through reasoning_effort.
+        // Gemini's OpenAI layer maps reasoning_effort low/medium/high; thought summaries need
+        // extra_body thinking_config, which cannot be combined with reasoning_effort, so no text.
         ReasoningWire.GEMINI -> geminiCanDisable(model).let { off ->
             ModelReasoning.controlled(
-                appModelId, wire, LEVELS, canDisable = off, defaultOn = true, allowsAuto = true,
+                appModelId, wire, geminiLevels(model), canDisable = off, defaultOn = geminiDefaultOn(model), allowsAuto = true,
                 surfacesText = false, source = source, offWithEffortNone = off,
             )
         }

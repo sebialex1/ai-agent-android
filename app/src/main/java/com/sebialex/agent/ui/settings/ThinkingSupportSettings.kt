@@ -65,6 +65,9 @@ internal fun ThinkingSupportGroup(settings: SecureSettings, snap: SecureSettings
             label = { id -> providers.firstOrNull { it.id == id }?.name ?: id },
             onSelect = { tab = it; expanded = null },
         )
+        CustomReasoning.compatibilityNote(provider.baseUrl)?.let { note ->
+            Text(note, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        }
         // Unknown and overridden models first: those are the ones that need attention.
         val rows = provider.models.map { m ->
             val id = CustomProviders.modelId(provider.id, m)
