@@ -97,10 +97,11 @@ class OllamaCloud(
             throw e
         } catch (e: Exception) {
             // Details could not be read: known thinking families still get their switch.
+            // Otherwise nothing is known: say so instead of claiming "unsupported".
             if (knownThinking(name) || alwaysThinking(name)) OllamaModelInfo(true, true, emptyList(), null, null)
-            else return ModelReasoning.unsupported(id)
+            else return ModelReasoning.unknown(id, "Ollama /api/show could not be read")
         }
-        if (!info.thinking) return ModelReasoning.unsupported(id)
+        if (!info.thinking) return ModelReasoning.unsupported(id, "Ollama /api/show capabilities")
         val values = info.thinkingValues
         val levels = values.filter { it != "true" && it != "false" }
             .sortedBy { v -> ModelReasoning.ALL_EFFORTS.indexOf(v).let { if (it < 0) Int.MAX_VALUE else it } }
@@ -120,6 +121,8 @@ class OllamaCloud(
             acceptsReasoning = false,
             acceptsIncludeReasoning = false,
             acceptsReasoningEffort = true,
+            wire = ReasoningWire.OLLAMA,
+            source = "Ollama /api/show capabilities",
         )
     }
 

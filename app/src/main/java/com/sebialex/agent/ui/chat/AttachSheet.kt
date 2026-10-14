@@ -37,6 +37,8 @@ import com.sebialex.agent.R
 import com.sebialex.agent.data.llm.ModelReasoning
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.ReasoningRules
+import com.sebialex.agent.data.llm.ReasoningSupport
+import com.sebialex.agent.data.llm.CustomProviders
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.data.llm.OllamaCloud
 import com.sebialex.agent.data.local.LocalEngine
@@ -129,14 +131,16 @@ private fun AttachTile(@DrawableRes icon: Int, label: String, modifier: Modifier
 }
 
 /**
- * Quick "Thinking" switch for the selected model. It writes the same per-model preference as
- * Settings, so both always agree; it is disabled when the model has no controllable reasoning.
+ * Thinking control for the selected model, built from what its provider supports: a plain switch
+ * for on/off models, one segmented control for models with Auto and/or effort levels, a note for
+ * always-on, unsupported and unknown models. It writes the same per-model preference as before
+ * (reasoning_enabled:: / reasoning_effort::), so backups and older settings keep working.
  */
 @Composable
 private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
     val snap by settings.state.collectAsStateWithLifecycle()
     var info by remember(snap.model) { mutableStateOf<ModelReasoning?>(null) }
-    LaunchedEffect(snap.model) {
+    LaunchedEffect(snap.model, snap.customProviders) {
         info = try {
             models.reasoning(snap.model)
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -146,58 +150,60 @@ private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
         }
     }
     val current = info
+    val choices = current?.let { ReasoningRules.choices(it) }.orEmpty()
+    val selected = current?.let { ReasoningRules.selected(it, snap.reasoning) }
     val on = current != null && ReasoningRules.resolve(current, snap.reasoning).on
-    val enabled = current?.canDisable == true
+    val boolean = choices.map { it.id } == listOf(ReasoningRules.OFF, ReasoningRules.ON)
     // The model row right above already names the model, so only an unusual state is shown.
     val subtitle = when {
         current == null -> null
-        !current.supported -> "Not available for this model"
-        !current.canDisable -> "Always on for this model"
+        current.support == ReasoningSupport.UNKNOWN ->
+            if (CustomProviders.isCustom(snap.model)) "Support unknown \u00b7 set it in Settings > Models" else "Support unknown for this model"
+        current.support == ReasoningSupport.UNSUPPORTED -> "Not available for this model"
+        choices.size <= 1 -> "Always on for this model"
+        !current.surfacesText -> "This provider does not return the reasoning text"
         else -> null
     }
-    // Effort levels live here too (Settings > Models no longer repeats model or reasoning).
-    val resolved = current?.let { ReasoningRules.resolve(it, snap.reasoning) }
-    val efforts = current?.effortChoices.orEmpty()
+    fun pick(id: String) = settings.setReasoning(snap.model, ReasoningRules.preferenceFor(id))
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(enabled = enabled) { settings.setReasoningEnabled(snap.model, !on) }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppIcon(R.drawable.ic_lightbulb, null, tint = Palette.IconMuted, size = 20.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text("Thinking", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
-        }
-        Switch(
-            checked = on,
-            enabled = enabled,
-            onCheckedChange = { settings.setReasoningEnabled(snap.model, it) },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Palette.OnAccent,
-                checkedTrackColor = Palette.Accent,
-                uncheckedThumbColor = Palette.IconMuted,
-                uncheckedTrackColor = Palette.SurfaceHigh,
-                uncheckedBorderColor = Palette.SurfaceHighest,
-            ),
-        )
-    }
-    // A single level is just "on" (Ollama boolean thinking), so chips only for real choices.
-    // Explicit non-null local instead of relying on a smart cast from `resolved?.on == true`.
-    val active: com.sebialex.agent.data.llm.ResolvedReasoning? = resolved?.takeIf { it.on }
-    if (active != null && efforts.size > 1) {
-        Box(Modifier.padding(start = 44.dp, end = 10.dp, bottom = 6.dp)) {
-            ChoiceChips(
-                options = efforts,
-                selected = active.effort ?: "",
-                label = { it },
-                onSelect = { settings.setReasoningEffort(snap.model, it) },
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(enabled = boolean) { pick(if (on) ReasoningRules.OFF else ReasoningRules.ON) }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(R.drawable.ic_lightbulb, null, tint = Palette.IconMuted, size = 20.dp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Thinking", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+            }
+            // A switch only where on/off is all the model offers (or as a disabled indicator).
+            if (boolean || choices.size <= 1) Switch(
+                checked = on,
+                enabled = boolean,
+                onCheckedChange = { pick(if (it) ReasoningRules.ON else ReasoningRules.OFF) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Palette.OnAccent,
+                    checkedTrackColor = Palette.Accent,
+                    uncheckedThumbColor = Palette.IconMuted,
+                    uncheckedTrackColor = Palette.SurfaceHigh,
+                    uncheckedBorderColor = Palette.SurfaceHighest,
+                ),
             )
         }
-    }
+        // Auto / Off / levels: one segmented control with exactly the options this model has.
+        if (!boolean && choices.size > 1) {
+            Box(Modifier.padding(start = 44.dp, end = 10.dp, bottom = 6.dp)) {
+                ChoiceChips(
+                    options = choices.map { it.id },
+                    selected = selected ?: "",
+                    label = { id -> choices.firstOrNull { it.id == id }?.label ?: id },
+                    onSelect = { pick(it) },
+                )
+            }
+        }
     }
 }

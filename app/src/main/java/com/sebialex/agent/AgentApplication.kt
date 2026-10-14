@@ -167,6 +167,8 @@ class AppContainer(app: Application) {
             provider = provider.name,
             openRouterExtras = false,
             replayReasoning = false,
+            // Per-provider reasoning fields (reasoning_effort, Anthropic thinking); empty when unknown/unsupported.
+            reasoningFields = { ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model)) },
         )
         val ring = CustomProviders.keyRing(providerId)
         if (settings.keyCount(ring) == 0) {

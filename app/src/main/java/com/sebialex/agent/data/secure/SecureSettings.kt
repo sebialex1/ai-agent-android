@@ -406,6 +406,12 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun setReasoningEnabled(model: String, value: Boolean) = edit { putBoolean(reasoningOnKey(model), value) }
     fun setReasoningEffort(model: String, value: String?) = edit { putOrRemove(reasoningEffortKey(model), value) }
 
+    /** Stores a whole per-model choice; both fields null clears it (Auto / model default). */
+    fun setReasoning(model: String, pref: ReasoningPreference) = edit {
+        if (pref.enabled == null) remove(reasoningOnKey(model)) else putBoolean(reasoningOnKey(model), pref.enabled)
+        putOrRemove(reasoningEffortKey(model), pref.effort)
+    }
+
     private fun reasoningOnKey(model: String) = "$KEY_REASONING_ON_PREFIX$model"
     private fun reasoningEffortKey(model: String) = "$KEY_REASONING_EFFORT_PREFIX$model"
 
