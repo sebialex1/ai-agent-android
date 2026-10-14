@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -62,6 +63,7 @@ import com.sebialex.agent.domain.model.SessionSummary
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
@@ -122,28 +124,18 @@ fun ConversationsScreen(
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
+                val listState = androidx.compose.foundation.lazy.rememberLazyListState()
                 LazyColumn(
-                    Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 12.dp),
+                    Modifier.fillMaxSize().fadeTopEdge(listState),
+                    state = listState,
+                    contentPadding = PaddingValues(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
                     verticalArrangement = Arrangement.Bottom,
                 ) {
-                    val pinned = filtered.filter { it.pinned }
-                    val recent = filtered.filterNot { it.pinned }
-                    if (pinned.isNotEmpty()) {
-                        item(key = "h:pinned") { ListHeader("Pinned") }
-                        items(pinned, key = { "p:" + it.id }) { item ->
-                            ConversationRow(
-                                item = item,
-                                running = item.id in state.runningIds,
-                                current = item.id == state.currentId,
-                                onClick = { onOpen(item.id) },
-                                onOptions = { options = item },
-                            )
-                        }
-                    }
-                    if (recent.isNotEmpty()) {
-                        item(key = "h:recent") { ListHeader("Recently updated") }
-                        items(recent, key = { it.id }) { item ->
+                    // Pinned first, then by how recently each conversation was updated.
+                    val groups = groupConversations(filtered)
+                    groups.forEach { (label, rows) ->
+                        item(key = "h:$label") { ListHeader(label) }
+                        items(rows, key = { (if (it.pinned) "p:" else "c:") + it.id }) { item ->
                             ConversationRow(
                                 item = item,
                                 running = item.id in state.runningIds,
@@ -197,24 +189,40 @@ fun ConversationsScreen(
     }
 }
 
+/** Pinned conversations first, then Today / Yesterday / Previous 7 days / Earlier, newest first. */
+private fun groupConversations(items: List<SessionSummary>): List<Pair<String, List<SessionSummary>>> {
+    val out = mutableListOf<Pair<String, List<SessionSummary>>>()
+    val pinned = items.filter { it.pinned }
+    if (pinned.isNotEmpty()) out += "Pinned" to pinned
+    val cal = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val today = cal.timeInMillis
+    val day = 86_400_000L
+    fun bucket(at: Long) = when {
+        at >= today -> "Today"
+        at >= today - day -> "Yesterday"
+        at >= today - 6 * day -> "Previous 7 days"
+        else -> "Earlier"
+    }
+    items.filterNot { it.pinned }.sortedByDescending { it.updatedAt }.groupBy { bucket(it.updatedAt) }.forEach { (k, v) -> out += k to v }
+    return out
+}
+
 @Composable
 private fun ListHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
         color = Palette.TextTertiary,
-        modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 6.dp),
+        modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 4.dp),
     )
 }
 
 @Composable
 private fun CircleButton(res: Int, description: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(44.dp).softSurface(CircleShape, Palette.Surface, elevation = 2.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        QuietIconButton(res, description, onClick = onClick, size = 44.dp, iconSize = 20.dp, tint = Palette.IconActive)
-    }
+    QuietIconButton(res, description, onClick = onClick, size = 44.dp, iconSize = 21.dp, tint = Palette.IconActive)
 }
 
 @Composable
@@ -222,7 +230,8 @@ private fun SearchPill(value: String, onChange: (String) -> Unit, modifier: Modi
     Row(
         modifier
             .height(44.dp)
-            .softSurface(RoundedCornerShape(50), Palette.Surface, elevation = 2.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Palette.Surface)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -236,13 +245,17 @@ private fun SearchPill(value: String, onChange: (String) -> Unit, modifier: Modi
             cursorBrush = SolidColor(Palette.TextPrimary),
             modifier = Modifier.weight(1f),
             decorationBox = { inner ->
-                if (value.isEmpty()) Text("Search", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
+                if (value.isEmpty()) Text("Search conversations", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary, maxLines = 1)
                 inner()
             },
         )
     }
 }
 
+/**
+ * One conversation: the title on top, a quiet line below with when it was updated and how many
+ * messages it holds. Only pinned chats carry an icon; the open chat gets a soft background.
+ */
 @Composable
 private fun ConversationRow(
     item: SessionSummary,
@@ -254,31 +267,37 @@ private fun ConversationRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (current) Palette.Surface else Palette.Ink)
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (current) Palette.Surface else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(start = 8.dp),
+            .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-            AppIcon(if (item.pinned) R.drawable.ic_pin else R.drawable.ic_check, null, tint = Palette.IconMuted, size = 17.dp)
+        Column(Modifier.weight(1f).padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            // A chat that is still generating gets a soft moving shimmer on its title (no dot, no label).
+            FadingText(
+                item.title.ifBlank { "Untitled" },
+                MaterialTheme.typography.bodyLarge,
+                Palette.TextPrimary,
+                if (running) Modifier.processingShimmer() else Modifier,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (item.pinned) {
+                    AppIcon(R.drawable.ic_pin, "Pinned", tint = Palette.IconMuted, size = 12.dp)
+                    Spacer(Modifier.width(5.dp))
+                }
+                Text(
+                    listOfNotNull(
+                        relativeTime(item.updatedAt),
+                        item.turnCount.takeIf { it > 0 }?.let { if (it == 1) "1 message" else "$it messages" },
+                    ).joinToString(" \u00b7 "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                    maxLines = 1,
+                )
+            }
         }
-        Spacer(Modifier.width(14.dp))
-        // A chat that is still generating gets a soft moving shimmer on its title (no dot, no label).
-        FadingText(
-            item.title.ifBlank { "Untitled" },
-            MaterialTheme.typography.bodyMedium,
-            Palette.TextPrimary,
-            if (running) Modifier.weight(1f).processingShimmer() else Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            relativeTime(item.updatedAt),
-            style = MaterialTheme.typography.labelSmall,
-            color = Palette.TextTertiary,
-            maxLines = 1,
-        )
         QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
     }
 }
