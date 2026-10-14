@@ -5,6 +5,32 @@ builds use a debug key that is generated per machine, so every CI run produced a
 update the previous one (and uninstalling deletes the app's data). The workflow now signs with a key
 you own.
 
+## Why updates failed with "App not installed / conflicts with an existing package"
+
+Checked on the published releases (October 2026):
+
+| Release | versionCode | Signing certificate SHA-256 |
+| --- | --- | --- |
+| v0.1.18 (`-debug.apk`) | 1 | `17edae94…` |
+| v0.1.19 (`-debugkey.apk`) | 19 | `fb4a43ad…` |
+| v0.1.20 (`-debugkey.apk`) | 20 | `1a3feb08…` |
+
+The package name (`com.sebialex.agent`) never changed, and since v0.1.19 the versionCode does go
+up with the run number. The real cause was the key: the `KEYSTORE_*` secrets were never set, so
+every run signed with the GitHub runner's freshly generated debug key, a different certificate
+each time. Android refuses to update an app with an APK signed by another certificate. (Up to
+v0.1.18 the versionCode was also always 1.)
+
+Fixed by:
+
+- the repository secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` (a
+  dedicated release key) and the repository variable `SIGNING_CERT_SHA256` with its certificate
+  fingerprint;
+- the workflow refusing to publish anything else: without the keystore the APK is only a workflow
+  artifact and the run fails; a signed APK whose certificate differs from `SIGNING_CERT_SHA256`
+  fails the run too. Every release is therefore installable over the previous one;
+- the release body carries `versionCode: <n>`, which the in-app update checker reads.
+
 ## One-time setup
 
 1. Create a keystore (keep the file and passwords somewhere safe, outside the repo; losing it means
@@ -46,8 +72,9 @@ Never commit the keystore (`*.jks` and `*.keystore` are in `.gitignore`).
 
 - `versionCode` is the workflow run number, so every build is newer than the previous one and Android
   accepts it as an update. `versionName` is `0.1.<run>` (or the pushed tag).
-- Without the secrets (forks, local builds) the release build is signed with the debug key and the
-  workflow prints a warning. Locally you can pass the same values as environment variables or Gradle
+- Without the secrets (forks) the workflow still builds the APK (debug key) and uploads it as an
+  artifact, but publishes no release and fails the run. Local release builds without the values
+  below are signed with the local debug key. Locally you can pass the same values as environment variables or Gradle
   properties: `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `VERSION_CODE`.
 
 ## The one last uninstall

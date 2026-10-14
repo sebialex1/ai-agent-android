@@ -51,7 +51,10 @@ jobs:
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::KEYSTORE_BASE64 secret is not set: the APK is signed with the runner's temporary debug key and cannot update an install signed with another key. See docs/signing.md."
+            # The runner creates a fresh debug key on every run, so such an APK can never update
+            # the previous one ("package conflicts with an existing package"). It is still built
+            # and uploaded as a workflow artifact, but never published as a release.
+            echo "::error::KEYSTORE_BASE64 secret is not set: the APK would be signed with this runner's one-off debug key and could not update any installed build. It is not published. See docs/signing.md."
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -71,9 +74,23 @@ jobs:
           SUFFIX=${{ steps.keystore.outputs.signed == 'true' && 'signed' || 'debugkey' }}
           cp app/build/outputs/apk/release/app-release.apk dist/agent-${{ env.RELEASE_TAG }}-$SUFFIX.apk
 
-      - name: Show signing certificate
+      - name: Check signing certificate
+        id: cert
+        env:
+          # Repository variable with the SHA-256 of the release certificate (lowercase hex, no colons).
+          EXPECTED_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
         run: |
           "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs dist/*.apk | grep -E "SHA-256|Signer #1 certificate DN"
+          ACTUAL=$("$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs dist/*.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+          echo "sha256=$ACTUAL" >> "$GITHUB_OUTPUT"
+          if [ -n "$EXPECTED_SHA256" ] && [ "${{ steps.keystore.outputs.signed }}" = "true" ] && [ "$ACTUAL" != "$EXPECTED_SHA256" ]; then
+            echo "::error::The APK is signed with $ACTUAL, not the release certificate $EXPECTED_SHA256 (vars.SIGNING_CERT_SHA256). It would not install over earlier builds; not publishing."
+            exit 1
+          fi
+
+      - name: Show version
+        run: |
+          "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging dist/*.apk | head -1
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -83,11 +100,24 @@ jobs:
           path: dist/*.apk
 
       - name: Publish pre-release
+        # Only APKs signed with the stable release key are published: the in-app update checker
+        # offers every release, and an APK with another key could not install over the app.
+        if: steps.keystore.outputs.signed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Agent ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           prerelease: true
+          # Read by the in-app update checker (Settings > Updates); keep this line format.
+          body: |
+            versionCode: ${{ github.run_number }}
+            Signing certificate SHA-256: ${{ steps.cert.outputs.sha256 }}
           generate_release_notes: true
           files: dist/*.apk
+
+      - name: Fail unsigned builds
+        if: steps.keystore.outputs.signed != 'true'
+        run: |
+          echo "::error::Built with a one-off debug key (artifact only, no release). Set the KEYSTORE_* secrets, see docs/signing.md."
+          exit 1
