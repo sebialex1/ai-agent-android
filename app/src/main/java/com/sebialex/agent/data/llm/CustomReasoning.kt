@@ -6,7 +6,9 @@ import com.sebialex.agent.data.secure.SecureSettings
  * Reasoning support of a custom (OpenAI-compatible) provider's model, in this order:
  * 1. the user's manual override in Settings > Models > Thinking support (clearly labelled);
  * 2. the provider's own metadata saved from its model list (Anthropic `capabilities.thinking`,
- *    Gemini `models.list` `thinking`, `supported_parameters` with reasoning fields);
+ *    Gemini `models.list` `thinking`, `supported_parameters` with reasoning fields, Vercel AI
+ *    Gateway `reasoning_options` / `tags`, LM Studio `capabilities.reasoning`, a local Ollama's
+ *    `/api/show` capabilities);
  * 3. documented model-family rules for a few well-known hosts (OpenAI reasoning models, Gemini
  *    2.5+ thinking models, DeepSeek's reasoner);
  * 4. otherwise "unknown" (no control, and the UI points to the override), never "unsupported".
@@ -117,13 +119,64 @@ object CustomReasoning {
                 surfacesText = false, source = source, offWithEffortNone = off,
             )
         }
-        else -> ModelReasoning.controlled(
-            appModelId, ReasoningWire.OPENAI_EFFORT, meta?.efforts?.takeIf { it.isNotEmpty() } ?: LEVELS,
-            canDisable = false, defaultOn = true, allowsAuto = true,
-            // OpenAI's chat completions keep reasoning hidden; other servers may stream reasoning_content.
-            surfacesText = !ProviderMetadata.isOpenAiHost(provider.baseUrl), source = source,
-        )
+        else -> openAiCompatible(appModelId, provider, meta, source)
     }
+
+    /**
+     * Generic OpenAI-compatible providers, shaped by what their model list says:
+     * - `supported_parameters` lists `reasoning` (OpenRouter-style gateways such as Vercel AI
+     *   Gateway, whose docs take `reasoning: {effort | enabled}`): the OpenRouter wire, with the
+     *   listed effort levels and Off where the list allows it;
+     * - the model thinks but its API documents no switch (LM Studio): shown as always thinking,
+     *   nothing is sent;
+     * - otherwise `reasoning_effort` with the listed levels (Ollama /api/show values; recognised
+     *   efforts switch a boolean-only Ollama model on and "none" off, per Ollama's OpenAI
+     *   compatibility docs), Off only where the metadata says the model can stop thinking.
+     */
+    private fun openAiCompatible(appModelId: String, provider: SecureSettings.CustomProvider, meta: ProviderModelMeta?, source: String): ModelReasoning {
+        val efforts = meta?.efforts.orEmpty().filter { it != "none" }
+        val canDisable = meta?.canDisable == true
+        // OpenAI's chat completions keep reasoning hidden; other servers stream reasoning / reasoning_content.
+        val surfaces = !ProviderMetadata.isOpenAiHost(provider.baseUrl)
+        return when (meta?.requestField) {
+            ProviderModelMeta.FIELD_REASONING -> ModelReasoning(
+                modelId = appModelId,
+                hasBlock = true,
+                supportedEfforts = (efforts + if (canDisable && efforts.isNotEmpty()) listOf("none") else emptyList()).ifEmpty { null },
+                defaultEffort = null,
+                defaultEnabled = meta.defaultOn,
+                mandatory = meta.canDisable == false,
+                supportsMaxTokens = false,
+                acceptsReasoning = true,
+                acceptsIncludeReasoning = false,
+                acceptsReasoningEffort = false,
+                wire = ReasoningWire.OPENROUTER,
+                allowsAuto = true,
+                surfacesText = surfaces,
+                source = source,
+            )
+            ProviderModelMeta.FIELD_NONE -> ModelReasoning.controlled(
+                appModelId, ReasoningWire.OPENAI_EFFORT, emptyList(), canDisable = false, defaultOn = true,
+                allowsAuto = false, surfacesText = surfaces, source = source,
+            )
+            else -> {
+                // Ollama boolean-only thinking models: one hidden level switches thinking on.
+                val ollamaBoolean = meta?.source?.startsWith("Ollama") == true && efforts.isEmpty()
+                val levels = when {
+                    ollamaBoolean -> listOf(BOOLEAN_ON_EFFORT)
+                    else -> efforts.ifEmpty { LEVELS }
+                }
+                ModelReasoning.controlled(
+                    appModelId, ReasoningWire.OPENAI_EFFORT, levels,
+                    canDisable = canDisable, defaultOn = meta?.defaultOn ?: true, allowsAuto = true,
+                    surfacesText = surfaces, source = source, offWithEffortNone = canDisable,
+                ).let { if (ollamaBoolean) it.copy(defaultEffort = BOOLEAN_ON_EFFORT) else it }
+            }
+        }
+    }
+
+    /** Sent as `reasoning_effort` to switch a boolean-only Ollama thinking model on (any recognised effort works). */
+    private const val BOOLEAN_ON_EFFORT = "high"
 
     /** Documented model families on well-known hosts. Null when no rule applies. */
     private fun familyRule(appModelId: String, model: String, provider: SecureSettings.CustomProvider, wire: ReasoningWire): ModelReasoning? {

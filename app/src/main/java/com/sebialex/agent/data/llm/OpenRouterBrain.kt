@@ -113,13 +113,13 @@ class OpenRouterBrain(
     }
 
     /**
-     * Reasoning from `message.reasoning` (or its alias `reasoning_content`); when only
+     * Reasoning from `message.reasoning` (or its aliases `reasoning_content`, `thinking`); when only
      * `reasoning_details` is present, its text and summary parts are joined. Encrypted parts
      * have no readable text but are still kept for replay.
      */
     private fun thoughtOf(message: JsonObject): Thought? {
         val details = message["reasoning_details"] as? JsonArray
-        val plain = listOf("reasoning", "reasoning_content").firstNotNullOfOrNull { k ->
+        val plain = ReasoningText.FIELDS.firstNotNullOfOrNull { k ->
             (message[k] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
         }
         val fromDetails = details.orEmpty().mapNotNull { d ->
@@ -290,8 +290,26 @@ class OpenRouterBrain(
         (root["error"] as? JsonObject)?.let { err ->
             throw IOException((err["message"] as? JsonPrimitive)?.content ?: "$provider error")
         }
-        return (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
+        val choice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
             ?: throw IOException("$provider returned no choices")
+        return normalizeChoice(choice)
+    }
+
+    /**
+     * A whole (non-streamed) choice in the same shape the stream accumulator produces: content
+     * as plain answer text, and reasoning found in content parts or an opening <think> block
+     * moved to `reasoning` (when the provider sent no reasoning field of its own).
+     */
+    private fun normalizeChoice(choice: JsonObject): JsonObject {
+        val message = choice["message"] as? JsonObject ?: return choice
+        val (text, partThinking) = ReasoningText.split(message["content"])
+        val piece = ReasoningText.splitInline(text)
+        val extra = (partThinking + piece.reasoning).trim()
+        val fixed = JsonObject(message.toMutableMap().apply {
+            put("content", JsonPrimitive(piece.content))
+            if (ReasoningText.plain(message) == null && extra.isNotEmpty()) put("reasoning", JsonPrimitive(extra))
+        })
+        return JsonObject(choice.toMutableMap().apply { put("message", fixed) })
     }
 
     /** Reassembles streamed deltas into a single non-streaming style choice. */
@@ -299,6 +317,8 @@ class OpenRouterBrain(
         var events = 0
         private val content = StringBuilder()
         private val reasoning = StringBuilder()
+        private val inline = ReasoningText.InlineSplitter()
+        private val inlineReasoning = StringBuilder()
         private var finishReason: String? = null
         private class Call(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
         private val calls = sortedMapOf<Int, Call>()
@@ -310,8 +330,13 @@ class OpenRouterBrain(
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return
             (choice["finish_reason"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { finishReason = it }
             val delta = (choice["delta"] ?: choice["message"]) as? JsonObject ?: return
-            str(delta["content"])?.let { content.append(it) }
-            val plain = str(delta["reasoning"]) ?: str(delta["reasoning_content"])
+            // Content may be a string or (Mistral reasoning models) a list of text/thinking chunks;
+            // a reasoning block that opens the answer (<think>...) is moved to reasoning.
+            val (text, partThinking) = ReasoningText.split(delta["content"])
+            val piece = inline.feed(text)
+            content.append(piece.content)
+            if (piece.reasoning.isNotEmpty()) inlineReasoning.append(piece.reasoning)
+            val plain = ReasoningText.plain(delta) ?: (partThinking + piece.reasoning).takeIf { it.isNotEmpty() }
             var detailText = ""
             (delta["reasoning_details"] as? JsonArray)?.forEachIndexed { pos, el ->
                 val o = el as? JsonObject ?: return@forEachIndexed
@@ -344,6 +369,13 @@ class OpenRouterBrain(
         }
 
         fun choice(): JsonObject = buildJsonObject {
+            val tail = inline.finish()
+            content.append(tail.content)
+            // An unclosed <think> block was the answer after all: it is not reasoning.
+            if (inline.reclaimed && inlineReasoning.isNotEmpty()) {
+                val at = reasoning.lastIndexOf(inlineReasoning.toString())
+                if (at >= 0) reasoning.delete(at, at + inlineReasoning.length)
+            }
             putJsonObject("message") {
                 put("role", "assistant")
                 put("content", content.toString())

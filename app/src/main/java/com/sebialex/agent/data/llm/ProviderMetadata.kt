@@ -26,7 +26,21 @@ data class ProviderModelMeta(
     val adaptive: Boolean? = null,
     /** Where this came from, shown in Settings, e.g. "Anthropic /v1/models capabilities". */
     val source: String = "",
-)
+    /**
+     * How the list says reasoning is requested: [FIELD_REASONING] (an OpenRouter-style `reasoning`
+     * object), [FIELD_EFFORT] (`reasoning_effort`), [FIELD_NONE] (the model reasons but the API
+     * documents no switch for it). Null: not stated, the provider's usual field is used.
+     */
+    val requestField: String? = null,
+    /** The list names the model's default (thinking on or off when nothing is sent). */
+    val defaultOn: Boolean? = null,
+) {
+    companion object {
+        const val FIELD_REASONING = "reasoning"
+        const val FIELD_EFFORT = "reasoning_effort"
+        const val FIELD_NONE = "none"
+    }
+}
 
 /** Reads capability fields from model-list responses. Pure functions, so they are unit tested. */
 object ProviderMetadata {
@@ -42,11 +56,35 @@ object ProviderMetadata {
      *   and `capabilities.effort.{low,medium,high,xhigh,max}.supported`;
      * - OpenRouter-style lists: `architecture.output_modalities`, `supported_parameters`
      *   (`reasoning`, `reasoning_effort`, `include_reasoning`);
-     * - Together-style lists: `type` (`image`, `chat`, `language`, ...).
+     * - Together-style lists: `type` (`image`, `chat`, `language`, ...);
+     * - Vercel AI Gateway: `tags` (`reasoning`, `image-generation`), `modalities.output` and
+     *   `reasoning_options` (effort values, toggle, budget_tokens);
+     * - OpenRouter-compatible gateways: a `reasoning` block with `supported_efforts` / `mandatory`;
+     * - LM Studio's native list: `capabilities.reasoning.{allowed_options, default}`;
+     * - Ollama `/api/show`: a `capabilities` array with `thinking`, plus `thinking.values`.
      * Null when the entry carries none of them.
      */
     fun fromModelEntry(entry: JsonObject): ProviderModelMeta? {
         val caps = entry["capabilities"] as? JsonObject
+        // LM Studio's native list (`GET /api/v1/models`): capabilities.reasoning.{allowed_options, default}.
+        (caps?.get("reasoning") as? JsonObject)?.let { r -> return lmStudio(r) }
+        // The same list without a reasoning entry: an LM Studio model that does not think.
+        if (caps != null && caps.containsKey("trained_for_tool_use") && str(entry, "type") == "llm") {
+            return ProviderModelMeta(image = false, reasoning = false, source = "LM Studio /api/v1/models capabilities")
+        }
+        // Ollama's /api/show style: capabilities is an array ("completion", "tools", "thinking", ...).
+        (entry["capabilities"] as? JsonArray)?.let { arr ->
+            val names = strings(arr).map { it.lowercase() }.toSet()
+            if (names.isNotEmpty()) {
+                return ProviderModelMeta(
+                    image = false,
+                    reasoning = "thinking" in names,
+                    efforts = levels(entry["thinking"] as? JsonObject),
+                    canDisable = thinkingValues(entry["thinking"] as? JsonObject).let { v -> if (v.isEmpty()) null else "false" in v || "none" in v },
+                    source = "Ollama /api/show capabilities",
+                )
+            }
+        }
         val thinking = caps?.get("thinking") as? JsonObject
         if (thinking != null) {
             val types = thinking["types"] as? JsonObject
@@ -65,23 +103,101 @@ object ProviderMetadata {
             )
         }
         val outputs = strings((entry["architecture"] as? JsonObject)?.get("output_modalities"))
+            .ifEmpty { strings((entry["modalities"] as? JsonObject)?.get("output")) }
         val params = strings(entry["supported_parameters"]).toSet()
+        val tags = strings(entry["tags"]).map { it.lowercase() }.toSet()
         val type = str(entry, "type")?.lowercase()
         val image = when {
             outputs.isNotEmpty() -> "image" in outputs
+            "image-generation" in tags -> true
             type == "image" -> true
             type in setOf("chat", "language", "code", "embedding", "moderation", "rerank", "audio", "transcribe") -> false
             else -> null
         }
-        val reasoning = if (params.isEmpty()) null else
+        // An OpenRouter-style `reasoning` block (OpenRouter-compatible gateways) and Vercel AI
+        // Gateway's `reasoning_options` ([{type: "effort", values}, {type: "toggle"}, {type: "budget_tokens"}]).
+        val block = entry["reasoning"] as? JsonObject
+        val options = (entry["reasoning_options"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val blockEfforts = strings(block?.get("supported_efforts"))
+        val optionEfforts = options.filter { str(it, "type") == "effort" }.flatMap { strings(it["values"]) }
+        val allEfforts = (blockEfforts + optionEfforts).map { it.lowercase() }.distinct()
+        val efforts = ModelReasoning.ALL_EFFORTS.filter { it in allEfforts }
+        val canDisable = when {
+            bool(block, "mandatory") == true -> false
+            "none" in allEfforts || options.any { str(it, "type") == "toggle" } -> true
+            else -> null
+        }
+        val byParams = if (params.isEmpty()) null else
             params.any { it == "reasoning" || it == "reasoning_effort" || it == "include_reasoning" }
+        val reasoning = when {
+            byParams == true -> true
+            block != null || options.isNotEmpty() -> true
+            byParams == false -> false
+            "reasoning" in tags -> true
+            else -> null
+        }
         if (image == null && reasoning == null) return null
+        val field = when {
+            "reasoning" in params -> ProviderModelMeta.FIELD_REASONING
+            "reasoning_effort" in params -> ProviderModelMeta.FIELD_EFFORT
+            else -> null
+        }
         val source = when {
+            options.isNotEmpty() -> "model list reasoning_options"
+            block != null -> "model list reasoning block"
             params.isNotEmpty() -> "model list supported_parameters"
-            outputs.isNotEmpty() -> "model list output_modalities"
+            "reasoning" in tags -> "model list tags"
+            outputs.isNotEmpty() -> "model list output modalities"
             else -> "model list type"
         }
-        return ProviderModelMeta(image = image, reasoning = reasoning, source = source)
+        return ProviderModelMeta(
+            image = image, reasoning = reasoning, efforts = if (reasoning == true) efforts else emptyList(),
+            canDisable = if (reasoning == true) canDisable else null, source = source, requestField = if (reasoning == true) field else null,
+            defaultOn = bool(block, "default_enabled"),
+        )
+    }
+
+    /**
+     * LM Studio `capabilities.reasoning`: `allowed_options` (["off", "on"] or just ["on"]) and
+     * `default`. Its OpenAI-compatible chat endpoint documents no reasoning parameter, so the
+     * model is shown as thinking without a switch ([ProviderModelMeta.FIELD_NONE]).
+     */
+    private fun lmStudio(r: JsonObject): ProviderModelMeta {
+        val allowed = strings(r["allowed_options"]).map { it.lowercase() }
+        return ProviderModelMeta(
+            image = false,
+            reasoning = allowed.isEmpty() || allowed.any { it != "off" },
+            canDisable = if (allowed.isEmpty()) null else "off" in allowed,
+            source = "LM Studio /api/v1/models capabilities",
+            requestField = ProviderModelMeta.FIELD_NONE,
+            defaultOn = str(r, "default")?.lowercase()?.let { it != "off" },
+        )
+    }
+
+    /** `thinking.values` of an Ollama /api/show answer, as strings ("true", "false", "low", ...). */
+    private fun thinkingValues(thinking: JsonObject?): List<String> =
+        (thinking?.get("values") as? JsonArray).orEmpty().mapNotNull { v ->
+            (v as? JsonPrimitive)?.let { p -> p.booleanOrNull?.toString() ?: p.content.lowercase() }
+        }
+
+    /** Named thinking levels (highest first) from Ollama's `thinking.values`. */
+    private fun levels(thinking: JsonObject?): List<String> =
+        thinkingValues(thinking).filter { it != "true" && it != "false" }
+            .sortedBy { v -> ModelReasoning.ALL_EFFORTS.indexOf(v).let { if (it < 0) Int.MAX_VALUE else it } }
+
+    /**
+     * One model's `POST /api/show` answer from a local Ollama server (`capabilities` array,
+     * `thinking.values` / `thinking.default`, docs.ollama.com/capabilities/thinking). Null when
+     * the answer has no capabilities.
+     */
+    fun fromOllamaShow(body: String): ProviderModelMeta? {
+        val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+        val meta = fromModelEntry(root)?.takeIf { it.source.startsWith("Ollama") } ?: return null
+        val default = (root["thinking"] as? JsonObject)?.get("default") as? JsonPrimitive
+        return meta.copy(
+            requestField = ProviderModelMeta.FIELD_EFFORT,
+            defaultOn = default?.let { p -> (p.booleanOrNull?.toString() ?: p.content).lowercase() != "false" },
+        )
     }
 
     /** Metadata for every entry of a `/models` body that has some, keyed like [CustomProviders] model ids. */
@@ -91,7 +207,7 @@ object ProviderMetadata {
         val out = LinkedHashMap<String, ProviderModelMeta>()
         list.forEach { el ->
             val o = el as? JsonObject ?: return@forEach
-            val id = listOf("id", "name", "model").firstNotNullOfOrNull { k -> str(o, k)?.takeIf { it.isNotBlank() } }
+            val id = listOf("id", "key", "name", "model").firstNotNullOfOrNull { k -> str(o, k)?.takeIf { it.isNotBlank() } }
                 ?.removePrefix("models/") ?: return@forEach
             fromModelEntry(o)?.let { out[id] = it }
         }

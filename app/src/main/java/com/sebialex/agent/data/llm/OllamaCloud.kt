@@ -197,7 +197,8 @@ class OllamaCloud(
                 tools = "tools" in caps,
                 // Gemma 4, gpt-oss, Qwen 3, DeepSeek R1/V3.x ... are thinking models even when the
                 // cloud entry omits the capability.
-                thinking = "thinking" in caps || (caps.isEmpty() && knownThinking(name)) || alwaysThinking(name),
+                thinking = "thinking" in caps || (caps.isEmpty() && (knownThinking(name) || knownThinkingFamily(root["details"] as? JsonObject))) ||
+                    alwaysThinking(name),
                 thinkingValues = values,
                 thinkingDefault = default,
                 contextLength = context,
@@ -221,6 +222,20 @@ class OllamaCloud(
             val family = normalizeName(name).substringBefore(':').lowercase()
             return THINKING_FAMILIES.any { family.startsWith(it) }
         }
+
+        /**
+         * `details.family` / `details.families` of `/api/show` (e.g. `gptoss`, `qwen3`, `gemma4`)
+         * name a known thinking family, for models whose own name says nothing (custom tags).
+         * Only used when `/api/show` reports no capabilities at all.
+         */
+        fun knownThinkingFamily(details: JsonObject?): Boolean {
+            if (details == null) return false
+            val families = ((details["families"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content } +
+                listOfNotNull((details["family"] as? JsonPrimitive)?.content)).map { compact(it) }
+            return families.any { f -> f.isNotEmpty() && THINKING_FAMILIES.any { t -> f.startsWith(compact(t)) } }
+        }
+
+        private fun compact(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
 
         /** Gemma 4 always has a thinking mode (ollama.com/library/gemma4), whatever the metadata says. */
         fun alwaysThinking(name: String): Boolean = normalizeName(name).lowercase().startsWith("gemma4")

@@ -8,6 +8,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -258,11 +260,38 @@ object CustomProviders {
      */
     private fun metadata(root: String, body: String, key: String?): Map<String, ProviderModelMeta> {
         val listed = ProviderMetadata.fromModelList(body)
+        if (isLocalAddress(root)) return listed + localNative(root, key, modelIds(body)?.first.orEmpty())
         if (!ProviderMetadata.isGeminiHost(root) || key.isNullOrBlank()) return listed
         val native = request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", key, bearer = false)
             ?.takeIf { it.code in 200..299 }?.let { ProviderMetadata.fromGeminiNative(it.body) }.orEmpty()
         return native + listed
     }
+
+    /**
+     * Local servers whose OpenAI-compatible `/v1/models` carries no capabilities publish them on
+     * their native API, read with free GET/POST metadata calls (never a chat request):
+     * - LM Studio: `GET /api/v1/models` (`capabilities.reasoning`);
+     * - Ollama: `POST /api/show` per model (`capabilities` array, `thinking.values`).
+     * Anything that does not answer like those servers is ignored.
+     */
+    private fun localNative(root: String, key: String?, ids: List<String>): Map<String, ProviderModelMeta> {
+        val origin = runCatching { URL(root).let { u -> "${u.protocol}://${u.authority}" } }.getOrNull() ?: return emptyMap()
+        request("$origin/api/v1/models", key)?.takeIf { it.code in 200..299 }
+            ?.let { ProviderMetadata.fromModelList(it.body).filterValues { m -> m.source.startsWith("LM Studio") } }
+            ?.takeIf { it.isNotEmpty() }?.let { return it }
+        val tags = request("$origin/api/tags", key)?.takeIf { it.code in 200..299 } ?: return emptyMap()
+        val names = (modelIds(tags.body)?.first.orEmpty() + ids).distinct().take(MAX_SHOW_CALLS)
+        val out = LinkedHashMap<String, ProviderModelMeta>()
+        for (name in names) {
+            val body = buildJsonObject { put("model", name) }.toString()
+            val show = request("$origin/api/show", key, method = "POST", body = body)?.takeIf { it.code in 200..299 } ?: continue
+            ProviderMetadata.fromOllamaShow(show.body)?.let { out[name] = it }
+        }
+        return out
+    }
+
+    /** At most this many `/api/show` calls when a local Ollama is added (one per model). */
+    private const val MAX_SHOW_CALLS = 60
 
     private fun hostName(url: String): String =
         hostOf(url)?.removePrefix("api.")?.substringBeforeLast('.')?.replaceFirstChar { it.uppercase() } ?: "Custom provider"
