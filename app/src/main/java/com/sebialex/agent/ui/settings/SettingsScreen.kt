@@ -81,6 +81,7 @@ enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes v
     ON_DEVICE("On-device", R.drawable.ic_phone),
     CHATS("Chats", R.drawable.ic_history),
     BACKUP("Backup & restore", R.drawable.ic_download),
+    UPDATES("Updates", R.drawable.ic_refresh),
     ABOUT("About", R.drawable.ic_info),
 }
 
@@ -227,6 +228,7 @@ fun SettingsScreen(
                         }
                     }
                     SettingsSection.BACKUP -> BackupSettings(backup, settings, onRestored)
+                    SettingsSection.UPDATES -> UpdateSettings()
                     SettingsSection.ABOUT -> AboutTab()
                 }
                 Spacer(Modifier.height(24.dp))
