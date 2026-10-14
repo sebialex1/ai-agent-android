@@ -1,5 +1,6 @@
 package com.sebialex.agent.ui.settings
 
+import com.sebialex.agent.ui.components.keepScrollInside
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -111,7 +112,7 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
                 }
                 items == null -> Text("Loading image models\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
                 items.isEmpty() -> Text(if (markable[tab].isNullOrEmpty()) "No image models listed." else "No image models listed. Mark one by hand below.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-                else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp).keepScrollInside()) {
                     items(items, key = { it.ref.provider + "|" + it.ref.model }) { o ->
                         PickRow(
                             title = o.name,

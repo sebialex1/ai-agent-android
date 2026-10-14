@@ -1,5 +1,6 @@
 package com.sebialex.agent.ui.settings
 
+import com.sebialex.agent.ui.components.keepScrollInside
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -219,7 +221,12 @@ fun ModelList(
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (total > 8) SearchField(query, { query = it })
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+        // A fixed height: a list that grows while models load (or shrinks while searching) makes
+        // the sheet re-anchor with an animation, and a drag that starts during that animation is
+        // taken by the sheet instead of the list. With leftover scroll kept inside the list, the
+        // sheet stays put while the list is dragged.
+        val screen = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+        LazyColumn(Modifier.fillMaxWidth().height(minOf(maxHeight, screen * 0.62f)).keepScrollInside()) {
             // ---- On this phone: only models that are ready to run.
             item(key = "h:device") { Header("On this phone", action = "Manage", onAction = onOpenOnDevice) }
             if (device.isEmpty() && q.isEmpty()) item(key = "device:none") {

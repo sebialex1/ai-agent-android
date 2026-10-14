@@ -1,5 +1,6 @@
 package com.sebialex.agent.ui.settings
 
+import com.sebialex.agent.ui.components.keepScrollInside
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -191,6 +192,7 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                     Modifier
                         .fillMaxWidth()
                         .heightIn(max = 300.dp)
+                        .keepScrollInside()
                         .softSurface(RoundedCornerShape(16.dp), Palette.Surface, elevation = 4.dp)
                         .padding(vertical = 4.dp),
                 ) {
