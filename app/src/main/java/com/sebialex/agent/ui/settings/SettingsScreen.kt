@@ -80,6 +80,7 @@ enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes v
     MODELS("Models", R.drawable.ic_code),
     ON_DEVICE("On-device", R.drawable.ic_phone),
     CHATS("Chats", R.drawable.ic_history),
+    BACKUP("Backup & restore", R.drawable.ic_download),
     ABOUT("About", R.drawable.ic_info),
 }
 
@@ -91,6 +92,8 @@ fun SettingsScreen(
     modelStore: ModelStore,
     localEngine: LocalEngine,
     ollama: OllamaCloud,
+    backup: com.sebialex.agent.data.backup.BackupManager,
+    onRestored: () -> Unit,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
     /** Opens straight into one section (e.g. On-device from the model picker); Back then leaves Settings. */
@@ -219,6 +222,7 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    SettingsSection.BACKUP -> BackupSettings(backup, settings, onRestored)
                     SettingsSection.ABOUT -> AboutTab()
                 }
                 Spacer(Modifier.height(24.dp))

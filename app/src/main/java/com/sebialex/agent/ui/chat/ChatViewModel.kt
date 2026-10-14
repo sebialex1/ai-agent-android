@@ -131,6 +131,15 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     val currentSessionId: String get() = currentId
 
+    /** Re-reads the saved conversations after a backup was restored, so the list shows them without a restart. */
+    fun reloadConversations() {
+        viewModelScope.launch {
+            val list = withContext(Dispatchers.IO) { container.sessions.list() }
+            list.forEach { if (it.id != currentId) cache.remove(it.id); summaries[it.id] = it }
+            publish()
+        }
+    }
+
     // ---- Conversations ------------------------------------------------------------------
 
     /** Switches to a saved conversation. Its text is shown as saved; nothing is replayed. */

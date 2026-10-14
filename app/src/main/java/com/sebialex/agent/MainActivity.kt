@@ -106,6 +106,7 @@ fun AppRoot(container: AppContainer) {
     BackHandler(enabled = stack.size > 1) { pop() }
 
     Box(Modifier.fillMaxSize().background(Palette.Ink)) {
+        com.sebialex.agent.ui.settings.RestoreOffer(container.backup, onRestored = vm::reloadConversations)
         AnimatedContent(
             targetState = stack.last(),
             transitionSpec = {
@@ -139,6 +140,8 @@ fun AppRoot(container: AppContainer) {
                     modelStore = container.modelStore,
                     localEngine = container.localEngine,
                     ollama = container.ollama,
+                    backup = container.backup,
+                    onRestored = vm::reloadConversations,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },
                     initialSection = screen.section,
