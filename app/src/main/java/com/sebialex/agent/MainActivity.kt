@@ -148,7 +148,6 @@ fun AppRoot(container: AppContainer) {
                 )
                 Screen.Workspace -> WorkspaceScreen(
                     terminal = runtime.terminal,
-                    policy = container.policy,
                     workspace = runtime.workspace,
                     sources = chat.session.turns.flatMap { it.sources },
                     artifacts = chat.session.turns.flatMap { it.attachments + it.artifacts },

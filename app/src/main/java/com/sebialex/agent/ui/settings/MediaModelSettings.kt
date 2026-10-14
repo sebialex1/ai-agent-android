@@ -70,7 +70,7 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
     val providerName = MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
     val currentName = (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
 
-    SettingsGroup("Image generation") {
+    SettingsGroup("Image generation", help = "The model the agent's generate_image tool uses. Only models that can make images are listed.") {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -82,7 +82,7 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
             Column(Modifier.weight(1f)) {
                 Text(currentName, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    providerName + (if (snap.mediaImage == null) " \u00b7 default" else "") + " \u00b7 used by generate_image",
+                    providerName + (if (snap.mediaImage == null) " \u00b7 default" else ""),
                     style = MaterialTheme.typography.labelSmall,
                     color = Palette.TextTertiary,
                 )
@@ -128,12 +128,10 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
                 if (marks.isNotEmpty()) ManualImageMarks(p, marks, snap.imageOverrides, onToggle = { id, on -> settings.setImageOverride(id, on) })
             }
             // Honest limits: providers that are connected but cannot generate images here.
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(top = 4.dp)) {
-                snap.customProviders.filter { custom[it.id].isNullOrEmpty() && markable[it.id].isNullOrEmpty() }.forEach { p ->
-                    LimitNote("${p.name}: its model list names no image models this app can call")
-                }
-                MediaModels.LIMITATIONS.forEach { (name, why) -> LimitNote("$name: $why") }
-            }
+            val limits = snap.customProviders.filter { custom[it.id].isNullOrEmpty() && markable[it.id].isNullOrEmpty() }
+                .map { "${it.name}: its model list names no image models this app can call" } +
+                MediaModels.LIMITATIONS.map { (name, why) -> "$name: $why" }
+            if (limits.isNotEmpty()) Help(limits.joinToString("\n"), label = "Providers without image models")
         }
     }
 }
@@ -160,8 +158,7 @@ private fun ManualImageMarks(
         Column(Modifier.weight(1f)) {
             Text("Mark image models by hand", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
             Text(
-                "Manual override \u00b7 ${provider.name}'s model list says nothing about image output" +
-                    if (marked > 0) " \u00b7 $marked marked" else "",
+                "Manual override" + if (marked > 0) " \u00b7 $marked marked" else "",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
             )
@@ -191,15 +188,7 @@ private fun ManualImageMarks(
             color = Palette.TextSecondary,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { showAll = true }.padding(vertical = 8.dp),
         )
-        Text(
-            "A marked model is called at ${provider.baseUrl.trimEnd('/')}/images/generations. If it is not an image model there, generate_image fails and says so.",
-            style = MaterialTheme.typography.labelSmall,
-            color = Palette.TextTertiary,
-        )
+        Help("A marked model is called at ${provider.baseUrl.trimEnd('/')}/images/generations. If it is not an image model there, generate_image fails and says so.")
     }
 }
 
-@Composable
-private fun LimitNote(text: String) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-}

@@ -72,29 +72,21 @@ internal fun KeyRingCard(
     action: (@Composable () -> Unit)? = null,
 ) {
     var adding by rememberSaveable(title) { mutableStateOf(false) }
-    val shape = RoundedCornerShape(20.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .softSurface(shape, Palette.Surface, elevation = 0.dp, highlight = false)
-            .clip(shape)
-            .padding(vertical = 6.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val detail = when {
-                    keys.isEmpty() -> subtitle ?: "No key yet"
-                    keys.size == 1 -> subtitle ?: "1 key"
-                    else -> "${keys.size} keys \u00b7 rotates on rate limits and errors"
-                }
-                Text(detail, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            action?.invoke()
-        }
+    // Collapsed to one row by default (name and key count); tapping it shows the keys.
+    var open by rememberSaveable("ring:$title") { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        NavRow(
+            title = title,
+            value = when {
+                keys.isEmpty() -> subtitle ?: "No key"
+                keys.size == 1 -> "1 key"
+                else -> "${keys.size} keys \u00b7 rotate on errors"
+            },
+            onClick = { open = !open },
+            expanded = open,
+            trailing = action,
+        )
+        if (!open) return@Column
         keys.forEachIndexed { i, k ->
             KeyRow(
                 index = i + 1,
@@ -117,7 +109,7 @@ internal fun KeyRingCard(
         if (!adding && keys.isNotEmpty()) {
             Row(
                 Modifier
-                    .padding(start = 10.dp, top = 2.dp, bottom = 2.dp)
+                    .padding(top = 2.dp, bottom = 2.dp)
                     .clip(RoundedCornerShape(50))
                     .clickable { adding = true }
                     .padding(horizontal = 10.dp, vertical = 8.dp),

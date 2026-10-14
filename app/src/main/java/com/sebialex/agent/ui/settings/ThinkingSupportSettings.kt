@@ -53,21 +53,14 @@ internal fun ThinkingSupportGroup(settings: SecureSettings, snap: SecureSettings
     val provider = providers.firstOrNull { it.id == tab } ?: providers.first()
     var expanded by remember { mutableStateOf<String?>(null) }
     var showAll by remember(provider.id) { mutableStateOf(false) }
-    SettingsGroup("Thinking support") {
-        Text(
-            "Detected from each provider's model list and docs. Where nothing is published, set it by hand.",
-            style = MaterialTheme.typography.labelSmall,
-            color = Palette.TextTertiary,
-        )
+    SettingsGroup("Thinking support", help = "Detected from each provider's model list and docs. Where nothing is published, tap a model and set it by hand.") {
         if (providers.size > 1) ChoiceChips(
             options = providers.map { it.id },
             selected = provider.id,
             label = { id -> providers.firstOrNull { it.id == id }?.name ?: id },
             onSelect = { tab = it; expanded = null },
         )
-        CustomReasoning.compatibilityNote(provider.baseUrl)?.let { note ->
-            Text(note, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-        }
+        CustomReasoning.compatibilityNote(provider.baseUrl)?.let { note -> Help(note, label = "${provider.name} limits") }
         // Unknown and overridden models first: those are the ones that need attention.
         val rows = provider.models.map { m ->
             val id = CustomProviders.modelId(provider.id, m)

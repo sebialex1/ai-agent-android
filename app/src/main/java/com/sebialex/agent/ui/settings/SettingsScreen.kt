@@ -75,10 +75,11 @@ import com.sebialex.agent.ui.theme.softSurface
  * Settings sections. The settings home is a vertical list of these; tapping one opens it as its
  * own page, with the section name in the top bar next to Back (no tab strip, no pill slider).
  */
-enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes val icon: Int) {
+enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes val icon: Int, val parent: String? = null) {
     GENERAL("General", R.drawable.ic_shield),
     MODELS("Models", R.drawable.ic_code),
-    ON_DEVICE("On-device", R.drawable.ic_phone),
+    /** A sub-page of Models (not on the home list); the model picker's "Manage" opens it directly. */
+    ON_DEVICE("On-device models", R.drawable.ic_phone, parent = "MODELS"),
     CHATS("Chats", R.drawable.ic_history),
     BACKUP("Backup & restore", R.drawable.ic_download),
     UPDATES("Updates", R.drawable.ic_refresh),
@@ -108,12 +109,16 @@ fun SettingsScreen(
     val homeScroll = rememberScrollState()
     val scrolls = SettingsSection.entries.associateWith { rememberScrollState() }
     var confirmClear by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
+    /** Where Back goes from [s]: a sub-page returns to its parent page, a page to the list. */
+    fun up(s: SettingsSection): SettingsSection? = s.parent?.let { SettingsSection.valueOf(it) }
     fun back() {
-        if (section != null && !(direct && section == initialSection)) section = null else onBack()
+        val s = section
+        if (s != null && !(direct && s == initialSection)) section = up(s) else onBack()
     }
     // Inside a section, system Back returns to the list first (registered after the app's own
     // handler, so it takes precedence while enabled).
-    androidx.activity.compose.BackHandler(enabled = section != null && !(direct && section == initialSection)) { section = null }
+    androidx.activity.compose.BackHandler(enabled = section != null && !(direct && section == initialSection)) { section = section?.let { up(it) } }
     Column(
         Modifier
             .fillMaxSize()
@@ -151,12 +156,12 @@ fun SettingsScreen(
                     .fadeTopEdge(scroll)
                     .verticalScroll(scroll)
                     .padding(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(if (page == null) 8.dp else 28.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 when (page) {
-                    null -> SettingsSection.entries.forEach { s -> SectionRow(s) { section = s } }
+                    null -> HomeList { section = it }
                     SettingsSection.GENERAL -> {
-                        Group("Permissions") {
+                        SettingsGroup("Permissions") {
                             SwitchRow(
                                 title = "Ask before web access",
                                 subtitle = null,
@@ -173,58 +178,78 @@ fun SettingsScreen(
                         SandboxSetting(termux)
                     }
                     SettingsSection.MODELS -> {
-                        // Provider keys and configuration only. Picking the active model and its
-                        // reasoning is done in the chat's + sheet (the same global setting), so it
-                        // is not repeated here.
-                        // Each provider holds a small stack of keys: the active one is badged, a key
-                        // that fails (invalid, out of credit, rate limited) hands over to the next.
-                        Group("API keys") {
+                        // Everything about models on one page, in sub-sections: what answers, who
+                        // provides it (keys, custom providers), image generation, and the
+                        // capability overrides. The chat's + sheet opens the same picker.
+                        val statuses by modelStore.statuses.collectAsStateWithLifecycle()
+                        val downloaded = statuses.values.count { it is com.sebialex.agent.data.local.ModelStatus.Ready }
+                        SettingsGroup("Chat model") {
+                            NavRow(
+                                title = modelName(snap.model),
+                                value = sourceLine(snap.model, snap.localBackend, snap.customProviders),
+                                icon = R.drawable.ic_code,
+                                onClick = { picking = true },
+                            )
+                            NavRow(
+                                title = "On-device models",
+                                value = if (downloaded == 0) "None downloaded" else "$downloaded downloaded",
+                                icon = R.drawable.ic_phone,
+                                onClick = { section = SettingsSection.ON_DEVICE },
+                            )
+                        }
+                        SettingsGroup(
+                            "Providers",
+                            help = "Each provider holds a few keys. When the active key fails (invalid, out of credit, rate limited), " +
+                                "the next one takes over. Custom providers: any OpenAI-compatible API, from a preset or an auto-detected URL. " +
+                                "TinyFish is optional; without it the phone searches the web directly.",
+                        ) {
                             listOf(
-                                Triple(SecureSettings.PROVIDER_OPENROUTER, "OpenRouter", "Model inference \u00b7 openrouter.ai/keys"),
-                                Triple(SecureSettings.PROVIDER_OLLAMA, "Ollama Cloud", "Hosted Ollama models \u00b7 ollama.com/settings/keys"),
-                                Triple(SecureSettings.PROVIDER_TINYFISH, "Web search (TinyFish)", "Optional; without it the phone searches directly"),
-                            ).forEach { (id, name, detail) ->
+                                SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
+                                SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
+                                SecureSettings.PROVIDER_TINYFISH to "Web search (TinyFish)",
+                            ).forEach { (id, name) ->
                                 KeyRingCard(
                                     title = name,
-                                    subtitle = detail,
                                     keys = snap.keys[id].orEmpty(),
                                     onAdd = { key, label -> settings.addKey(id, key, label) },
                                     onRemove = { settings.removeKey(id, it) },
                                     onActivate = { settings.setActiveKey(id, it) },
                                 )
                             }
+                            RowDivider()
+                            CustomProvidersGroup(settings, snap)
                         }
-                        // Any other OpenAI-compatible provider: presets or a URL that is auto-detected.
-                        CustomProvidersGroup(settings, snap)
                         // generate_image's provider and model (only models that can make images).
                         ImageModelGroup(settings, snap, models)
                         // Reasoning detection for custom providers, with a manual override per model.
                         ThinkingSupportGroup(settings, snap)
+                        if (picking) ModelPickerSheet(
+                            settings, models, ollama, modelStore, localEngine,
+                            onOpenOnDevice = { section = SettingsSection.ON_DEVICE },
+                            onDismiss = { picking = false },
+                        )
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
                     SettingsSection.CHATS -> {
                         // Memory of past chats has no row here: its only switch is in each chat's
                         // options (the \u22ef next to a chat in the list).
-                        SwitchRow(
-                            title = "Auto-generate titles",
-                            subtitle = null,
-                            checked = snap.autoTitles,
-                            onChange = settings::setAutoTitles,
-                        )
-                        if (!confirmClear) {
-                            Text(
-                                "Delete all conversations",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = Palette.Danger,
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { confirmClear = true }.padding(vertical = 8.dp),
+                        SettingsGroup("Conversations") {
+                            SwitchRow(
+                                title = "Auto-generate titles",
+                                subtitle = null,
+                                checked = snap.autoTitles,
+                                onChange = settings::setAutoTitles,
                             )
-                        } else {
-                            com.sebialex.agent.ui.components.SheetConfirm(
-                                message = "Every conversation, its workspace files and history will be deleted. This cannot be undone.",
-                                confirm = "Delete all",
-                                onConfirm = { confirmClear = false; onClearConversations() },
-                                onCancel = { confirmClear = false },
-                            )
+                            if (!confirmClear) {
+                                NavRow("Delete all conversations", icon = R.drawable.ic_trash, onClick = { confirmClear = true }, chevron = false)
+                            } else {
+                                com.sebialex.agent.ui.components.SheetConfirm(
+                                    message = "Every conversation, its workspace files and history will be deleted. This cannot be undone.",
+                                    confirm = "Delete all",
+                                    onConfirm = { confirmClear = false; onClearConversations() },
+                                    onCancel = { confirmClear = false },
+                                )
+                            }
                         }
                     }
                     SettingsSection.BACKUP -> BackupSettings(backup, settings, onRestored)
@@ -237,31 +262,17 @@ fun SettingsScreen(
     }
 }
 
-/** One row of the settings home: icon, section name and a chevron; opens the section's page. */
+/** The settings home: one card with a row per page (sub-pages such as On-device are reached from their parent). */
 @Composable
-private fun SectionRow(section: SettingsSection, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Palette.Surface)
-            .clickable(onClick = onClick)
-            .heightIn(min = 56.dp)
-            .padding(start = 16.dp, end = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun HomeList(onOpen: (SettingsSection) -> Unit) {
+    val pages = SettingsSection.entries.filter { it.parent == null }
+    Column(
+        Modifier.fillMaxWidth().clip(SettingsCardShape).background(Palette.Surface).padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
-        AppIcon(section.icon, null, tint = Palette.IconMuted, size = 20.dp)
-        Spacer(Modifier.width(16.dp))
-        Text(section.label, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
-        AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.IconMuted, size = 16.dp)
-    }
-}
-
-@Composable
-private fun Group(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionLabel(title)
-        content()
+        pages.forEachIndexed { i, s ->
+            if (i > 0) RowDivider()
+            NavRow(s.label, icon = s.icon, onClick = { onOpen(s) })
+        }
     }
 }
 
@@ -284,13 +295,13 @@ private fun AboutTab() {
             )
         }
     }
-    Group("Agent for Android") {
-        Note("Version $version")
+    SettingsGroup("Agent for Android") {
+        NavRow("Version", version)
+        ExpandRow("Agent tools", value = "What the agent can do") {
+            Note(com.sebialex.agent.data.llm.OpenRouterBrain.TOOL_SUMMARY)
+        }
     }
-    Group("Agent tools") {
-        Note(com.sebialex.agent.data.llm.OpenRouterBrain.TOOL_SUMMARY)
-    }
-    Group("Links") {
+    SettingsGroup("Links") {
         LinkRow("Source code", "github.com/sebialex1/ai-agent-android") { open("https://github.com/sebialex1/ai-agent-android") }
         LinkRow("Ollama Cloud docs", "docs.ollama.com/cloud") { open("https://docs.ollama.com/cloud") }
         LinkRow("Ollama API keys", "ollama.com/settings/keys") { open(OllamaCloud.KEYS_URL) }
@@ -305,7 +316,8 @@ private fun LinkRow(title: String, detail: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 10.dp),
+            .heightIn(min = 52.dp)
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

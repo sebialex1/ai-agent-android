@@ -90,107 +90,158 @@ fun SandboxSetting(termux: TermuxBridge) {
     }
     val askLegacyStorage = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { status = termux.status() }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionLabel("Termux sandbox")
-        // One list, one rhythm: status mark, label, and a plain text action only when something is missing.
-        Column {
-            StatusRow(
-                label = "Termux installed",
-                ok = status.installed,
-                action = "Get",
-                onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
-            )
-            StatusRow(
-                label = "Permission to run commands",
-                ok = status.runPermission,
-                action = "Allow",
-                enabled = status.installed,
-                onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
-            )
-            // The checks above are Android-side only. Termux's own allow-external-apps
-            // setting cannot be read from here; it is known once Termux answers (tap Check).
-            StatusRow(
-                label = "Termux allows this app",
-                ok = status.externalApps == true,
-                unknown = status.externalApps == null,
-                action = if (status.externalApps == false) "App info" else "Open",
-                enabled = status.installed,
-                onAction = {
-                    if (status.externalApps == false) {
-                        open(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${TermuxBridge.TERMUX_PACKAGE}")))
-                    } else openTermux(context)
-                },
-            )
-            StatusRow(
-                label = "All files access",
-                ok = status.storage,
-                action = "Allow",
-                onAction = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        val ok = open(
-                            context,
-                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
-                        )
-                        if (!ok) open(context, Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                    } else {
-                        askLegacyStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    }
-                },
-            )
-        }
-        // The Termux side cannot be configured from here: the exact one-time command, in a single block.
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.Surface).padding(start = 14.dp, top = 4.dp, bottom = 12.dp, end = 4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("One-time setup in Termux", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
-                QuietIconButton(R.drawable.ic_copy, "Copy Termux setup command", onClick = {
-                    clipboard.setText(AnnotatedString(TERMUX_SETUP))
-                }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
+    fun runCheck() {
+        if (checking || !status.ready) return
+        checking = true
+        scope.launch {
+            check = withContext(Dispatchers.IO) {
+                try {
+                    // Also proves Termux can write the shared workspace root, which is
+                    // what every mirrored command needs (termux-setup-storage).
+                    val shared = termux.sharedRoot.apply { mkdirs() }.absolutePath
+                    val q = SandboxShell.shellQuote(shared)
+                    val r = termux.run(
+                        "echo \"termux ok\"; for p in bash apt dpkg pkg python pip; do printf '%s: ' \"\$p\"; command -v \"\$p\" || echo missing; done; " +
+                            "if touch $q/.agent-check 2>/dev/null && rm -f $q/.agent-check; then echo 'shared workspace: ok'; " +
+                            "else echo 'shared workspace: not writable from Termux (run termux-setup-storage in Termux)'; fi",
+                        workdir = "~/",
+                        timeoutSeconds = SandboxShell.TIMEOUT_SECONDS,
+                        label = "agent environment check",
+                    )
+                    val out = (r.stdout + r.stderr).trim()
+                    if (r.err != -1 && r.errmsg.isNotBlank()) "termux error ${r.err}: ${r.errmsg.trim()}" else out.ifEmpty { "exit ${r.exitCode}" }
+                } catch (e: TermuxException) {
+                    e.message ?: "Termux did not answer"
+                }
             }
-            Text(TERMUX_SETUP, style = MonoSmall, color = Palette.TextTertiary, modifier = Modifier.padding(end = 10.dp))
-            Text(
-                "Paste it in Termux, press Enter, then tap Check. If Check still reports allow-external-apps, force stop Termux, reopen it and check again.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
-                modifier = Modifier.padding(top = 8.dp, end = 10.dp),
-            )
+            checking = false
+            status = termux.status()
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PillButton(
-                if (checking) "Checking\u2026" else "Check",
-                primary = status.ready && !checking,
-                enabled = status.ready && !checking,
-                onClick = {
-                    checking = true
-                    scope.launch {
-                        check = withContext(Dispatchers.IO) {
-                            try {
-                                // Also proves Termux can write the shared workspace root, which is
-                                // what every mirrored command needs (termux-setup-storage).
-                                val shared = termux.sharedRoot.apply { mkdirs() }.absolutePath
-                                val q = SandboxShell.shellQuote(shared)
-                                val r = termux.run(
-                                    "echo \"termux ok\"; for p in bash apt dpkg pkg python pip; do printf '%s: ' \"\$p\"; command -v \"\$p\" || echo missing; done; " +
-                                        "if touch $q/.agent-check 2>/dev/null && rm -f $q/.agent-check; then echo 'shared workspace: ok'; " +
-                                        "else echo 'shared workspace: not writable from Termux (run termux-setup-storage in Termux)'; fi",
-                                    workdir = "~/",
-                                    timeoutSeconds = SandboxShell.TIMEOUT_SECONDS,
-                                    label = "agent environment check",
-                                )
-                                val out = (r.stdout + r.stderr).trim()
-                                if (r.err != -1 && r.errmsg.isNotBlank()) "termux error ${r.err}: ${r.errmsg.trim()}" else out.ifEmpty { "exit ${r.exitCode}" }
-                            } catch (e: TermuxException) {
-                                e.message ?: "Termux did not answer"
-                            }
-                        }
-                        checking = false
-                        status = termux.status()
-                    }
-                },
+    }
+    // The setup step passed when Termux answered, every tool was found and the shared folder is writable.
+    val checkOk: Boolean? = check?.let { c -> "termux ok" in c && "missing" !in c && "shared workspace: ok" in c }
+
+    SettingsGroup("Termux sandbox", help = "Commands the agent runs (apt, pkg, pip, python) go through Termux. Each step shows a check when it is done.") {
+        // One list, one rhythm: status mark, label, and a plain text action only when something is missing.
+        StatusRow(
+            label = "Termux installed",
+            ok = status.installed,
+            action = "Get",
+            onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
+        )
+        StatusRow(
+            label = "Permission to run commands",
+            ok = status.runPermission,
+            action = "Allow",
+            enabled = status.installed,
+            onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
+        )
+        SetupStep(
+            ok = checkOk == true || (check == null && status.externalApps == true),
+            failed = checkOk == false || status.externalApps == false,
+            checking = checking,
+            canCheck = status.ready,
+            result = check,
+            onCopy = { clipboard.setText(AnnotatedString(TERMUX_SETUP)) },
+            onOpenTermux = {
+                if (status.externalApps == false) {
+                    open(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${TermuxBridge.TERMUX_PACKAGE}")))
+                } else openTermux(context)
+            },
+            onCheck = ::runCheck,
+        )
+        StatusRow(
+            label = "All files access",
+            ok = status.storage,
+            action = "Allow",
+            onAction = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val ok = open(
+                        context,
+                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
+                    )
+                    if (!ok) open(context, Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                } else {
+                    askLegacyStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+            },
+        )
+    }
+}
+
+/**
+ * The one step that happens inside Termux: copy the setup command, paste it there, then verify.
+ * Compact by default (status mark, label, Copy and Check); the command itself, the hint and the
+ * last check output are behind the chevron.
+ */
+@Composable
+private fun SetupStep(
+    ok: Boolean,
+    failed: Boolean,
+    checking: Boolean,
+    canCheck: Boolean,
+    result: String?,
+    onCopy: () -> Unit,
+    onOpenTermux: () -> Unit,
+    onCheck: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { open = !open }.heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusMark(ok = ok, unknown = !ok && !failed)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Setup command in Termux", style = MaterialTheme.typography.bodyLarge, color = if (ok) Palette.TextSecondary else Palette.TextPrimary)
+                Text(
+                    when {
+                        checking -> "Checking\u2026"
+                        ok -> "Verified"
+                        failed -> "Not working yet \u00b7 tap for details"
+                        else -> "Copy, paste in Termux, then check"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (failed && !checking) Palette.Warning else Palette.TextTertiary,
+                )
+            }
+            QuietIconButton(
+                if (copied) R.drawable.ic_check else R.drawable.ic_copy, "Copy Termux setup command",
+                onClick = { onCopy(); copied = true }, tint = Palette.IconMuted, size = 38.dp, iconSize = 17.dp,
             )
+            QuietIconButton(
+                R.drawable.ic_check, "Check that the setup worked", onClick = onCheck, enabled = canCheck && !checking,
+                tint = if (ok) Palette.IconActive else Palette.IconMuted, size = 38.dp, iconSize = 18.dp,
+            )
+            AppIcon(if (open) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right, if (open) "Hide command" else "Show command", tint = Palette.IconMuted, size = 16.dp)
         }
-        check?.let { Text(it, style = MonoSmall, color = Palette.TextSecondary) }
+        androidx.compose.animation.AnimatedVisibility(open) {
+            Column(Modifier.fillMaxWidth().padding(start = 32.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(TERMUX_SETUP, style = MonoSmall, color = Palette.TextTertiary)
+                Text(
+                    "Paste it in Termux and press Enter, then tap the check. If it still fails, force stop Termux, reopen it and check again.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                )
+                Row { PillButton("Open Termux", onClick = onOpenTermux) }
+                result?.let { Text(it, style = MonoSmall, color = Palette.TextSecondary) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusMark(ok: Boolean, unknown: Boolean) {
+    Box(Modifier.width(20.dp), contentAlignment = Alignment.CenterStart) {
+        if (unknown && !ok) Text("?", style = MaterialTheme.typography.labelLarge, color = Palette.TextTertiary)
+        else AppIcon(
+            if (ok) R.drawable.ic_check else R.drawable.ic_close,
+            if (ok) "Ready" else "Missing",
+            tint = if (ok) Palette.IconActive else Palette.Warning,
+            size = 16.dp,
+        )
     }
 }
 

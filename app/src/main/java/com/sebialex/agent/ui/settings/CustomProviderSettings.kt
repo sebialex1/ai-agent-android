@@ -59,13 +59,12 @@ import kotlinx.coroutines.launch
 internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings.Snapshot) {
     var adding by rememberSaveable { mutableStateOf(false) }
     var confirmRemove by rememberSaveable { mutableStateOf<String?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionLabel("Custom providers")
+    Column(Modifier.fillMaxWidth()) {
         snap.customProviders.forEach { p ->
             val ring = CustomProviders.keyRing(p.id)
             KeyRingCard(
                 title = p.name,
-                subtitle = if (CustomProviders.isLocalAddress(p.baseUrl)) "Local server \u00b7 a key is optional" else "Add a key to use it",
+                subtitle = if (CustomProviders.isLocalAddress(p.baseUrl)) "Local \u00b7 key optional" else "No key",
                 keys = snap.keys[ring].orEmpty(),
                 onAdd = { key, label -> settings.addKey(ring, key, label) },
                 onRemove = { settings.removeKey(ring, it) },
@@ -94,27 +93,8 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
                 },
             )
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 2.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .clickable { adding = true }
-                .heightIn(min = 52.dp)
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(R.drawable.ic_plus, null, tint = Palette.IconActive, size = 18.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Add provider", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-                Text(
-                    "OpenAI, Groq, Gemini, Mistral, LM Studio\u2026 or any OpenAI-compatible URL",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Palette.TextTertiary,
-                )
-            }
-        }
+        // OpenAI, Groq, Gemini, Mistral, LM Studio... or any OpenAI-compatible URL (presets in the sheet).
+        NavRow("Add provider", icon = R.drawable.ic_plus, onClick = { adding = true }, chevron = false)
     }
     if (adding) AddProviderSheet(settings, onDismiss = { adding = false })
 }

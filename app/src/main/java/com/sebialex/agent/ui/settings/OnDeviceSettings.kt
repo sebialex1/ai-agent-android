@@ -77,75 +77,51 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                "This phone: ${if (ramGb > 0) "$ramGb GB RAM" else "RAM unknown"} \u00b7 ${LocalModels.formatSize(freeBytes)} free",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SettingsGroup("This phone") {
+            NavRow(
+                title = if (ramGb > 0) "$ramGb GB RAM" else "RAM unknown",
+                value = "${LocalModels.formatSize(freeBytes)} free",
             )
             StorageNote(store, shared, onPermission = { storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) })
+            EngineRow(engineState, snap.model, store, engine)
         }
 
-        EngineRow(engineState, snap.model, store, engine)
-
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionLabel("Models")
-            // Grouped by the RAM they are recommended for (a recommendation, never a limit).
-            val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
-            groups.forEach { (tier, models) ->
-                Text(
-                    if (tier == 1) "Ultra-light \u00b7 from 1 GB RAM" else "From $tier GB RAM",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Palette.TextTertiary,
-                    modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                )
+        // Grouped by the RAM they are recommended for (a recommendation, never a limit).
+        val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
+        groups.forEach { (tier, models) ->
+            SettingsGroup(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM") {
                 models.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
             }
-            if (imported.isNotEmpty()) {
-                Text("Imported", style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
-                imported.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
-            }
-            PillButton("Import a .litertlm file", onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.padding(top = 10.dp))
-            message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary) }
+        }
+        SettingsGroup("Imported") {
+            imported.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
+            NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
+            message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel("Accelerator")
+        SettingsGroup("Runtime", help = "GPU falls back to the CPU automatically. Larger context windows use more memory and are capped by each model. Changes apply at the next load.") {
+            Text("Accelerator", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
             ChoiceChips(
                 options = listOf(SecureSettings.BACKEND_GPU, SecureSettings.BACKEND_CPU),
                 selected = snap.localBackend,
                 label = { if (it == SecureSettings.BACKEND_GPU) "GPU" else "CPU" },
                 onSelect = settings::setLocalBackend,
             )
-            Text(
-                "Falls back to the CPU automatically. Applies at the next load.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
-            )
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel("Context window")
+            Text("Context window", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
             ChoiceChips(
                 options = SecureSettings.LOCAL_CONTEXTS,
                 selected = snap.localContext,
                 label = { "${(it + 512) / 1024}K" },
                 onSelect = settings::setLocalContext,
             )
-            Text(
-                "Larger windows use more memory. Capped by each model.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.TextTertiary,
+            SwitchRow(
+                title = "Faster decoding (MTP)",
+                subtitle = "Gemma 4 on the GPU. Applies at the next load.",
+                checked = snap.localSpeculative,
+                onChange = settings::setLocalSpeculative,
             )
         }
-
-        SwitchRow(
-            title = "Faster decoding (MTP)",
-            subtitle = "Gemma 4 on the GPU. Applies at the next load.",
-            checked = snap.localSpeculative,
-            onChange = settings::setLocalSpeculative,
-        )
         Spacer(Modifier.height(8.dp))
     }
 }
@@ -208,9 +184,7 @@ private fun EngineRow(state: EngineState, selectedModel: String, store: ModelSto
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Palette.Surface)
-            .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

@@ -164,22 +164,22 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) backup.setFolder(uri) }
     val restore = rememberRestoreFlow(backup, onRestored) { message = it }
 
-    SettingsGroup("Backup folder") {
+    SettingsGroup("Backup folder", help = "Pick a folder outside the app (for example Documents) so the backup survives an uninstall. Without one, only Android's own backup (Google) can bring data back. Backs up automatically a few seconds after each change.") {
         Text(
             when {
-                status.folderUri == null -> "Not set. Pick a folder outside the app (for example Documents) so the backup survives an uninstall."
+                status.folderUri == null -> "Not set"
                 else -> status.folderName.orEmpty()
             },
             style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary,
         )
         Text(
             when {
-                status.folderUri == null -> "Without a folder, only Android's own backup (Google) can bring data back."
+                status.folderUri == null -> "Choose a folder to back up automatically."
                 status.pendingRestore -> "This folder already holds a backup. Restore it, or tap Back up now to replace it."
                 status.lastError != null -> "Last backup failed: ${status.lastError}"
                 status.lastBackupAt > 0 -> "Last backup " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(status.lastBackupAt)) +
                     if (status.keysIncluded) " \u00b7 API keys included (encrypted)" else " \u00b7 API keys not included"
-                else -> "Backs up automatically a few seconds after each change."
+                else -> "Backs up automatically."
             },
             style = MaterialTheme.typography.labelSmall,
             color = if (status.lastError != null) Palette.Danger else Palette.TextTertiary,
@@ -196,14 +196,10 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
         }
     }
 
-    SettingsGroup("API keys in the backup") {
+    SettingsGroup("API keys in the backup", help = "Without a passphrase, API keys are never written to the backup. The passphrase is not stored in the backup: keep it, you need it to restore the keys on a new install.") {
         Text(
-            if (hasPass) "Included, encrypted with your passphrase." else "Not included. Without a passphrase, API keys are never written to the backup.",
+            if (hasPass) "Included, encrypted" else "Not included",
             style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary,
-        )
-        Text(
-            "The passphrase is not stored in the backup. Keep it: you need it to restore the keys on a new install.",
-            style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary,
         )
         if (editingPass) {
             PassphraseField(pass) { pass = it }
@@ -226,9 +222,8 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
         }
     }
 
-    SettingsGroup("From a file") {
-        Text("Restore from any backup file, for example after a reinstall.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-        Row { PillButton("Restore from file", { restore(false) }) }
+    SettingsGroup("From a file", help = "Restore from any backup file, for example after a reinstall.") {
+        NavRow("Restore from file", icon = com.sebialex.agent.R.drawable.ic_file, onClick = { restore(false) }, chevron = false)
     }
 
     message?.let {

@@ -60,8 +60,6 @@ import com.sebialex.agent.domain.model.FileAttachment
 import com.sebialex.agent.domain.model.SourceRef
 import com.sebialex.agent.ui.chat.SourcePreviewSheet
 import com.sebialex.agent.ui.components.Favicon
-import com.sebialex.agent.domain.permission.PermissionDecision
-import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.ui.chat.PillButton
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.FadingText
@@ -69,9 +67,6 @@ import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** Sections of the workspace, shown as icon tabs in the top bar (terminal, sources, files). */
 enum class WorkspaceTab(val icon: Int, val label: String) {
@@ -86,16 +81,14 @@ enum class WorkspaceTab(val icon: Int, val label: String) {
  * Sources and Files only appear when there is something in them; an empty section is never
  * rendered. Artifacts (files the agent wrote) get their own group above the raw workspace files.
  *
- * The terminal is the conversation's shared sandbox terminal: it lists the commands the agent ran
- * with their output, and what you type runs in the very same shell and working directory the
- * agent uses (so a `cd` by either is seen by both). The permission policy applies to your commands
- * too: risky ones need an explicit confirmation before they run. The file tree is a separate tab
+ * The terminal tab is a read-only log of the commands the agent ran in the conversation's shared
+ * sandbox terminal, with their output. There is no command line for the user: commands are only
+ * run by the agent's shell tool, under the permission policy. The file tree is a separate tab
  * for browsing and previewing files only.
  */
 @Composable
 fun WorkspaceScreen(
     terminal: SharedTerminal,
-    policy: PermissionPolicy,
     workspace: Workspace,
     sources: List<SourceRef>,
     artifacts: List<FileAttachment>,
@@ -103,36 +96,13 @@ fun WorkspaceScreen(
     onOpenFile: (path: String, baseSnapshot: String?) -> Unit,
     onOpenUrl: (String) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    // The terminal itself lives in the conversation's runtime; only the draft and the pending
-    // confirmation live here, so switching tabs never loses anything.
+    // The terminal itself lives in the conversation's runtime, so switching tabs never loses anything.
     val entries by terminal.entries.collectAsStateWithLifecycle()
-    val cwd by terminal.cwd.collectAsStateWithLifecycle()
-    var input by rememberSaveable { mutableStateOf("") }
-    var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
     var tab by rememberSaveable { mutableStateOf(WorkspaceTab.TERMINAL) }
     var preview by remember { mutableStateOf<SourceRef?>(null) }
-    // Bumped after every command (yours or the agent's) so the file manager shows what changed.
+    // Bumped after every command the agent ran so the file manager shows what changed.
     var filesVersion by remember { mutableStateOf(0) }
     LaunchedEffect(entries.count { !it.running }) { filesVersion++ }
-
-    fun run(command: String) {
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { terminal.run(TerminalOrigin.USER, command) }
-            r.openFile?.let { onOpenFile(it, null) }
-        }
-    }
-
-    fun submit() {
-        val command = input.trim()
-        if (command.isEmpty()) return
-        input = ""
-        when (val d = policy.evaluateShell(command)) {
-            PermissionDecision.Allow -> run(command)
-            is PermissionDecision.Ask -> pending = command to d.reason.label
-            is PermissionDecision.Deny -> terminal.note(TerminalOrigin.USER, command, "blocked: ${d.reason.label}", 1)
-        }
-    }
 
     // Only sections with content are offered.
     val distinctSources = remember(sources) { sources.distinctBy { it.url } }
@@ -170,16 +140,7 @@ fun WorkspaceScreen(
             label = "workspaceTab",
         ) { t ->
             when (t) {
-                WorkspaceTab.TERMINAL -> TerminalTab(
-                    entries = entries,
-                    cwd = cwd,
-                    input = input,
-                    onInput = { input = it },
-                    pending = pending,
-                    onCancelPending = { pending = null },
-                    onRunPending = { c -> pending = null; run(c) },
-                    onSubmit = ::submit,
-                )
+                WorkspaceTab.TERMINAL -> TerminalTab(entries = entries)
                 WorkspaceTab.SOURCES -> SourcesTab(distinctSources, onOpen = { preview = it })
                 WorkspaceTab.FILES -> com.sebialex.agent.ui.files.FileManager(
                     workspace = workspace,
@@ -234,23 +195,15 @@ private fun SegmentedTabs(tabs: List<WorkspaceTab>, selected: WorkspaceTab, onSe
     }
 }
 
+/** Read-only log of the agent's commands and their output (selectable, follows new output). */
 @Composable
-private fun TerminalTab(
-    entries: List<TerminalEntry>,
-    cwd: String,
-    input: String,
-    onInput: (String) -> Unit,
-    pending: Pair<String, String>?,
-    onCancelPending: () -> Unit,
-    onRunPending: (String) -> Unit,
-    onSubmit: () -> Unit,
-) {
+private fun TerminalTab(entries: List<TerminalEntry>) {
     val listState = rememberLazyListState()
     // Follow new output, including the live output of a command the agent is running.
     LaunchedEffect(entries.size, entries.lastOrNull()?.running) { if (entries.isNotEmpty()) listState.animateScrollToItem(entries.lastIndex) }
     Column(Modifier.fillMaxSize()) {
         if (entries.isEmpty()) Text(
-            "Commands the agent runs show up here, and so do yours. You work in the same folder and shell as the agent.",
+            "Commands the agent runs show up here, with their output.",
             style = MaterialTheme.typography.bodyMedium,
             color = Palette.TextTertiary,
             modifier = Modifier.weight(1f).padding(horizontal = 24.dp, vertical = 16.dp),
@@ -286,56 +239,6 @@ private fun TerminalTab(
                     }
                 }
             }
-        }
-        pending?.let { (command, reason) ->
-            Column(
-                Modifier
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Palette.Surface)
-                    .padding(start = 16.dp, end = 10.dp, top = 14.dp, bottom = 10.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AppIcon(R.drawable.ic_shield, null, tint = Palette.Warning, size = 18.dp)
-                    Spacer(Modifier.width(12.dp))
-                    FadingText(command, MonoSmall, Palette.TextPrimary, Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(reason, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(start = 30.dp).weight(1f))
-                    PillButton("Cancel", primary = false) { onCancelPending() }
-                    Spacer(Modifier.width(8.dp))
-                    PillButton("Run", primary = true) { onRunPending(command) }
-                }
-            }
-        }
-        Row(
-            Modifier
-                .padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(Palette.Surface)
-                .heightIn(min = 52.dp)
-                .padding(start = 16.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("$", style = MonoSmall, color = Palette.TextTertiary)
-            Spacer(Modifier.width(10.dp))
-            BasicTextField(
-                value = input,
-                onValueChange = onInput,
-                singleLine = true,
-                textStyle = MonoSmall.copy(color = Palette.TextPrimary),
-                cursorBrush = SolidColor(Palette.TextPrimary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, autoCorrectEnabled = false),
-                keyboardActions = KeyboardActions(onSend = { onSubmit() }),
-                modifier = Modifier.weight(1f).padding(vertical = 14.dp),
-                decorationBox = { inner ->
-                    if (input.isEmpty()) Text("Run in /workspace" + if (cwd == "/") "" else cwd, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1)
-                    inner()
-                },
-            )
-            QuietIconButton(R.drawable.ic_arrow_up, "Run", onClick = onSubmit, enabled = input.isNotBlank())
         }
     }
 }
