@@ -2,6 +2,8 @@ package com.sebialex.agent.domain.tools
 
 import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.Shell
+import com.sebialex.agent.data.shell.SharedTerminal
+import com.sebialex.agent.data.shell.TerminalOrigin
 import com.sebialex.agent.data.shell.ToolCheck
 import com.sebialex.agent.data.web.WebGateway
 import com.sebialex.agent.data.web.hostOf
@@ -18,14 +20,14 @@ import kotlinx.coroutines.withContext
 class ToolExecutor(
     private val workspace: Workspace,
     private val shell: Shell,
+    /** The conversation's shared terminal: the agent's commands run (and show up) there, with the user's. */
+    val terminal: SharedTerminal = SharedTerminal(shell),
     private val web: WebGateway,
     /** Earlier conversations, read-only. Null when this runtime has no access to them. */
     private val memory: ConversationMemory? = null,
     /** Image model for generate_image; null when none is set up. */
     private val images: ImageGenerator? = null,
 ) {
-    private var cwd = "/"
-
     suspend fun execute(call: ToolCall): ToolResult = withContext(Dispatchers.IO) {
         try {
             when (call) {
@@ -49,10 +51,11 @@ class ToolExecutor(
                     // gets a clear "not installed, install with …" instead of a pointless run.
                     val missing = missingPrograms(call.command)
                     if (missing != null) {
-                        ToolResult(call.callId, false, ToolCheck.missingMessage(missing), exitCode = 127)
+                        val message = ToolCheck.missingMessage(missing)
+                        terminal.note(TerminalOrigin.AGENT, call.command, message, 127)
+                        ToolResult(call.callId, false, message, exitCode = 127)
                     } else {
-                        val r = shell.execute(call.command, cwd)
-                        cwd = r.cwd
+                        val r = terminal.run(TerminalOrigin.AGENT, call.command)
                         ToolResult(call.callId, r.exitCode == 0, r.output, exitCode = r.exitCode)
                     }
                 }
@@ -226,7 +229,7 @@ class ToolExecutor(
         val out = StringBuilder()
         if (call.packages.isNotEmpty()) {
             val pkgs = call.packages.joinToString(" ") { SandboxShell.shellQuote(it) }
-            val install = shell.execute("python -m pip install $pkgs", cwd)
+            val install = terminal.run(TerminalOrigin.AGENT, "python -m pip install $pkgs")
             out.append("$ pip install ").append(call.packages.joinToString(" ")).append('\n')
             if (install.output.isNotEmpty()) out.append(install.output).append('\n')
             if (install.exitCode == 127) out.append(MISSING_PYTHON).append('\n')
@@ -235,7 +238,7 @@ class ToolExecutor(
             }
             out.append('\n')
         }
-        val r = shell.execute("python ${SandboxShell.shellQuote("/workspace$script")}", cwd)
+        val r = terminal.run(TerminalOrigin.AGENT, "python ${SandboxShell.shellQuote("/workspace$script")}")
         if (call.packages.isNotEmpty()) out.append("$ python ").append(call.scriptName).append('\n')
         out.append(r.output)
         // 127 from Termux's bash = command not found: Python itself is not installed yet.

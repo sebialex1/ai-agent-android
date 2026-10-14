@@ -53,7 +53,9 @@ class SessionRuntime(
     val audit = FileAuditLog(dir)
     /** Read-only view of the other conversations, used only when memory is on for this one. */
     val memory = ConversationMemoryReader(sessions, sessionId)
-    val tools = ToolExecutor(workspace, shell, web, memory, images)
+    /** One terminal for the agent and the user: same shell, working directory and history. */
+    val terminal = com.sebialex.agent.data.shell.SharedTerminal(shell)
+    val tools = ToolExecutor(workspace, shell, terminal, web, memory, images)
 }
 
 /** Manual dependency container. */

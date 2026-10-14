@@ -144,7 +144,7 @@ fun AppRoot(container: AppContainer) {
                     initialSection = screen.section,
                 )
                 Screen.Workspace -> WorkspaceScreen(
-                    shell = runtime.shell,
+                    terminal = runtime.terminal,
                     policy = container.policy,
                     workspace = runtime.workspace,
                     sources = chat.session.turns.flatMap { it.sources },

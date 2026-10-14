@@ -50,7 +50,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
-import com.sebialex.agent.data.shell.Shell
+import com.sebialex.agent.data.shell.SharedTerminal
+import com.sebialex.agent.data.shell.TerminalEntry
+import com.sebialex.agent.data.shell.TerminalOrigin
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.data.workspace.Workspace
 import com.sebialex.agent.domain.model.FileAttachment
 import com.sebialex.agent.domain.model.SourceRef
@@ -69,8 +73,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private data class Entry(val cwd: String, val command: String, val output: String, val code: Int)
-
 /** Sections of the workspace, shown as icon tabs in the top bar (terminal, sources, files). */
 enum class WorkspaceTab(val icon: Int, val label: String) {
     TERMINAL(R.drawable.ic_terminal, "Terminal"),
@@ -84,12 +86,15 @@ enum class WorkspaceTab(val icon: Int, val label: String) {
  * Sources and Files only appear when there is something in them; an empty section is never
  * rendered. Artifacts (files the agent wrote) get their own group above the raw workspace files.
  *
- * The terminal is the same sandbox and permission policy the agent uses; risky commands need an
- * explicit confirmation before they run.
+ * The terminal is the conversation's shared sandbox terminal: it lists the commands the agent ran
+ * with their output, and what you type runs in the very same shell and working directory the
+ * agent uses (so a `cd` by either is seen by both). The permission policy applies to your commands
+ * too: risky ones need an explicit confirmation before they run. The file tree is a separate tab
+ * for browsing and previewing files only.
  */
 @Composable
 fun WorkspaceScreen(
-    shell: Shell,
+    terminal: SharedTerminal,
     policy: PermissionPolicy,
     workspace: Workspace,
     sources: List<SourceRef>,
@@ -99,25 +104,22 @@ fun WorkspaceScreen(
     onOpenUrl: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // Terminal state lives here so switching tabs never loses the session.
-    val entries = remember { mutableStateListOf<Entry>() }
-    var cwd by rememberSaveable { mutableStateOf("/") }
+    // The terminal itself lives in the conversation's runtime; only the draft and the pending
+    // confirmation live here, so switching tabs never loses anything.
+    val entries by terminal.entries.collectAsStateWithLifecycle()
+    val cwd by terminal.cwd.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
     var tab by rememberSaveable { mutableStateOf(WorkspaceTab.TERMINAL) }
     var preview by remember { mutableStateOf<SourceRef?>(null) }
-    // Bumped after every terminal command so the file manager shows what it changed.
+    // Bumped after every command (yours or the agent's) so the file manager shows what changed.
     var filesVersion by remember { mutableStateOf(0) }
-
-    fun refreshFiles() { filesVersion++ }
+    LaunchedEffect(entries.count { !it.running }) { filesVersion++ }
 
     fun run(command: String) {
         scope.launch {
-            val r = withContext(Dispatchers.IO) { shell.execute(command, cwd) }
-            if (r.output == "\u000c") entries.clear() else entries += Entry(cwd, command, r.output, r.exitCode)
-            cwd = r.cwd
+            val r = withContext(Dispatchers.IO) { terminal.run(TerminalOrigin.USER, command) }
             r.openFile?.let { onOpenFile(it, null) }
-            refreshFiles()
         }
     }
 
@@ -128,12 +130,8 @@ fun WorkspaceScreen(
         when (val d = policy.evaluateShell(command)) {
             PermissionDecision.Allow -> run(command)
             is PermissionDecision.Ask -> pending = command to d.reason.label
-            is PermissionDecision.Deny -> entries += Entry(cwd, command, "blocked: ${d.reason.label}", 1)
+            is PermissionDecision.Deny -> terminal.note(TerminalOrigin.USER, command, "blocked: ${d.reason.label}", 1)
         }
-    }
-
-    LaunchedEffect(Unit) {
-        if (entries.isEmpty()) run("ls")
     }
 
     // Only sections with content are offered.
@@ -238,7 +236,7 @@ private fun SegmentedTabs(tabs: List<WorkspaceTab>, selected: WorkspaceTab, onSe
 
 @Composable
 private fun TerminalTab(
-    entries: List<Entry>,
+    entries: List<TerminalEntry>,
     cwd: String,
     input: String,
     onInput: (String) -> Unit,
@@ -248,36 +246,42 @@ private fun TerminalTab(
     onSubmit: () -> Unit,
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(entries.size) { if (entries.isNotEmpty()) listState.animateScrollToItem(entries.lastIndex) }
+    // Follow new output, including the live output of a command the agent is running.
+    LaunchedEffect(entries.size, entries.lastOrNull()?.running) { if (entries.isNotEmpty()) listState.animateScrollToItem(entries.lastIndex) }
     Column(Modifier.fillMaxSize()) {
-        SelectionContainer(Modifier.weight(1f)) {
+        if (entries.isEmpty()) Text(
+            "Commands the agent runs show up here, and so do yours. You work in the same folder and shell as the agent.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Palette.TextTertiary,
+            modifier = Modifier.weight(1f).padding(horizontal = 24.dp, vertical = 16.dp),
+        ) else SelectionContainer(Modifier.weight(1f)) {
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.fillMaxSize().fadeTopEdge(),
             ) {
-                items(entries) { e ->
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Palette.CodeBackground)
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                    ) {
+                items(entries, key = { it.id }) { e ->
+                    Column(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "/workspace" + if (e.cwd == "/") "" else e.cwd,
+                                (if (e.origin == TerminalOrigin.AGENT) "agent" else "you") + " \u00b7 /workspace" + if (e.cwd == "/") "" else e.cwd,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Palette.TextTertiary,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1,
                             )
-                            if (e.code != 0) Text("exit ${e.code}", style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
+                            if (e.running) Text("running\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+                            else if (e.exitCode != null && e.exitCode != 0) Text("exit ${e.exitCode}", style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
                         }
-                        Text("$ ${e.command}", style = MonoSmall, color = Palette.TextPrimary, modifier = Modifier.padding(top = 4.dp))
+                        Text("$ ${e.command}", style = MonoSmall, color = Palette.TextPrimary, modifier = Modifier.padding(top = 2.dp))
                         if (e.output.isNotEmpty()) {
-                            Text(e.output, style = MonoSmall, color = if (e.code == 0) Palette.TextSecondary else Palette.Danger, modifier = Modifier.padding(top = 6.dp))
+                            Text(
+                                e.output.trimEnd('\n'),
+                                style = MonoSmall,
+                                color = if (e.exitCode == null || e.exitCode == 0) Palette.TextSecondary else Palette.Danger,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
                         }
                     }
                 }
@@ -288,7 +292,8 @@ private fun TerminalTab(
                 Modifier
                     .padding(horizontal = 12.dp, vertical = 6.dp)
                     .fillMaxWidth()
-                    .softSurface(RoundedCornerShape(20.dp), Palette.Surface, elevation = 4.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Palette.Surface)
                     .padding(start = 16.dp, end = 10.dp, top = 14.dp, bottom = 10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -308,7 +313,8 @@ private fun TerminalTab(
             Modifier
                 .padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp)
                 .fillMaxWidth()
-                .softSurface(RoundedCornerShape(28.dp), Palette.SurfaceHigh, elevation = 10.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(Palette.Surface)
                 .heightIn(min = 52.dp)
                 .padding(start = 16.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -325,7 +331,7 @@ private fun TerminalTab(
                 keyboardActions = KeyboardActions(onSend = { onSubmit() }),
                 modifier = Modifier.weight(1f).padding(vertical = 14.dp),
                 decorationBox = { inner ->
-                    if (input.isEmpty()) Text("Run a command in " + "/workspace" + if (cwd == "/") "" else cwd, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1)
+                    if (input.isEmpty()) Text("Run in /workspace" + if (cwd == "/") "" else cwd, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1)
                     inner()
                 },
             )
