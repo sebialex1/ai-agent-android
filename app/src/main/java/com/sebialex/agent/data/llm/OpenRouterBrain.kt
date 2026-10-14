@@ -644,7 +644,8 @@ class OpenRouterBrain(
               user asked you to look at are already shown with their message; never look when told not to.
             Results
             - attach_files: attach the files you produced to your answer (see Artifacts).
-            - generate_image: create a picture from a description; it is saved and attached automatically.
+            - generate_image: create a picture from a description; it is saved in the workspace. When the user asked
+              for the picture, attach it with attach_files (a short, human-readable name).
             - device_info: current date, time, time zone, locale and Android version.
 
             # Artifacts
@@ -830,7 +831,9 @@ class OpenRouterBrain(
                 put("name", "attach_files")
                 put(
                     "description",
-                    "Attach workspace files you produced (video, image, audio, PDF, document, archive) to your answer. " +
+                    "Attach workspace files the user asked for or that you produced for them in this turn (video, image, audio, PDF, " +
+                        "document, archive) to your answer. Only files created or changed in this turn, or that the user mentioned or " +
+                        "asked to see, are attached. " +
                         "The user sees each one as a compact chip that opens the built-in viewer/player. Give a short, " +
                         "human-readable `name` when the file has an ugly auto-generated one; the file is renamed in place.",
                 )
@@ -958,7 +961,7 @@ class OpenRouterBrain(
                 ),
                 typedFn(
                     "generate_image", "Create a picture from a text description with an image model. The image is saved in " +
-                        "the workspace and attached to your answer automatically.",
+                        "the workspace (not attached): call attach_files with it when the user asked for the picture.",
                     Param("prompt", "string", "Detailed description of the picture: subject, style, composition, lighting"),
                     Param("filename", "string", "Optional human-readable path, e.g. images/Red panda astronaut.png", required = false),
                     Param("aspect_ratio", "string", "Optional, e.g. 1:1, 16:9, 9:16, 4:3", required = false),

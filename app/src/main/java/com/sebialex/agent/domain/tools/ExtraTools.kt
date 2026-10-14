@@ -121,7 +121,7 @@ internal object ExtraTools {
         return ToolResult(call.callId, true, "extracted $count file${if (count == 1) "" else "s"} into ${ws.virtualOf(dest)}")
     }
 
-    /** Asks the image model for a picture and saves it; the file is attached to the answer as an artifact. */
+    /** Asks the image model for a picture and saves it in the workspace (attach_files shows it to the user). */
     suspend fun image(ws: Workspace, generator: ImageGenerator?, call: ToolCall.GenerateImage): ToolResult {
         val gen = generator ?: return ToolResult(call.callId, false, "Image generation is not available: pick an image model in Settings > Models > Image generation.")
         val img = gen.generate(call.prompt, call.aspectRatio)
@@ -143,7 +143,12 @@ internal object ExtraTools {
         val saved = ws.writeBytes(path, img.bytes)
         val f = ws.resolve(saved)
         val a = FileAttachment(path = ws.virtualOf(f), name = f.name, updatedAt = System.currentTimeMillis())
-        return ToolResult(call.callId, true, "saved the generated image to ${a.path} (${human(f.length())}); it is attached to your answer", artifacts = listOf(a))
+        // Saving is not attaching: the picture appears under the answer only through attach_files.
+        return ToolResult(
+            call.callId, true,
+            "saved the generated image to ${a.path} (${human(f.length())}). It is not attached yet: if the user asked for this " +
+                "picture, call the attach_files tool with this path (and a short name) so it appears under your answer.",
+        )
     }
 
     private val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif")

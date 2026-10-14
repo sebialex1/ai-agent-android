@@ -71,6 +71,9 @@ class AgentOrchestrator(
         val vision = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
         val images = vision.images
         val modelTask = task + vision.note
+        // What the workspace looked like before this turn, so attach_files can tell the files
+        // produced now (downloaded, converted, generated) from old ones the user did not ask for.
+        val before = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { workspaceStamps() }
         // The decision goes to the audit log only (no row in the chat), with its distinct intent.
         vision.intent?.let { intent ->
             audit.record(
@@ -138,8 +141,9 @@ class AgentOrchestrator(
                 is BrainDecision.Act -> {
                     batch++
                     decision.thought?.let { thoughts[batch] = it }
-                    for (call in decision.calls) {
+                    for (requested in decision.calls) {
                         executed++
+                        var call = requested
                         if (call is ToolCall.Invalid) {
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
                             continue
@@ -154,6 +158,26 @@ class AgentOrchestrator(
                         if (call is ToolCall.Memory && !memory) {
                             observations += Observation(call, ToolResult(call.callId, false, "Memory of past conversations is turned off for this conversation."), batch)
                             continue
+                        }
+                        // attach_files only attaches files the user plausibly wants (see AttachPolicy).
+                        var attachNotes = emptyList<String>()
+                        if (call is ToolCall.AttachFiles) {
+                            val attach: ToolCall.AttachFiles = call
+                            val checked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                attach.files.map { spec ->
+                                    spec to AttachPolicy.refusal(spec.path, task, producedThisTurn(spec.path, before, attachments.keys))
+                                }
+                            }
+                            attachNotes = checked.mapNotNull { it.second }
+                            val ok = checked.filter { it.second == null }.map { it.first }
+                            if (ok.isEmpty()) {
+                                observations += Observation(call, ToolResult(call.callId, false, attachNotes.joinToString("\n")), batch)
+                                audit.record(
+                                    stepFor(call).copy(status = StepStatus.FAILED, output = attachNotes.joinToString("\n"), finishedAt = now()),
+                                )
+                                continue
+                            }
+                            call = attach.copy(files = ok)
                         }
                         var autoRisk: String? = null
                         val allowed = when (val d = policy.evaluate(call)) {
@@ -190,7 +214,9 @@ class AgentOrchestrator(
                             if (autoRisk != null) s.copy(autoApproved = true, risk = autoRisk) else s
                         }
                         send(AgentEvent.StepAdded(step))
-                        val result = tools.execute(call)
+                        val result = tools.execute(call).let { r ->
+                            if (attachNotes.isEmpty()) r else r.copy(output = r.output + "\n" + attachNotes.joinToString("\n"))
+                        }
                         val finished = step.copy(
                             status = if (result.ok) StepStatus.DONE else StepStatus.FAILED,
                             output = result.output,
@@ -204,7 +230,8 @@ class AgentOrchestrator(
                             val prior = attachments[a.path]
                             attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
                         }
-                        result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
+                        // Artifacts come from a real attach_files call only: no other tool attaches by side effect.
+                        if (call is ToolCall.AttachFiles) result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
                         // Only pages that were actually fetched and read become website sources.
                         if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
                         observations += Observation(call, result, batch)
@@ -282,6 +309,24 @@ class AgentOrchestrator(
     /** Attached files that still exist when the turn ends (one was deleted or moved meanwhile: dropped). */
     private fun liveArtifacts(artifacts: Map<String, FileAttachment>): List<FileAttachment> =
         artifacts.values.filter { a -> runCatching { workspace.resolve(a.path).isFile }.getOrDefault(false) }
+
+    /** Every workspace file with its last-modified time, keyed by virtual path. */
+    private fun workspaceStamps(): Map<String, Long> =
+        runCatching { workspace.walk().associate { workspace.virtualOf(it) to it.lastModified() } }.getOrDefault(emptyMap())
+
+    /**
+     * True when [path] was created or changed during this turn: it did not exist before it,
+     * its modification time moved, or a tool of this turn reported writing it. Also true for a
+     * path that does not exist, so the tool's own error reaches the model.
+     */
+    private fun producedThisTurn(path: String, before: Map<String, Long>, written: Set<String>): Boolean {
+        // A missing file is left to attach_files itself, which reports "no such file".
+        val f = runCatching { workspace.resolve(path) }.getOrNull()?.takeIf { it.isFile } ?: return true
+        val v = workspace.virtualOf(f)
+        if (v in written) return true
+        val old = before[v] ?: return true
+        return f.lastModified() != old
+    }
 
     private fun workspaceFiles(): List<String> =
         workspace.walk().map { workspace.virtualOf(it) }.filterNot { it.startsWith("/.") }.sorted()
