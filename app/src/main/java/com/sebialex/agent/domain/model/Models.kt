@@ -7,7 +7,7 @@ enum class Role { USER, ASSISTANT }
 
 /**
  * The type of an action in the audit trail. Drives the icon shown in the step row.
- * [REASONING] holds the model's raw reasoning for the turn; it is always the first step.
+ * [REASONING] holds the model's raw reasoning for the turn; one step per model call, in the order it happened.
  */
 @Serializable
 enum class StepKind { SEARCH, FETCH, SHELL, FILE_READ, FILE_WRITE, PERMISSION, REASONING }

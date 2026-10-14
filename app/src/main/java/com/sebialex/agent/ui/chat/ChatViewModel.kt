@@ -303,15 +303,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private fun handle(sessionId: String, turnId: String, event: AgentEvent) {
         when (event) {
             is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) {
-                // Reasoning always sits at the top of the turn's action list.
-                if (event.step.kind == StepKind.REASONING) it.copy(steps = listOf(event.step) + it.steps)
-                else it.copy(steps = it.steps + event.step)
+                // Steps keep the real order of events (tool, think, tool, tool, think).
+                if (it.steps.any { s -> s.id == event.step.id }) it else it.copy(steps = it.steps + event.step)
             }
             // Upsert: live reasoning updates may arrive for a row whose first event was dropped.
             is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t ->
                 when {
                     t.steps.any { it.id == event.step.id } -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it })
-                    event.step.kind == StepKind.REASONING -> t.copy(steps = listOf(event.step) + t.steps)
                     else -> t.copy(steps = t.steps + event.step)
                 }
             }

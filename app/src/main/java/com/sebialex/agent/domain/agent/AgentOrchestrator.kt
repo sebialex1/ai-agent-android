@@ -64,7 +64,6 @@ class AgentOrchestrator(
         val artifacts = linkedMapOf<String, FileAttachment>()
         val sources = linkedMapOf<String, SourceRef>()
         val thoughts = mutableMapOf<Int, Thought>()
-        var thoughtStep: Step? = null
         var executed = 0
         var batch = 0
         // Imported images: shown with the message when the user asked to look (or wrote nothing
@@ -91,54 +90,45 @@ class AgentOrchestrator(
             val memory = memoryEnabled()
             val ctx = BrainContext(modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images)
             val requestedAt = now()
-            // Live reasoning: the thought row is created on the first streamed delta and updated
-            // (throttled) while the model thinks. Every event carries the full step, so a dropped
+            // Live reasoning: each model call gets its own thought step, created on the first
+            // non-blank streamed delta and updated (throttled) while the model thinks. Steps are
+            // appended in event order, so the turn keeps the real interleaving
+            // (tool, think, tool, tool, think). Every event carries the full step, so a dropped
             // intermediate update is harmless; the final state below is always sent.
-            val committed = thoughtStep
             val live = StringBuilder()
             var liveId: String? = null
+            var liveSent = false
             var lastLive = 0L
-            fun liveStep(): Step {
-                val text = live.toString()
-                val base = committed
-                return if (base != null) base.copy(output = base.output + "\n\n" + text, status = StepStatus.RUNNING, finishedAt = null)
-                    else Step(
-                        id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
-                        input = "", output = text, status = StepStatus.RUNNING, startedAt = requestedAt,
-                    )
-            }
+            fun liveStep(): Step = Step(
+                id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                input = "", output = live.toString(), status = StepStatus.RUNNING, startedAt = requestedAt,
+            )
             val decision = brain.next(ctx) { delta ->
                 synchronized(live) {
                     live.append(delta)
-                    val first = liveId == null
-                    if (first) liveId = committed?.id ?: nextId()
+                    // Whitespace-only so far: no row yet (never an empty placeholder).
+                    if (live.isBlank()) return@synchronized
+                    if (liveId == null) liveId = nextId()
+                    val first = !liveSent
                     val t = now()
                     if (first || t - lastLive >= LIVE_THROTTLE_MS) {
                         lastLive = t
+                        liveSent = true
                         val step = liveStep()
-                        trySend(if (first && committed == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
+                        trySend(if (first) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
                     }
                 }
             }
             val streamed = synchronized(live) { live.toString() }
-            // Reasoning becomes one quiet step at the top of the turn; later reasoning is appended.
-            val finalText = decision.thought?.text?.takeIf { it.isNotBlank() } ?: streamed.takeIf { it.isNotBlank() }
+            // The brain's final thought text wins over the streamed text; never both.
+            val finalText = (decision.thought?.text?.takeIf { it.isNotBlank() } ?: streamed.takeIf { it.isNotBlank() })?.trim()
             if (finalText != null) {
-                val prior = committed
-                val step = if (prior == null) {
-                    Step(
-                        id = liveId ?: nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
-                        input = "", output = finalText, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
-                    )
-                } else {
-                    prior.copy(output = prior.output + "\n\n" + finalText, status = StepStatus.DONE, finishedAt = now())
-                }
-                thoughtStep = step
-                send(if (prior == null && liveId == null) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
+                val step = Step(
+                    id = liveId ?: nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                    input = "", output = finalText, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
+                )
+                send(if (liveSent) AgentEvent.StepUpdated(step) else AgentEvent.StepAdded(step))
                 audit.record(step)
-            } else if (committed != null && liveId != null) {
-                // Only whitespace streamed: restore the committed thought as finished.
-                send(AgentEvent.StepUpdated(committed))
             }
             when (decision) {
                 is BrainDecision.Answer -> {

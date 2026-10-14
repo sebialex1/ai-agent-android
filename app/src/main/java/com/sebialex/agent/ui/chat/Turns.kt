@@ -213,17 +213,15 @@ fun AssistantTurn(
     resolveFile: (String) -> java.io.File? = { null },
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        val actions = turn.steps.filter { it.kind != StepKind.REASONING }
-        val reasoning = turn.steps.filter { it.kind == StepKind.REASONING }
-        when {
-            // Thinking and tool calls: the tool calls keep their own group, and the model's
-            // thinking gets a separate collapsible section below it instead of being mixed in.
-            actions.isNotEmpty() -> {
-                StepsGroup(actions, actions.size, expanded, onToggle, onOpenStep)
-                reasoning.forEach { ThinkingSection(it, onOpen = { onOpenStep(it) }) }
+        // Real order, as it happened: tool calls run together in a group, each think block sits
+        // where it occurred (tool, think, tool, tool, think). Blank or repeated thinking is dropped.
+        val segments = remember(turn.steps) { stepSegments(turn.steps) }
+        segments.forEach { seg ->
+            when {
+                seg.size == 1 && seg[0].kind == StepKind.REASONING -> ThinkingSection(seg[0], onOpen = { onOpenStep(seg[0]) })
+                seg.size == 1 -> StepRow(seg[0], onClick = { onOpenStep(seg[0]) })
+                else -> StepsGroup(seg, seg.size, expanded, onToggle, onOpenStep)
             }
-            // Reasoning alone needs no group: the quiet thought row is the whole action list.
-            turn.steps.isNotEmpty() -> turn.steps.forEach { StepRow(it, onClick = { onOpenStep(it) }) }
         }
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
@@ -252,6 +250,27 @@ fun AssistantTurn(
             }
         }
     }
+}
+
+/**
+ * Splits a turn's steps into display segments in their real order: a think block is its own
+ * segment, and consecutive tool calls form one segment. Reasoning with no text (or text already
+ * shown by an earlier block) is dropped, so there are no placeholder or duplicate rows.
+ */
+internal fun stepSegments(steps: List<Step>): List<List<Step>> {
+    val seen = HashSet<String>()
+    val out = mutableListOf<MutableList<Step>>()
+    for (st in steps) {
+        if (st.kind == StepKind.REASONING) {
+            val text = st.output.trim()
+            if (text.isEmpty() || !seen.add(text)) continue
+            out += mutableListOf(st)
+        } else {
+            val last = out.lastOrNull()
+            if (last != null && last[0].kind != StepKind.REASONING) last += st else out += mutableListOf(st)
+        }
+    }
+    return out
 }
 
 /**
@@ -315,7 +334,7 @@ private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, o
 @Composable
 private fun StepRow(step: Step, onClick: () -> Unit) {
     if (step.kind == StepKind.REASONING) {
-        ThoughtRow(step, onClick)
+        ThinkingSection(step, onClick)
         return
     }
     val failed = step.status == StepStatus.FAILED
@@ -349,9 +368,7 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
     ) {
         Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
             when {
-                // Reasoning: a plain ellipsis, no icon and no colour.
-                step.kind == StepKind.REASONING -> Text("\u2026", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
-                failed && step.kind != StepKind.PERMISSION -> AppIcon(R.drawable.ic_warning, "Failed", tint = tint, size = 17.dp)
+                //                 failed && step.kind != StepKind.PERMISSION -> AppIcon(R.drawable.ic_warning, "Failed", tint = tint, size = 17.dp)
                 step.kind == StepKind.FETCH -> Favicon(step.payload, size = 15.dp)
                 else -> AppIcon(iconFor(step.kind), null, tint = tint, size = 17.dp)
             }
@@ -398,18 +415,10 @@ private const val MISSING_MARK = "so the command was not run"
  */
 @Composable
 private fun ThoughtRow(step: Step, onClick: () -> Unit) {
-    val live = step.status == StepStatus.RUNNING
     // Collapse whitespace so the reasoning reads as one flowing line of words.
     val flowing = remember(step.output) { step.output.replace(Regex("\\s+"), " ").trim() }
     val style = MaterialTheme.typography.bodySmall
     val lineHeight = with(LocalDensity.current) { style.lineHeight.toDp() }
-    val pulse = rememberInfiniteTransition(label = "thinking")
-    val alpha by pulse.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "thinkingAlpha",
-    )
     Row(
         Modifier
             .fillMaxWidth()
@@ -419,36 +428,24 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
             .padding(start = 2.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Nothing in front (no "thought" label, no icon): the row is only the thinking words.
-        if (flowing.isEmpty()) {
-            // Nothing readable yet (or encrypted reasoning only): a quiet pulsing placeholder.
+        // Only used while the model is thinking: newest words at the bottom of a ~1.4 line
+        // window; whatever overflows fades away.
+        Box(
+            Modifier
+                .weight(1f)
+                .height(lineHeight * 1.4f)
+                .clipToBounds()
+                .fadeTopEdge(),
+        ) {
             Text(
-                "\u2026",
+                flowing.takeLast(LIVE_THOUGHT_CHARS),
                 style = style,
                 color = Palette.TextTertiary,
-                modifier = Modifier.weight(1f).then(if (live) Modifier.alpha(alpha) else Modifier),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomStart)
+                    .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
             )
-        } else if (live) {
-            // Newest words at the bottom of a ~1.4 line window; whatever overflows fades away.
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(lineHeight * 1.4f)
-                    .clipToBounds()
-                    .fadeTopEdge(),
-            ) {
-                Text(
-                    flowing.takeLast(LIVE_THOUGHT_CHARS),
-                    style = style,
-                    color = Palette.TextTertiary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomStart)
-                        .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
-                )
-            }
-        } else {
-            FadingText(flowing.take(240), style, Palette.TextTertiary, Modifier.weight(1f))
         }
         Spacer(Modifier.width(8.dp))
         AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
@@ -487,7 +484,7 @@ private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
             AppIcon(R.drawable.ic_chevron_right, if (open) "Hide thinking" else "Show thinking", tint = Palette.TextTertiary, size = 15.dp, modifier = Modifier.rotate(rotation))
         }
         // Live and collapsed: the moving one-line window, so thinking is still visible as it streams.
-        if (live && !open) ThoughtRow(step, onOpen)
+        if (live && !open && step.output.isNotBlank()) ThoughtRow(step, onOpen)
         AnimatedVisibility(
             visible = open,
             enter = expandVertically(tween(200)) + fadeIn(tween(160)),
@@ -509,7 +506,7 @@ private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
                     .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             ) {
                 Text(
-                    text.ifEmpty { "\u2026" },
+                    text,
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.TextTertiary,
                 )
