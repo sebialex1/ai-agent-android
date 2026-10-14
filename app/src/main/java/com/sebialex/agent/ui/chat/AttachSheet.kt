@@ -140,7 +140,7 @@ private fun AttachTile(@DrawableRes icon: Int, label: String, modifier: Modifier
 private fun ThinkingToggle(settings: SecureSettings, models: OpenRouterModels) {
     val snap by settings.state.collectAsStateWithLifecycle()
     var info by remember(snap.model) { mutableStateOf<ModelReasoning?>(null) }
-    LaunchedEffect(snap.model, snap.customProviders) {
+    LaunchedEffect(snap.model, snap.customProviders, snap.reasoningOverrides) {
         info = try {
             models.reasoning(snap.model)
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -377,11 +377,13 @@ class OpenRouterModels(
         return lock.withLock { listed }
     }
 
-    /** Reasoning metadata for [model]. Unknown models and routers come back as unsupported. */
+    /** Reasoning metadata for [model]. Routers come back as unsupported, models missing from the list as unknown. */
     suspend fun reasoning(model: String, refresh: Boolean = false): ModelReasoning {
         other(model)?.let { return it }
         val all = catalog(refresh)
-        return all[model] ?: all[model.substringBefore(':')]?.takeIf { model.contains(':') } ?: ModelReasoning.unsupported(model)
+        // A model missing from the catalog is unknown (typo, retired, private), not "unsupported".
+        return all[model] ?: all[model.substringBefore(':')]?.takeIf { model.contains(':') }
+            ?: ModelReasoning.unknown(model, "not in OpenRouter's model list")
     }
 
     private var images: List<MediaModelOption> = emptyList()

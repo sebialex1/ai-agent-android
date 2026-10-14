@@ -83,13 +83,12 @@ class AppContainer(app: Application) {
 
     /** Reasoning support of an on-device model: an on/off switch when it has a thinking mode. */
     private fun localReasoning(id: String): ModelReasoning {
-        val model = LocalModels.resolve(id)
-        val thinking = when {
-            model == null -> false
-            model.imported -> localEngine.capabilities(id)?.thinking ?: false
-            else -> model.thinking
-        }
-        return ModelReasoning.local(id, thinking)
+        val model = LocalModels.resolve(id) ?: return ModelReasoning.unknown(id, "not an installed on-device model")
+        if (!model.imported) return ModelReasoning.local(id, model.thinking, "on-device catalog (chat template)")
+        // Imported .litertlm files: LiteRT-LM reports thinking support once the model is loaded.
+        val thinking = localEngine.capabilities(id)?.thinking
+            ?: return ModelReasoning.unknown(id, "load the model once to read its thinking support").copy(wire = com.sebialex.agent.data.llm.ReasoningWire.LOCAL)
+        return ModelReasoning.local(id, thinking, "LiteRT-LM model metadata")
     }
 
     /** Ollama Cloud: hosted models at ollama.com, a second cloud provider next to OpenRouter. */
@@ -108,8 +107,10 @@ class AppContainer(app: Application) {
             when {
                 LocalModels.isLocal(id) -> localReasoning(id)
                 OllamaCloud.isOllama(id) -> ollama.reasoning(id)
-                // Custom providers publish no reasoning metadata: no reasoning control is offered.
-                CustomProviders.isCustom(id) -> ModelReasoning.unsupported(id)
+                // Manual override, saved model-list metadata, documented families, else unknown.
+                CustomProviders.isCustom(id) -> com.sebialex.agent.data.llm.CustomReasoning.detect(
+                    id, CustomProviders.parse(id)?.first?.let { settings.customProvider(it) }, settings.reasoningOverride(id),
+                )
                 else -> null
             }
         },

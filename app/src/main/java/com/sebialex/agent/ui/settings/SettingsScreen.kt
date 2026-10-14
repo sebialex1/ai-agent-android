@@ -197,6 +197,8 @@ fun SettingsScreen(
                         CustomProvidersGroup(settings, snap)
                         // generate_image's provider and model (only models that can make images).
                         ImageModelGroup(settings, snap, models)
+                        // Reasoning detection for custom providers, with a manual override per model.
+                        ThinkingSupportGroup(settings, snap)
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
                     SettingsSection.CHATS -> {
