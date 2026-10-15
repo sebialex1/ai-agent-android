@@ -4,6 +4,8 @@ import com.sebialex.agent.domain.model.ImageInput
 import com.sebialex.agent.domain.model.ToolCall
 import com.sebialex.agent.domain.model.ToolResult
 import com.sebialex.agent.domain.model.Turn
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * One executed tool call and its real result. [batch] groups calls that the model requested
@@ -50,6 +52,12 @@ data class BrainContext(
      * the first is the default. spawn_subagent is only offered to the main agent when non-empty.
      */
     val subagentModels: List<String> = emptyList(),
+    /**
+     * One identity per orchestrator run (a UUID). Two runs with the same prompt never share or
+     * close each other's conversation; empty when a caller does not set it. Last on purpose:
+     * positional call sites that predate it keep compiling unchanged.
+     */
+    val runId: String = "",
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }
@@ -94,6 +102,13 @@ interface AgentBrain {
      * show live thinking. It may be called from a background thread and never after return.
      */
     suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit = {}): BrainDecision
+
+    /**
+     * Called once when the turn ends, however it ended (answer, error, Stop, step limit), so a
+     * brain that holds per-turn resources — the on-device conversation — can release them.
+     * The default does nothing, so existing brains and fakes compile unchanged.
+     */
+    suspend fun endTurn(ctx: BrainContext) {}
 }
 
 /**
@@ -126,6 +141,9 @@ class RoutingBrain(
     private val remote: (key: String, model: String) -> AgentBrain,
     private val other: (model: String) -> BrainRoute? = { null },
 ) : AgentBrain {
+    /** Every brain that served each run, so endTurn reaches them all even if the model changed mid-run. */
+    private val served = ConcurrentHashMap<String, MutableList<AgentBrain>>()
+
     override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
         val m = model()
         other(m)?.let { route ->
@@ -133,13 +151,30 @@ class RoutingBrain(
             val provider = route.provider
             if (factory != null && provider != null) {
                 val key = keys.activeKey(provider) ?: return BrainDecision.Answer(route.notice)
-                return rotating(route.label, provider, key) { k -> factory(k).next(ctx, onReasoning) }
+                return rotating(route.label, provider, key) { k -> remember(ctx, factory(k)).next(ctx, onReasoning) }
             }
             val brain = route.brain ?: return BrainDecision.Answer(route.notice)
+            remember(ctx, brain)
             return guarded(route.label) { brain.next(ctx, onReasoning) }
         }
         val key = keys.activeKey(KeyPool.OPENROUTER) ?: return BrainDecision.Answer(NO_KEY_NOTICE)
-        return rotating("model request", KeyPool.OPENROUTER, key) { k -> remote(k, m).next(ctx, onReasoning) }
+        return rotating("model request", KeyPool.OPENROUTER, key) { k -> remember(ctx, remote(k, m)).next(ctx, onReasoning) }
+    }
+
+    override suspend fun endTurn(ctx: BrainContext) {
+        val brains = if (ctx.runId.isNotEmpty()) served.remove(ctx.runId) else null
+        // Forwarded to every brain that served the run, each exactly once, even if the selected
+        // model changed since: a run that used the on-device model and then switched to cloud
+        // releases the on-device conversation too.
+        brains?.forEach { it.endTurn(ctx) }
+    }
+
+    private fun remember(ctx: BrainContext, brain: AgentBrain): AgentBrain {
+        if (ctx.runId.isNotEmpty()) {
+            val list = served.computeIfAbsent(ctx.runId) { Collections.synchronizedList(mutableListOf()) }
+            synchronized(list) { if (list.none { it === brain }) list += brain }
+        }
+        return brain
     }
 
     /**

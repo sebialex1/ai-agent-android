@@ -13,10 +13,13 @@ import com.sebialex.agent.domain.model.Turn
 import com.sebialex.agent.domain.permission.PermissionDecision
 import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.domain.tools.ToolExecutor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface AgentEvent {
     data class StepAdded(val step: Step) : AgentEvent
@@ -86,254 +89,269 @@ class AgentOrchestrator(
         control: SubagentControl = SubagentControl(),
         parent: ParentLink? = null,
     ): Flow<AgentEvent> = channelFlow {
-        val isChild = parent != null
-        var spawned = 0
-        val observations = mutableListOf<Observation>()
-        val attachments = linkedMapOf<String, FileAttachment>()
-        val artifacts = linkedMapOf<String, FileAttachment>()
-        val sources = linkedMapOf<String, SourceRef>()
-        val thoughts = mutableMapOf<Int, Thought>()
-        var executed = 0
-        var batch = 0
-        // Imported images: shown with the message when the user asked to look (or wrote nothing
-        // else); otherwise the model is only told they exist and may call view_image itself.
-        val vision = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
-        val images = vision.images
-        val modelTask = task + vision.note
-        // What the workspace looked like before this turn, so attach_files can tell the files
-        // produced now (downloaded, converted, generated) from old ones the user did not ask for.
-        val before = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { workspaceStamps() }
-        // The decision goes to the audit log only (no row in the chat), with its distinct intent.
-        vision.intent?.let { intent ->
-            audit.record(
-                Step(
-                    id = nextId(), kind = StepKind.FILE_READ, payload = "vision: ${intent.name.lowercase()}", tool = "vision_intent",
-                    input = vision.paths.joinToString(", "), output = when {
-                        intent.shown -> "shown with the message"
-                        intent.viewImage -> "not shown; view_image allowed on demand"
-                        else -> "not shown; view_image refused for this turn"
-                    },
-                    status = StepStatus.DONE, startedAt = now(), finishedAt = now(),
-                ),
-            )
-        }
-
-        while (executed < maxSteps) {
-            val memory = memoryEnabled()
-            val ctx = BrainContext(
-                modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
-                todos = chat.todos(),
-                mode = if (isChild) AgentMode.SUBAGENT else AgentMode.MAIN,
-                subagentModels = if (isChild) emptyList() else subagents?.models().orEmpty(),
-            )
-            val requestedAt = now()
-            // Live reasoning: each model call gets its own thought step, created on the first
-            // non-blank streamed delta and updated (throttled) while the model thinks. Steps are
-            // appended in event order, so the turn keeps the real interleaving
-            // (tool, think, tool, tool, think). Every event carries the full step, so a dropped
-            // intermediate update is harmless; the final state below is always sent.
-            val live = StringBuilder()
-            var liveId: String? = null
-            var liveSent = false
-            var lastLive = 0L
-            fun liveStep(): Step = Step(
-                id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
-                input = "", output = live.toString(), status = StepStatus.RUNNING, startedAt = requestedAt,
-            )
-            val decision = brain.next(ctx) { delta ->
-                synchronized(live) {
-                    live.append(delta)
-                    // Whitespace-only so far: no row yet (never an empty placeholder).
-                    if (live.isBlank()) return@synchronized
-                    if (liveId == null) liveId = nextId()
-                    val first = !liveSent
-                    val t = now()
-                    if (first || t - lastLive >= LIVE_THROTTLE_MS) {
-                        lastLive = t
-                        liveSent = true
-                        val step = liveStep()
-                        trySend(if (first) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
-                    }
-                }
-            }
-            val streamed = synchronized(live) { live.toString() }
-            // The brain's final thought text wins over the streamed text; never both.
-            val finalText = (decision.thought?.text?.takeIf { it.isNotBlank() } ?: streamed.takeIf { it.isNotBlank() })?.trim()
-            if (finalText != null) {
-                val step = Step(
-                    id = liveId ?: nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
-                    input = "", output = finalText, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
+        // One identity per run: two identical runs never share or close each other's
+        // on-device conversation, and the brain that served this run can be found at its end.
+        val runId = java.util.UUID.randomUUID().toString()
+        var served: BrainContext? = null
+        try {
+            val isChild = parent != null
+            var spawned = 0
+            val observations = mutableListOf<Observation>()
+            val attachments = linkedMapOf<String, FileAttachment>()
+            val artifacts = linkedMapOf<String, FileAttachment>()
+            val sources = linkedMapOf<String, SourceRef>()
+            val thoughts = mutableMapOf<Int, Thought>()
+            var executed = 0
+            var batch = 0
+            // Imported images: shown with the message when the user asked to look (or wrote nothing
+            // else); otherwise the model is only told they exist and may call view_image itself.
+            val vision = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { attachedImages(task) }
+            val images = vision.images
+            val modelTask = task + vision.note
+            // What the workspace looked like before this turn, so attach_files can tell the files
+            // produced now (downloaded, converted, generated) from old ones the user did not ask for.
+            val before = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { workspaceStamps() }
+            // The decision goes to the audit log only (no row in the chat), with its distinct intent.
+            vision.intent?.let { intent ->
+                audit.record(
+                    Step(
+                        id = nextId(), kind = StepKind.FILE_READ, payload = "vision: ${intent.name.lowercase()}", tool = "vision_intent",
+                        input = vision.paths.joinToString(", "), output = when {
+                            intent.shown -> "shown with the message"
+                            intent.viewImage -> "not shown; view_image allowed on demand"
+                            else -> "not shown; view_image refused for this turn"
+                        },
+                        status = StepStatus.DONE, startedAt = now(), finishedAt = now(),
+                    ),
                 )
-                send(if (liveSent) AgentEvent.StepUpdated(step) else AgentEvent.StepAdded(step))
-                audit.record(step)
             }
-            when (decision) {
-                is BrainDecision.Answer -> {
-                    // The answer is what the user sees and what is saved: never the app's own record.
-                    send(AgentEvent.Finished(TurnRecord.stripEcho(decision.text), attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
-                    return@channelFlow
-                }
-                is BrainDecision.Act -> {
-                    batch++
-                    decision.thought?.let { thoughts[batch] = it }
-                    // Subagents start first and run in parallel with each other and with the
-                    // rest of this batch; their reports are collected once the batch is done.
-                    val children = decision.calls.filterIsInstance<ToolCall.SpawnSubagent>().map { call ->
-                        val allowed = !isChild && subagents != null && subagents.models().isNotEmpty() && spawned < SubagentRuns.MAX_PER_TURN
-                        if (allowed) spawned++
-                        call to async {
-                            if (!allowed) ToolResult(
-                                call.callId, false,
-                                if (isChild || subagents == null || subagents.models().isEmpty()) "Subagents are not available here."
-                                else "At most ${SubagentRuns.MAX_PER_TURN} subagents per answer; do the rest yourself.",
-                            ) else runSubagent(this@channelFlow, call, task, history, control)
+
+            while (executed < maxSteps) {
+                val memory = memoryEnabled()
+                val ctx = BrainContext(
+                    modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
+                    todos = chat.todos(),
+                    mode = if (isChild) AgentMode.SUBAGENT else AgentMode.MAIN,
+                    subagentModels = if (isChild) emptyList() else subagents?.models().orEmpty(),
+                    runId = runId,
+                )
+                served = ctx
+                val requestedAt = now()
+                // Live reasoning: each model call gets its own thought step, created on the first
+                // non-blank streamed delta and updated (throttled) while the model thinks. Steps are
+                // appended in event order, so the turn keeps the real interleaving
+                // (tool, think, tool, tool, think). Every event carries the full step, so a dropped
+                // intermediate update is harmless; the final state below is always sent.
+                val live = StringBuilder()
+                var liveId: String? = null
+                var liveSent = false
+                var lastLive = 0L
+                fun liveStep(): Step = Step(
+                    id = liveId!!, kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                    input = "", output = live.toString(), status = StepStatus.RUNNING, startedAt = requestedAt,
+                )
+                val decision = brain.next(ctx) { delta ->
+                    synchronized(live) {
+                        live.append(delta)
+                        // Whitespace-only so far: no row yet (never an empty placeholder).
+                        if (live.isBlank()) return@synchronized
+                        if (liveId == null) liveId = nextId()
+                        val first = !liveSent
+                        val t = now()
+                        if (first || t - lastLive >= LIVE_THROTTLE_MS) {
+                            lastLive = t
+                            liveSent = true
+                            val step = liveStep()
+                            trySend(if (first) AgentEvent.StepAdded(step) else AgentEvent.StepUpdated(step))
                         }
                     }
-                    for (requested in decision.calls) {
-                        executed++
-                        if (requested is ToolCall.SpawnSubagent) continue
-                        var call = requested
-                        if (call is ToolCall.MainConversation) {
-                            val result = if (parent != null) ToolResult(call.callId, true, parent.recent(call.count))
-                            else ToolResult(call.callId, false, "main_conversation is only for subagents: the conversation is already above.")
-                            audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
-                            observations += Observation(call, result, batch)
-                            continue
-                        }
-                        if (isChild && (call is ToolCall.AskUser || call is ToolCall.Todo || call is ToolCall.AttachFiles || call is ToolCall.PreviewWebapp)) {
-                            observations += Observation(call, ToolResult(call.callId, false, "Not available to a subagent: report back to the main agent instead."), batch)
-                            continue
-                        }
-                        if (call is ToolCall.Invalid) {
-                            observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
-                            continue
-                        }
-                        // Only an explicit "don't look" (REFUSED) blocks view_image; USE_ONLY allows it on demand.
-                        val visionRefusal = vision.refusal(call)
-                        if (visionRefusal != null) {
-                            observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
-                            continue
-                        }
-                        // Chat tools are answered here: a question card, the todo list.
-                        if (call is ToolCall.AskUser || call is ToolCall.Todo) {
-                            val result = when (call) {
-                                is ToolCall.AskUser -> {
-                                    val answer = chat.ask(nextId(), call.question, call.choices)
-                                    if (answer != null) ToolResult(call.callId, true, "The user answered: $answer")
-                                    else ToolResult(call.callId, false, "The user did not answer.")
-                                }
-                                is ToolCall.Todo -> {
-                                    // Always from the chat's list: the user may have ticked entries meanwhile.
-                                    val outcome = Todos.apply(chat.todos(), call.action, call.items, call.ids)
-                                    if (outcome.ok) chat.setTodos(outcome.items)
-                                    ToolResult(call.callId, outcome.ok, outcome.message)
-                                }
-                                else -> ToolResult(call.callId, false, "unreachable")
-                            }
-                            audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
-                            observations += Observation(call, result, batch)
-                            continue
-                        }
-                        // The tool is not advertised when memory is off; a call anyway is refused.
-                        if (call is ToolCall.Memory && !memory) {
-                            observations += Observation(call, ToolResult(call.callId, false, "Memory of past conversations is turned off for this conversation."), batch)
-                            continue
-                        }
-                        // attach_files only attaches files the user plausibly wants (see AttachPolicy).
-                        var attachNotes = emptyList<String>()
-                        if (call is ToolCall.AttachFiles) {
-                            val attach: ToolCall.AttachFiles = call
-                            val checked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                attach.files.map { spec ->
-                                    spec to AttachPolicy.refusal(spec.path, task, producedThisTurn(spec.path, before, attachments.keys))
-                                }
-                            }
-                            attachNotes = checked.mapNotNull { it.second }
-                            val ok = checked.filter { it.second == null }.map { it.first }
-                            if (ok.isEmpty()) {
-                                observations += Observation(call, ToolResult(call.callId, false, attachNotes.joinToString("\n")), batch)
-                                audit.record(
-                                    stepFor(call).copy(status = StepStatus.FAILED, output = attachNotes.joinToString("\n"), finishedAt = now()),
-                                )
-                                continue
-                            }
-                            call = attach.copy(files = ok)
-                        }
-                        var autoRisk: String? = null
-                        val allowed = when (val d = policy.evaluate(call)) {
-                            PermissionDecision.Allow -> true
-                            is PermissionDecision.Deny -> {
-                                val s = permissionStep(d.summary, d.reason.label).copy(
-                                    status = StepStatus.FAILED, output = "blocked by policy: ${d.reason.label}", finishedAt = now(),
-                                )
-                                send(AgentEvent.StepAdded(s)); audit.record(s)
-                                false
-                            }
-                            // Auto-approve: no card, no pause. The action's own step carries the mark.
-                            is PermissionDecision.Ask -> if (autoApprove()) {
-                                autoRisk = d.reason.label
-                                true
-                            } else if (isChild) {
-                                // No approval card for a subagent: the main agent can do it and ask.
-                                val s = permissionStep(d.summary, d.reason.label).copy(
-                                    status = StepStatus.DENIED, output = "needs the user's approval; left to the main agent", finishedAt = now(),
-                                )
-                                send(AgentEvent.StepAdded(s)); audit.record(s)
-                                observations += Observation(
-                                    call,
-                                    ToolResult(call.callId, false, "Needs the user's approval (${d.reason.label}: ${d.summary}), which a subagent cannot ask for. Do not retry; report it to the main agent."),
-                                    batch,
-                                )
-                                continue
-                            } else {
-                                val s = permissionStep(d.summary, d.reason.label)
-                                send(AgentEvent.StepAdded(s))
-                                val ok = gate.request(ApprovalRequest(s.id, d.summary, d.reason.label))
-                                val done = s.copy(
-                                    status = if (ok) StepStatus.DONE else StepStatus.DENIED,
-                                    output = if (ok) "allowed by user" else "denied by user",
-                                    finishedAt = now(),
-                                )
-                                send(AgentEvent.StepUpdated(done)); audit.record(done)
-                                ok
-                            }
-                        }
-                        if (!allowed) {
-                            observations += Observation(call, ToolResult(call.callId, false, "Permission denied. Do not retry this action."), batch)
-                            continue
-                        }
-                        val step = stepFor(call).let { s ->
-                            if (autoRisk != null) s.copy(autoApproved = true, risk = autoRisk) else s
-                        }
-                        send(AgentEvent.StepAdded(step))
-                        val result = tools.execute(call).let { r ->
-                            if (attachNotes.isEmpty()) r else r.copy(output = r.output + "\n" + attachNotes.joinToString("\n"))
-                        }
-                        val finished = step.copy(
-                            status = if (result.ok) StepStatus.DONE else StepStatus.FAILED,
-                            output = result.output,
-                            exitCode = result.exitCode,
-                            finishedAt = now(),
-                            url = result.sources.firstOrNull()?.url ?: step.url,
-                            path = result.attachment?.path ?: step.path,
-                        )
-                        send(AgentEvent.StepUpdated(finished)); audit.record(finished)
-                        result.attachment?.let { a ->
-                            val prior = attachments[a.path]
-                            attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
-                        }
-                        // Artifacts come from a real attach_files call only: no other tool attaches by side effect.
-                        if (call is ToolCall.AttachFiles) result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
-                        if (call is ToolCall.PreviewWebapp && result.ok) result.preview?.let { send(AgentEvent.PreviewReady(it)) }
-                        // Only pages that were actually fetched and read become website sources.
-                        if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
-                        observations += Observation(call, result, batch)
-                    }
-                    for ((call, report) in children) observations += Observation(call, report.await(), batch)
                 }
+                val streamed = synchronized(live) { live.toString() }
+                // The brain's final thought text wins over the streamed text; never both.
+                val finalText = (decision.thought?.text?.takeIf { it.isNotBlank() } ?: streamed.takeIf { it.isNotBlank() })?.trim()
+                if (finalText != null) {
+                    val step = Step(
+                        id = liveId ?: nextId(), kind = StepKind.REASONING, payload = THOUGHT_LABEL, tool = "reasoning",
+                        input = "", output = finalText, status = StepStatus.DONE, startedAt = requestedAt, finishedAt = now(),
+                    )
+                    send(if (liveSent) AgentEvent.StepUpdated(step) else AgentEvent.StepAdded(step))
+                    audit.record(step)
+                }
+                when (decision) {
+                    is BrainDecision.Answer -> {
+                        // The answer is what the user sees and what is saved: never the app's own record.
+                        send(AgentEvent.Finished(TurnRecord.stripEcho(decision.text), attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
+                        return@channelFlow
+                    }
+                    is BrainDecision.Act -> {
+                        batch++
+                        decision.thought?.let { thoughts[batch] = it }
+                        // Subagents start first and run in parallel with each other and with the
+                        // rest of this batch; their reports are collected once the batch is done.
+                        val children = decision.calls.filterIsInstance<ToolCall.SpawnSubagent>().map { call ->
+                            val allowed = !isChild && subagents != null && subagents.models().isNotEmpty() && spawned < SubagentRuns.MAX_PER_TURN
+                            if (allowed) spawned++
+                            call to async {
+                                if (!allowed) ToolResult(
+                                    call.callId, false,
+                                    if (isChild || subagents == null || subagents.models().isEmpty()) "Subagents are not available here."
+                                    else "At most ${SubagentRuns.MAX_PER_TURN} subagents per answer; do the rest yourself.",
+                                ) else runSubagent(this@channelFlow, call, task, history, control)
+                            }
+                        }
+                        for (requested in decision.calls) {
+                            executed++
+                            if (requested is ToolCall.SpawnSubagent) continue
+                            var call = requested
+                            if (call is ToolCall.MainConversation) {
+                                val result = if (parent != null) ToolResult(call.callId, true, parent.recent(call.count))
+                                else ToolResult(call.callId, false, "main_conversation is only for subagents: the conversation is already above.")
+                                audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
+                                observations += Observation(call, result, batch)
+                                continue
+                            }
+                            if (isChild && (call is ToolCall.AskUser || call is ToolCall.Todo || call is ToolCall.AttachFiles || call is ToolCall.PreviewWebapp)) {
+                                observations += Observation(call, ToolResult(call.callId, false, "Not available to a subagent: report back to the main agent instead."), batch)
+                                continue
+                            }
+                            if (call is ToolCall.Invalid) {
+                                observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
+                                continue
+                            }
+                            // Only an explicit "don't look" (REFUSED) blocks view_image; USE_ONLY allows it on demand.
+                            val visionRefusal = vision.refusal(call)
+                            if (visionRefusal != null) {
+                                observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
+                                continue
+                            }
+                            // Chat tools are answered here: a question card, the todo list.
+                            if (call is ToolCall.AskUser || call is ToolCall.Todo) {
+                                val result = when (call) {
+                                    is ToolCall.AskUser -> {
+                                        val answer = chat.ask(nextId(), call.question, call.choices)
+                                        if (answer != null) ToolResult(call.callId, true, "The user answered: $answer")
+                                        else ToolResult(call.callId, false, "The user did not answer.")
+                                    }
+                                    is ToolCall.Todo -> {
+                                        // Always from the chat's list: the user may have ticked entries meanwhile.
+                                        val outcome = Todos.apply(chat.todos(), call.action, call.items, call.ids)
+                                        if (outcome.ok) chat.setTodos(outcome.items)
+                                        ToolResult(call.callId, outcome.ok, outcome.message)
+                                    }
+                                    else -> ToolResult(call.callId, false, "unreachable")
+                                }
+                                audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
+                                observations += Observation(call, result, batch)
+                                continue
+                            }
+                            // The tool is not advertised when memory is off; a call anyway is refused.
+                            if (call is ToolCall.Memory && !memory) {
+                                observations += Observation(call, ToolResult(call.callId, false, "Memory of past conversations is turned off for this conversation."), batch)
+                                continue
+                            }
+                            // attach_files only attaches files the user plausibly wants (see AttachPolicy).
+                            var attachNotes = emptyList<String>()
+                            if (call is ToolCall.AttachFiles) {
+                                val attach: ToolCall.AttachFiles = call
+                                val checked = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    attach.files.map { spec ->
+                                        spec to AttachPolicy.refusal(spec.path, task, producedThisTurn(spec.path, before, attachments.keys))
+                                    }
+                                }
+                                attachNotes = checked.mapNotNull { it.second }
+                                val ok = checked.filter { it.second == null }.map { it.first }
+                                if (ok.isEmpty()) {
+                                    observations += Observation(call, ToolResult(call.callId, false, attachNotes.joinToString("\n")), batch)
+                                    audit.record(
+                                        stepFor(call).copy(status = StepStatus.FAILED, output = attachNotes.joinToString("\n"), finishedAt = now()),
+                                    )
+                                    continue
+                                }
+                                call = attach.copy(files = ok)
+                            }
+                            var autoRisk: String? = null
+                            val allowed = when (val d = policy.evaluate(call)) {
+                                PermissionDecision.Allow -> true
+                                is PermissionDecision.Deny -> {
+                                    val s = permissionStep(d.summary, d.reason.label).copy(
+                                        status = StepStatus.FAILED, output = "blocked by policy: ${d.reason.label}", finishedAt = now(),
+                                    )
+                                    send(AgentEvent.StepAdded(s)); audit.record(s)
+                                    false
+                                }
+                                // Auto-approve: no card, no pause. The action's own step carries the mark.
+                                is PermissionDecision.Ask -> if (autoApprove()) {
+                                    autoRisk = d.reason.label
+                                    true
+                                } else if (isChild) {
+                                    // No approval card for a subagent: the main agent can do it and ask.
+                                    val s = permissionStep(d.summary, d.reason.label).copy(
+                                        status = StepStatus.DENIED, output = "needs the user's approval; left to the main agent", finishedAt = now(),
+                                    )
+                                    send(AgentEvent.StepAdded(s)); audit.record(s)
+                                    observations += Observation(
+                                        call,
+                                        ToolResult(call.callId, false, "Needs the user's approval (${d.reason.label}: ${d.summary}), which a subagent cannot ask for. Do not retry; report it to the main agent."),
+                                        batch,
+                                    )
+                                    continue
+                                } else {
+                                    val s = permissionStep(d.summary, d.reason.label)
+                                    send(AgentEvent.StepAdded(s))
+                                    val ok = gate.request(ApprovalRequest(s.id, d.summary, d.reason.label))
+                                    val done = s.copy(
+                                        status = if (ok) StepStatus.DONE else StepStatus.DENIED,
+                                        output = if (ok) "allowed by user" else "denied by user",
+                                        finishedAt = now(),
+                                    )
+                                    send(AgentEvent.StepUpdated(done)); audit.record(done)
+                                    ok
+                                }
+                            }
+                            if (!allowed) {
+                                observations += Observation(call, ToolResult(call.callId, false, "Permission denied. Do not retry this action."), batch)
+                                continue
+                            }
+                            val step = stepFor(call).let { s ->
+                                if (autoRisk != null) s.copy(autoApproved = true, risk = autoRisk) else s
+                            }
+                            send(AgentEvent.StepAdded(step))
+                            val result = tools.execute(call).let { r ->
+                                if (attachNotes.isEmpty()) r else r.copy(output = r.output + "\n" + attachNotes.joinToString("\n"))
+                            }
+                            val finished = step.copy(
+                                status = if (result.ok) StepStatus.DONE else StepStatus.FAILED,
+                                output = result.output,
+                                exitCode = result.exitCode,
+                                finishedAt = now(),
+                                url = result.sources.firstOrNull()?.url ?: step.url,
+                                path = result.attachment?.path ?: step.path,
+                            )
+                            send(AgentEvent.StepUpdated(finished)); audit.record(finished)
+                            result.attachment?.let { a ->
+                                val prior = attachments[a.path]
+                                attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
+                            }
+                            // Artifacts come from a real attach_files call only: no other tool attaches by side effect.
+                            if (call is ToolCall.AttachFiles) result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
+                            if (call is ToolCall.PreviewWebapp && result.ok) result.preview?.let { send(AgentEvent.PreviewReady(it)) }
+                            // Only pages that were actually fetched and read become website sources.
+                            if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
+                            observations += Observation(call, result, batch)
+                        }
+                        for ((call, report) in children) observations += Observation(call, report.await(), batch)
+                    }
+                }
+            }
+            send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
+        } finally {
+            // However the turn ends — answer, error, Stop, the step limit — the brain that
+            // served it releases what it holds. This runs even while the flow is being cancelled.
+            val ctx = served
+            if (ctx != null) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { brain.endTurn(ctx) } }
             }
         }
-        send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
     }
 
     /**
