@@ -47,7 +47,11 @@ class SessionStore(private val baseDir: File) {
 
     @Synchronized
     fun load(id: String): Session? = runCatching {
-        json.decodeFromString<Session>(File(dirFor(id), SESSION_FILE).readText())
+        json.decodeFromString<Session>(File(dirFor(id), SESSION_FILE).readText()).let { s ->
+            // Answers saved by older builds may carry an echo of the app's action record.
+            if (s.turns.none { it.text.contains(com.sebialex.agent.domain.agent.TurnRecord.LEGACY_HEADER, ignoreCase = true) }) s
+            else s.copy(turns = s.turns.map(com.sebialex.agent.domain.agent.TurnRecord::clean))
+        }
     }.getOrNull()
 
     @Synchronized

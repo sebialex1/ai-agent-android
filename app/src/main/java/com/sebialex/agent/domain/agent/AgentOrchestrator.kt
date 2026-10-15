@@ -149,7 +149,8 @@ class AgentOrchestrator(
             }
             when (decision) {
                 is BrainDecision.Answer -> {
-                    send(AgentEvent.Finished(decision.text, attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
+                    // The answer is what the user sees and what is saved: never the app's own record.
+                    send(AgentEvent.Finished(TurnRecord.stripEcho(decision.text), attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
                     return@channelFlow
                 }
                 is BrainDecision.Act -> {

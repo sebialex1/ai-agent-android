@@ -6,7 +6,6 @@ import com.sebialex.agent.domain.agent.BrainDecision
 import com.sebialex.agent.domain.agent.Observation
 import com.sebialex.agent.domain.agent.Thought
 import com.sebialex.agent.domain.model.Role
-import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.ToolCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -156,11 +155,14 @@ class OpenRouterBrain(
             put("content", systemPrompt(ctx))
         })
         // Earlier turns of this conversation only. Each conversation has its own context.
-        ctx.history.filter { it.complete || it.role == Role.USER }.takeLast(MAX_HISTORY_TURNS).forEach { t ->
+        // An assistant message carries exactly the answer the user saw; what that answer did
+        // is app-made context and goes into the system prompt (TurnRecord), never into the
+        // model's own messages, where the model would take it for its reply format.
+        replayed(ctx).forEach { t ->
             if (t.text.isBlank()) return@forEach
             add(buildJsonObject {
                 put("role", if (t.role == Role.USER) "user" else "assistant")
-                put("content", if (t.role == Role.ASSISTANT) t.text + actionsNote(t) else t.text)
+                put("content", t.text)
             })
         }
         add(buildJsonObject {
@@ -226,17 +228,9 @@ class OpenRouterBrain(
         }
     }
 
-    /** Short record of what an earlier answer actually did, so follow-ups have real context. */
-    private fun actionsNote(t: com.sebialex.agent.domain.model.Turn): String {
-        val done = t.steps.filter { it.status == StepStatus.DONE && it.tool != "permission" && it.tool != "reasoning" }
-        if (done.isEmpty() && t.attachments.isEmpty() && t.artifacts.isEmpty() && t.questions.isEmpty() && t.plan == null) return ""
-        val lines = done.takeLast(12).map { "- ${it.tool}: ${it.payload.take(160)}" } +
-            t.attachments.map { "- file: ${it.path}" } +
-            t.artifacts.map { "- attached: ${it.path}" } +
-            t.questions.map { "- asked the user: ${it.question.take(160)} -> ${it.answer?.take(160) ?: "(no answer)"}" } +
-            listOfNotNull(t.plan?.let { p -> "- plan \"${p.title}\": " + p.steps.joinToString("; ") { "${it.text} (${it.status.name.lowercase()})" }.take(400) })
-        return "\n\n[actions taken in this turn]\n" + lines.joinToString("\n")
-    }
+    /** The earlier turns replayed to the model. */
+    private fun replayed(ctx: BrainContext): List<com.sebialex.agent.domain.model.Turn> =
+        ctx.history.filter { it.complete || it.role == Role.USER }.takeLast(MAX_HISTORY_TURNS)
 
     private fun systemPrompt(ctx: BrainContext): String {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -246,7 +240,8 @@ class OpenRouterBrain(
         val memory = if (ctx.memoryTool && withTools) "\n" + MEMORY_PROMPT else ""
         val todos = if (ctx.todos.isEmpty() || !withTools) "" else
             "\nThis conversation's todo list (todo tool):\n" + com.sebialex.agent.domain.agent.Todos.render(ctx.todos) + "\n"
-        return SYSTEM_PROMPT + noTools + memory + todos + "\nToday is $date.\n" +
+        val record = com.sebialex.agent.domain.agent.TurnRecord.context(replayed(ctx))
+        return SYSTEM_PROMPT + noTools + memory + todos + record + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
