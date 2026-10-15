@@ -17,7 +17,7 @@ import org.junit.Test
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.InetAddress
+import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -129,35 +129,90 @@ class PreviewServerTest {
     private fun bindable(port: Int): Boolean = ServerSocket().use { s ->
         s.reuseAddress = true
         try {
-            s.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port), 32)
+            s.bind(InetSocketAddress(PreviewServer.ADDRESS, port), 32)
             true
         } catch (_: IOException) {
             false
         }
     }
 
-    @Test fun lifecycleStartsOnFocusAndStopsAfterIdleOrClose() {
+    @Test fun bindsTheIpv4LoopbackTheWindowLoads() {
+        // Android's getLoopbackAddress() is ::1, which refuses connections to 127.0.0.1: the
+        // server must bind exactly the address the WebView dials, on every platform.
+        assertTrue(PreviewServer.ADDRESS is Inet4Address)
+        assertEquals(PreviewServer.HOST, PreviewServer.ADDRESS.hostAddress)
+        Socket(PreviewServer.HOST, port).use { assertTrue(it.isConnected) }
+    }
+
+    @Test fun quickStopAndStartNeverLeavesADeadServer() {
+        // An old accept loop winding down must not close the socket of the next start.
+        repeat(20) {
+            server.stop()
+            port = server.start(port)
+            assertEquals(port, server.port)
+            assertEquals(200, get("/").first)
+        }
+    }
+
+    @Test fun lifecycleRunsWhileInFrontAndStopsAfterIdleOrClose() {
         var starts = 0
         var stops = 0
         val l = PreviewLifecycle(60_000, start = { starts++; 4000 + starts }, stop = { stops++ })
-        assertTrue(l.focus())
-        assertEquals(4001, l.port)
-        assertFalse(l.focus()) // already running
-        l.blur(now = 1_000)
+        assertEquals(4001, l.resume())
+        assertEquals(4001, l.resume()) // already running: same port, no second start
+        assertEquals(1, starts)
+        l.background(now = 1_000)
         assertFalse(l.tick(now = 60_999))
         assertEquals(1_000L, l.remaining(now = 60_000))
-        l.focus() // came back in time: the timer is off
+        l.resume() // came back in time: the countdown is off
+        assertNull(l.remaining(now = 61_000))
         assertFalse(l.tick(now = 200_000))
-        l.blur(now = 200_000)
+        l.background(now = 200_000)
+        l.background(now = 230_000) // a second stop does not restart the countdown
         assertTrue(l.tick(now = 260_000))
         assertNull(l.port)
         assertEquals(1, stops)
-        assertTrue(l.focus()) // refocused: starts again
-        assertEquals(2, starts)
+        assertEquals(4002, l.resume()) // back after the stop: starts again
         l.close()
         assertEquals(2, stops)
-        assertFalse(l.focus()) // a closed window never restarts
+        assertNull(l.resume()) // a closed window never restarts
         assertNull(l.port)
+        assertEquals(2, starts)
+    }
+
+    @Test fun aServerThatDiedIsStartedAgainOnResume() {
+        var up = false
+        var starts = 0
+        val l = PreviewLifecycle(60_000, start = { starts++; up = true; 5000 }, stop = { up = false }, alive = { up })
+        l.resume()
+        up = false // the socket went away on its own
+        assertEquals(5000, l.resume())
+        assertEquals(2, starts)
+        assertTrue(up)
+    }
+
+    @Test fun aFailedStartLeavesItStoppedAndCanBeRetried() {
+        var fail = true
+        val l = PreviewLifecycle(60_000, start = { if (fail) throw java.io.IOException("no port") else 6000 }, stop = {})
+        assertTrue(runCatching { l.resume() }.isFailure)
+        assertNull(l.port)
+        fail = false
+        assertEquals(6000, l.resume())
+    }
+
+    @Test fun theRealServerFollowsTheLifecycle() {
+        val other = PreviewServer(app)
+        val l = PreviewLifecycle(1_000, start = { other.start(it) }, stop = { other.stop() }, alive = { other.running })
+        val p = l.resume()!!
+        assertEquals(p, other.port)
+        l.background(now = 0)
+        assertTrue(l.tick(now = 1_000))
+        assertNull(other.port)
+        assertTrue(runCatching { Socket(PreviewServer.HOST, p).close() }.isFailure)
+        assertTrue(l.resume() != null) // back: restarts (on the same port when it is free)
+        assertTrue(other.running)
+        l.close()
+        assertFalse(other.running)
     }
 
     @Test fun previewToolParsesAndOldSavesLoad() {

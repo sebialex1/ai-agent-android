@@ -7,7 +7,6 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.SocketException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -18,13 +17,18 @@ import java.util.concurrent.Executors
  * thread accepts, a small pool answers (a page pulls its scripts, styles and images at once).
  * It is started and stopped by the preview window ([PreviewLifecycle]); [start] may be called
  * again after [stop].
+ *
+ * It binds [ADDRESS], the IPv4 loopback, explicitly — never `InetAddress.getLoopbackAddress()`:
+ * on Android that is always `::1`, a socket there does not take connections to 127.0.0.1, and
+ * the WebView (which loads [HOST]) got "connection refused" on every try, while the same code
+ * worked in JVM tests, where the loopback is IPv4. Server and window share [HOST].
  */
 class PreviewServer(private val root: File) {
     @Volatile private var socket: ServerSocket? = null
     private var pool: ExecutorService? = null
 
-    /** The port while running, else null. */
-    val port: Int? get() = socket?.takeIf { !it.isClosed }?.localPort
+    /** The port while running (bound, not closed, still answered), else null. */
+    val port: Int? get() = socket?.takeIf { it.isBound && !it.isClosed }?.localPort
 
     val running: Boolean get() = port != null
 
@@ -37,7 +41,7 @@ class PreviewServer(private val root: File) {
         port?.let { return it }
         val server = ServerSocket()
         server.reuseAddress = true
-        val loopback = InetAddress.getLoopbackAddress()
+        val loopback = ADDRESS
         try {
             server.bind(InetSocketAddress(loopback, preferredPort), 32)
         } catch (e: java.io.IOException) {
@@ -59,13 +63,33 @@ class PreviewServer(private val root: File) {
         pool = null
     }
 
+    /**
+     * Accepts until [server] is closed. A failed accept on an open socket (an aborted
+     * connection, briefly out of file descriptors) is not the end: it waits a moment and goes
+     * on. Whatever ends the loop, a socket that is no longer answered is closed with it, so
+     * [port] never reports a server that would only leave connections hanging. The identity
+     * check keeps an old loop from closing a newer socket after a quick stop and start.
+     */
     private fun acceptLoop(server: ServerSocket, workers: ExecutorService) {
-        while (!server.isClosed) {
-            val client = try { server.accept() } catch (_: SocketException) { break } catch (_: java.io.IOException) { continue }
-            try {
-                workers.execute { client.use { serve(it) } }
-            } catch (_: java.util.concurrent.RejectedExecutionException) {
-                runCatching { client.close() }
+        try {
+            while (!server.isClosed) {
+                val client = try {
+                    server.accept()
+                } catch (_: java.io.IOException) {
+                    if (server.isClosed) break
+                    try { Thread.sleep(50) } catch (_: InterruptedException) { break }
+                    continue
+                }
+                try {
+                    workers.execute { client.use { serve(it) } }
+                } catch (_: java.util.concurrent.RejectedExecutionException) {
+                    runCatching { client.close() }
+                }
+            }
+        } finally {
+            synchronized(this) {
+                if (socket === server) stop()
+                else runCatching { server.close() }
             }
         }
     }
@@ -123,7 +147,11 @@ class PreviewServer(private val root: File) {
         }
     }
 
-    private companion object {
-        const val COMMON_HEADERS = "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n"
+    companion object {
+        /** The address the server binds and the window loads: IPv4 loopback, on every platform. */
+        const val HOST = "127.0.0.1"
+        val ADDRESS: InetAddress = InetAddress.getByAddress(HOST, byteArrayOf(127, 0, 0, 1))
+
+        private const val COMMON_HEADERS = "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n"
     }
 }

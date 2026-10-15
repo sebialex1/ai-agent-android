@@ -33,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -48,6 +47,7 @@ import com.sebialex.agent.domain.model.WebPreview
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,23 +59,30 @@ import java.io.File
  * (name, folder, whether it is live, reload, close) over a WebView of the app.
  *
  * The app is served from its workspace folder by a [PreviewServer] on 127.0.0.1, which runs
- * only while this window is focused: it starts when the window opens (or is focused again),
- * keeps running through short trips away, stops after [PreviewLifecycle.IDLE_MS] out of focus,
- * and always stops when the window closes. The page keeps its address across a pause when the
+ * while this window is open and the app is in front: it starts when the window opens (or the
+ * app comes back), keeps running through short trips away, stops [PreviewLifecycle.IDLE_MS]
+ * after the activity stopped, and always stops when the window closes. Window focus is not
+ * used at all (see [PreviewLifecycle]). The page keeps its address across a pause when the
  * port is still free. The agent can rebuild files meanwhile; reload shows them (nothing is cached).
+ *
+ * Nothing is loaded before the socket listens: every URL comes from [PreviewLifecycle.resume],
+ * which returns only after the bind, on first open, on coming back, on reload and on retry.
  *
  * The WebView is locked down: JavaScript and DOM storage for the app, but no file or content
  * access, no file-URL cross access, no mixed content, no geolocation, no popups and no bridge
  * to the app; links leaving the local server open in the browser instead.
  *
- * A page that fails to load (the server was not up in time, or was stopped meanwhile) never
- * stays on the system's error page: the window makes sure the server runs and loads it again,
- * a few times on its own and always on reload or on coming back to the window.
+ * A page that fails to load anyway never stays on the system's error page: the window makes
+ * sure the server runs and loads it again, a few times on its own and always on reload or on
+ * coming back to the app.
  */
 @Composable
 fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
     val server = remember(root) { PreviewServer(root) }
-    val lifecycle = remember(server) { PreviewLifecycle(PreviewLifecycle.IDLE_MS, start = { server.start(it) }, stop = { server.stop() }) }
+    val lifecycle = remember(server) {
+        PreviewLifecycle(PreviewLifecycle.IDLE_MS, start = { server.start(it) }, stop = { server.stop() }, alive = { server.running })
+    }
+    // The port pages are loaded from: set only from a started server, cleared when it stops.
     var port by remember { mutableStateOf<Int?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -86,11 +93,30 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
     var retries by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    fun pageUrl(p: Int) = "http://127.0.0.1:$p/" + Uri.encode(preview.entry, "/")
+    fun pageUrl(p: Int) = "http://${PreviewServer.HOST}:$p/" + Uri.encode(preview.entry, "/")
+
+    /**
+     * The one way to a port: makes sure the server listens (binding off the main thread) and
+     * returns its port, or null when it could not start (the reason is shown) or the window
+     * closed. A cancelled caller stays cancelled; the server state lives in [lifecycle] anyway.
+     */
+    suspend fun ensureServer(): Int? {
+        val p = try {
+            withContext(Dispatchers.IO) { lifecycle.resume() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failed = e.message ?: "The preview server could not start."
+            return null
+        }
+        if (p != null) failed = null
+        port = p
+        return p
+    }
 
     /**
      * Loads the page again, making sure the server runs first. A failed page is retried a few
-     * times on its own; after that it waits for a reload or the window coming back to focus.
+     * times on its own; after that it waits for a reload or the app coming back.
      */
     fun reload(view: WebView, manual: Boolean) {
         if (manual) retries = 0
@@ -100,57 +126,50 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
         }
         if (!manual) retries += 1
         scope.launch {
-            // The server may never have come up, or have been stopped by the idle timeout.
-            val p = runCatching {
-                withContext(Dispatchers.IO) { synchronized(lifecycle) { lifecycle.focus(); lifecycle.port } }
-            }.onFailure { failed = it.message ?: "The preview server could not start." }.getOrNull() ?: return@launch
-            failed = null
-            port = p
+            val p = ensureServer() ?: return@launch
             if (!manual) delay(250)
-            view.post { view.loadUrl(pageUrl(p)) }
+            val url = pageUrl(p)
+            loadedUrl = url
+            view.loadUrl(url)
         }
     }
 
+    // In front = the activity is resumed; it counts as away from when it stops (a pause with the
+    // window still on screen, as in split screen or under a system dialog, does not count). Read
+    // here, outside the dialog, from the screen's owner, which follows the activity.
+    val owner = LocalLifecycleOwner.current
+    var inFront by remember { mutableStateOf(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) inFront = true
+            if (e == Lifecycle.Event.ON_STOP) inFront = false
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(inFront) {
+        if (inFront) {
+            val p = ensureServer()
+            // A page left on the error page (the app was away long enough for the server to
+            // stop) is loaded again now that the server is back.
+            if (p != null && broken) webView?.let { reload(it, manual = true) }
+        } else {
+            lifecycle.background(System.currentTimeMillis())
+            while (lifecycle.port != null) {
+                delay(1_000)
+                if (lifecycle.tick(System.currentTimeMillis())) break
+            }
+            port = lifecycle.port
+        }
+    }
     DisposableEffect(lifecycle) {
-        onDispose { synchronized(lifecycle) { lifecycle.close() } }
+        onDispose { lifecycle.close() }
     }
 
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false),
     ) {
-        // Focused = the app is resumed and this window has input focus.
-        val owner = LocalLifecycleOwner.current
-        var resumed by remember { mutableStateOf(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
-        DisposableEffect(owner) {
-            val observer = LifecycleEventObserver { _, e ->
-                if (e == Lifecycle.Event.ON_RESUME) resumed = true
-                if (e == Lifecycle.Event.ON_PAUSE) resumed = false
-            }
-            owner.lifecycle.addObserver(observer)
-            onDispose { owner.lifecycle.removeObserver(observer) }
-        }
-        val focused = resumed && LocalWindowInfo.current.isWindowFocused
-        LaunchedEffect(focused) {
-            if (focused) {
-                failed = null
-                port = runCatching { withContext(Dispatchers.IO) { synchronized(lifecycle) { lifecycle.focus(); lifecycle.port } } }
-                    .onFailure { failed = it.message ?: "The preview server could not start." }
-                    .getOrNull()
-                // A page left on the system's error page (the app was away long enough for the
-                // server to stop) is loaded again now that the server is back.
-                if (broken && port != null) {
-                    val view = webView
-                    if (view != null) reload(view, manual = true)
-                }
-            } else {
-                synchronized(lifecycle) { lifecycle.blur(System.currentTimeMillis()) }
-                while (port != null) {
-                    delay(1_000)
-                    if (synchronized(lifecycle) { lifecycle.tick(System.currentTimeMillis()) }) port = null
-                }
-            }
-        }
         val url = port?.let { pageUrl(it) }
         LaunchedEffect(url, webView) {
             val view = webView ?: return@LaunchedEffect
@@ -205,7 +224,8 @@ private fun TitleBar(preview: WebPreview, live: Boolean, onReload: () -> Unit, o
                 style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
-        QuietIconButton(R.drawable.ic_refresh, "Reload", onReload, enabled = live, iconSize = 20.dp)
+        // Reload also restarts a stopped server, so it is always available.
+        QuietIconButton(R.drawable.ic_refresh, "Reload", onReload, iconSize = 20.dp)
         QuietIconButton(R.drawable.ic_close, "Close preview", onClose, iconSize = 20.dp)
     }
 }
@@ -239,8 +259,8 @@ private fun secureWebView(
         /** The main-frame load currently in flight already failed; a finish is then no success. */
         private var mainLoadFailed = false
 
-        private fun local(u: Uri) = u.host == "127.0.0.1" && u.port == port()
-        private fun local(u: String) = u.startsWith("http://127.0.0.1:${port() ?: -1}")
+        private fun local(u: Uri) = u.host == PreviewServer.HOST && u.port == port()
+        private fun local(u: String) = u.startsWith("http://${PreviewServer.HOST}:${port() ?: -1}")
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             if (local(url)) mainLoadFailed = false
