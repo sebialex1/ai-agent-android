@@ -15,7 +15,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import java.nio.file.Files
@@ -111,8 +115,25 @@ class PreviewServerTest {
         val first = port
         server.stop()
         assertNull(server.port)
-        assertEquals(first, server.start(first))
+        // A busy machine (a shared CI runner) can hand the port to another process between the
+        // stop and the start; the contract is only that a FREE port is kept. The port is probed
+        // the same way the server binds it, so the same-port path is asserted exactly when it
+        // can hold, and the fallback path is covered when it cannot.
+        val free = bindable(first)
+        val restarted = server.start(first)
+        if (free) assertEquals(first, restarted)
         assertEquals(200, get("/").first)
+    }
+
+    /** True when [port] can be bound right now, probed exactly like the server binds it. */
+    private fun bindable(port: Int): Boolean = ServerSocket().use { s ->
+        s.reuseAddress = true
+        try {
+            s.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port), 32)
+            true
+        } catch (_: IOException) {
+            false
+        }
     }
 
     @Test fun lifecycleStartsOnFocusAndStopsAfterIdleOrClose() {
