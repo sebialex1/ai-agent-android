@@ -214,6 +214,8 @@ fun ChatScreen(
                         onContinue = if (turn.interrupted && !state.running && turn.id == turns.lastOrNull()?.id) {
                             { vm.continueInterrupted(turn.id) }
                         } else null,
+                        askingId = state.askingId,
+                        onAnswer = { vm.answerQuestion(it) },
                     )
                 }
             }
@@ -252,12 +254,19 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp),
             )
         }
+        TodoPanel(
+            sessionId = sessionId,
+            items = state.session.todos,
+            onToggle = vm::toggleTodo,
+            onClearDone = vm::clearDoneTodos,
+        )
         InputPill(
             value = input,
             onValueChange = { updateInput(it) },
             running = state.running,
             hasAttachments = pending.isNotEmpty(),
             revealing = state.revealing.isNotEmpty(),
+            answering = state.askingId != null,
             onSend = {
                 val editing = editingId
                 if (editing != null) {

@@ -38,6 +38,8 @@ data class BrainContext(
     val images: List<ImageInput> = emptyList(),
     /** The model rejected image input once in this request, so pictures are left out (with a note). */
     val imagesDropped: Boolean = false,
+    /** The conversation's todo list as it is now, shown to the model when it has entries. */
+    val todos: List<com.sebialex.agent.domain.model.TodoItem> = emptyList(),
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }

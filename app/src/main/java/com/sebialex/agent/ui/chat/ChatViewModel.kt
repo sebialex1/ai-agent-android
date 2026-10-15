@@ -8,6 +8,7 @@ import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
 import com.sebialex.agent.domain.agent.Resume
 import com.sebialex.agent.domain.agent.TurnStop
+import com.sebialex.agent.domain.model.AskRecord
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
 import com.sebialex.agent.domain.model.SessionSummary
@@ -40,6 +41,8 @@ data class ChatUiState(
     val revealing: Set<String> = emptySet(),
     /** Messages sent while the agent was busy; each one is sent, in order, when the turn before it finishes. */
     val queued: List<QueuedMessage> = emptyList(),
+    /** The agent asked a question (ask_user) and waits: its id. The input bar then answers it. */
+    val askingId: String? = null,
 )
 
 /** A workspace file offered by the @-mention popup. [path] is relative to /workspace. */
@@ -69,6 +72,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         var approval: CompletableDeferred<Boolean>? = null
         var pending: ApprovalRequest? = null
         var stopped = false
+        /** ask_user waiting for a reply: the card's id and the answer to complete. */
+        var question: CompletableDeferred<String?>? = null
+        var questionId: String? = null
     }
 
     private val cache = HashMap<String, Session>()
@@ -240,6 +246,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         // Imports travel as @path mentions at the start of the message (the bubble shows them
         // as previews). A message may be only imports.
         val imports = pendingBySession[sessionId].orEmpty()
+        // The agent is waiting for an answer: what you type answers its question (imports stay pending).
+        if (text.isNotBlank() && answerQuestion(text.trim())) return
         val task = (imports.joinToString(" ") { "@$it" } + " " + text.trim()).trim()
         if (task.isEmpty()) return
         pendingBySession.remove(sessionId)
@@ -329,10 +337,33 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
         }
+        val chatTools = object : com.sebialex.agent.domain.agent.ChatTools {
+            override suspend fun ask(id: String, question: String, choices: List<String>): String? {
+                val r = runs[sessionId]?.takeIf { it.turnId == assistant.id } ?: return null
+                val deferred = CompletableDeferred<String?>()
+                r.question = deferred
+                r.questionId = id
+                mutateTurn(sessionId, assistant.id) {
+                    it.copy(questions = it.questions + AskRecord(id, question, choices, askedAt = System.currentTimeMillis()))
+                }
+                persist(sessionId)
+                return try {
+                    deferred.await()
+                } finally {
+                    r.question = null
+                    r.questionId = null
+                    publish()
+                }
+            }
+
+            override fun todos() = cache[sessionId]?.todos.orEmpty()
+
+            override fun setTodos(items: List<com.sebialex.agent.domain.model.TodoItem>) = updateTodos(sessionId, items)
+        }
         val run = Run(assistant.id)
         run.job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator(sessionId).run(modelTask, history, gate).collect { event ->
+                container.newOrchestrator(sessionId).run(modelTask, history, gate, chatTools).collect { event ->
                     // After Stop nothing more of this run reaches the chat, even an event already in flight.
                     if (runs[sessionId] === run) handle(sessionId, assistant.id, event)
                 }
@@ -357,6 +388,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     t.steps.any { it.id == event.step.id } -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it })
                     else -> t.copy(steps = t.steps + event.step)
                 }
+            }
+            is AgentEvent.PlanUpdated -> {
+                mutateTurn(sessionId, turnId) { it.copy(plan = event.plan) }
+                persist(sessionId)
             }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
@@ -409,6 +444,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val run = runs[sessionId] ?: run { publish(); return }
         run.stopped = true
         run.approval?.complete(false)
+        run.question?.complete(null)
         run.job.cancel()
         // Not waiting for the job: a blocking tool may take a moment to notice the cancel.
         finishIfIncomplete(sessionId, run)
@@ -428,6 +464,41 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val msg = q.firstOrNull { it.id == id } ?: return
         queues[sessionId] = q.filterNot { it.id == id }
         startTurn(sessionId, msg.task)
+    }
+
+    /**
+     * Answers the agent's waiting question (a tapped choice or typed text); the reply is saved
+     * on its card and returned to the agent as the tool result. False when nothing is asked.
+     */
+    fun answerQuestion(answer: String): Boolean {
+        val sessionId = currentId
+        val run = runs[sessionId] ?: return false
+        val deferred = run.question ?: return false
+        val id = run.questionId
+        mutateTurn(sessionId, run.turnId) { t -> t.copy(questions = t.questions.map { if (it.id == id) it.copy(answer = answer) else it }) }
+        persist(sessionId)
+        deferred.complete(answer)
+        return true
+    }
+
+    /** Replaces a conversation's todo list (the agent's todo tool, or the user ticking an entry) and saves it. */
+    private fun updateTodos(sessionId: String, items: List<com.sebialex.agent.domain.model.TodoItem>) {
+        val s = cache[sessionId] ?: return
+        cache[sessionId] = s.copy(todos = items)
+        publish()
+        persist(sessionId)
+    }
+
+    /** The user ticks or unticks a todo entry in the panel. */
+    fun toggleTodo(id: Int) {
+        val s = cache[currentId] ?: return
+        updateTodos(currentId, s.todos.map { if (it.id == id) it.copy(done = !it.done) else it })
+    }
+
+    /** Removes the entries that are done (panel action). */
+    fun clearDoneTodos() {
+        val s = cache[currentId] ?: return
+        updateTodos(currentId, s.todos.filterNot { it.done })
     }
 
     fun respondToApproval(allow: Boolean) {
@@ -601,6 +672,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             pendingApproval = run?.pending,
             revealing = revealing,
             queued = queues[currentId].orEmpty(),
+            askingId = run?.takeIf { !it.stopped }?.questionId,
         )
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)

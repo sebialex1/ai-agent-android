@@ -109,6 +109,9 @@ class ToolExecutor(
                 is ToolCall.HttpRequest -> NetTools.request(call)
                 is ToolCall.DeviceInfo -> ToolResult(call.callId, true, NetTools.deviceInfo())
                 is ToolCall.ViewImage -> viewImage(call)
+                // Answered by the orchestrator through the chat (ChatTools); never run on the device.
+                is ToolCall.SetPlan, is ToolCall.AskUser, is ToolCall.Todo ->
+                    ToolResult(call.callId, false, "This tool is only available in the chat.")
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

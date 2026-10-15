@@ -87,6 +87,8 @@ class PermissionPolicy(
         is ToolCall.AttachFiles -> call.files.firstOrNull { isOutside(it.path) }?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it.path) }
             ?: PermissionDecision.Allow
         is ToolCall.ViewImage -> outsideOr(call.path)
+        // Chat tools: a card in the answer, a question, the todo list. Nothing leaves the app.
+        is ToolCall.SetPlan, is ToolCall.AskUser, is ToolCall.Todo -> PermissionDecision.Allow
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
 

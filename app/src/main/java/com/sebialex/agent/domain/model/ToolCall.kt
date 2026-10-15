@@ -113,6 +113,29 @@ sealed interface ToolCall {
     /** Shows a workspace image (or a few frames of a video) to the model, for vision. */
     data class ViewImage(override val callId: String, val path: String) : ToolCall
 
+    /**
+     * Shows (or replaces) the plan card of the current answer: a [title] and [steps] with their
+     * status. Handled by the chat, not the device.
+     */
+    data class SetPlan(override val callId: String, val title: String, val steps: List<PlanStep>) : ToolCall
+
+    /**
+     * Asks the user [question] (optionally with [choices]) and waits for the answer, which comes
+     * back as the tool result. The user can tap a choice or type any reply.
+     */
+    data class AskUser(override val callId: String, val question: String, val choices: List<String> = emptyList()) : ToolCall
+
+    /**
+     * The conversation's todo list. [action] is one of [TODO_ACTIONS]: `add` ([items] are new
+     * entries), `done` / `reopen` / `remove` ([ids]), `clear_done` or `list`.
+     */
+    data class Todo(
+        override val callId: String,
+        val action: String,
+        val items: List<String> = emptyList(),
+        val ids: List<Int> = emptyList(),
+    ) : ToolCall
+
     /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
     data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
@@ -133,6 +156,9 @@ data class ToolResult(
 )
 
 data class SearchHit(val title: String, val url: String, val snippet: String)
+
+/** Actions of the todo tool. */
+val TODO_ACTIONS = listOf("add", "done", "reopen", "remove", "clear_done", "list")
 
 /** Actions of the conversation memory tool. */
 val MEMORY_ACTIONS = listOf("list_conversations", "summarize_conversation", "read_conversation")

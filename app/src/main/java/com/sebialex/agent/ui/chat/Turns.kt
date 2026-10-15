@@ -223,6 +223,9 @@ fun AssistantTurn(
     resolveFile: (String) -> java.io.File? = { null },
     /** The app was killed during this answer and it is the last one: "Continue from where it stopped". */
     onContinue: (() -> Unit)? = null,
+    /** Id of the question (ask_user) that waits for a reply, if any; [onAnswer] replies to it. */
+    askingId: String? = null,
+    onAnswer: (String) -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
@@ -236,6 +239,8 @@ fun AssistantTurn(
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
         }
+        turn.plan?.let { PlanCard(it, live = !turn.complete) }
+        turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
         if (turn.text.isNotBlank()) {
             if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
         }

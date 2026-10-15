@@ -229,10 +229,12 @@ class OpenRouterBrain(
     /** Short record of what an earlier answer actually did, so follow-ups have real context. */
     private fun actionsNote(t: com.sebialex.agent.domain.model.Turn): String {
         val done = t.steps.filter { it.status == StepStatus.DONE && it.tool != "permission" && it.tool != "reasoning" }
-        if (done.isEmpty() && t.attachments.isEmpty() && t.artifacts.isEmpty()) return ""
+        if (done.isEmpty() && t.attachments.isEmpty() && t.artifacts.isEmpty() && t.questions.isEmpty() && t.plan == null) return ""
         val lines = done.takeLast(12).map { "- ${it.tool}: ${it.payload.take(160)}" } +
             t.attachments.map { "- file: ${it.path}" } +
-            t.artifacts.map { "- attached: ${it.path}" }
+            t.artifacts.map { "- attached: ${it.path}" } +
+            t.questions.map { "- asked the user: ${it.question.take(160)} -> ${it.answer?.take(160) ?: "(no answer)"}" } +
+            listOfNotNull(t.plan?.let { p -> "- plan \"${p.title}\": " + p.steps.joinToString("; ") { "${it.text} (${it.status.name.lowercase()})" }.take(400) })
         return "\n\n[actions taken in this turn]\n" + lines.joinToString("\n")
     }
 
@@ -242,7 +244,9 @@ class OpenRouterBrain(
         val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly, do not claim to run anything, " +
             "and do not write tool calls or tool-call JSON ({\"action\": ...}) into your answer.\n"
         val memory = if (ctx.memoryTool && withTools) "\n" + MEMORY_PROMPT else ""
-        return SYSTEM_PROMPT + noTools + memory + "\nToday is $date.\n" +
+        val todos = if (ctx.todos.isEmpty() || !withTools) "" else
+            "\nThis conversation's todo list (todo tool):\n" + com.sebialex.agent.domain.agent.Todos.render(ctx.todos) + "\n"
+        return SYSTEM_PROMPT + noTools + memory + todos + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
@@ -464,6 +468,9 @@ class OpenRouterBrain(
             is ToolCall.UnzipFile -> "unzip_file"
             is ToolCall.GenerateImage -> "generate_image"
             is ToolCall.ViewImage -> "view_image"
+            is ToolCall.SetPlan -> "set_plan"
+            is ToolCall.AskUser -> "ask_user"
+            is ToolCall.Todo -> "todo"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -516,6 +523,21 @@ class OpenRouterBrain(
             }.toString()
             is ToolCall.CheckTools -> buildJsonObject { putJsonArray("tools") { c.tools.forEach { add(it) } } }.toString()
             is ToolCall.ViewImage -> buildJsonObject { put("path", c.path) }.toString()
+            is ToolCall.SetPlan -> buildJsonObject {
+                put("title", c.title)
+                putJsonArray("steps") {
+                    c.steps.forEach { st -> add(buildJsonObject { put("text", st.text); put("status", st.status.name.lowercase()) }) }
+                }
+            }.toString()
+            is ToolCall.AskUser -> buildJsonObject {
+                put("question", c.question)
+                if (c.choices.isNotEmpty()) putJsonArray("choices") { c.choices.forEach { add(it) } }
+            }.toString()
+            is ToolCall.Todo -> buildJsonObject {
+                put("action", c.action)
+                if (c.items.isNotEmpty()) putJsonArray("items") { c.items.forEach { add(it) } }
+                if (c.ids.isNotEmpty()) putJsonArray("ids") { c.ids.forEach { add(it) } }
+            }.toString()
             is ToolCall.Invalid -> c.arguments
         }
 
@@ -625,6 +647,29 @@ class OpenRouterBrain(
                     if (tools.isEmpty()) missing("tools") else ToolCall.CheckTools(id, tools)
                 }
                 "view_image" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ViewImage(id, it) } ?: missing("path")
+                "set_plan" -> {
+                    // steps: [{text, status}] or plain strings (all pending).
+                    val steps = (args["steps"] as? JsonArray).orEmpty().mapNotNull { el ->
+                        when (el) {
+                            is JsonObject -> ((el["text"] ?: el["title"] ?: el["step"]) as? JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() }
+                                ?.let { com.sebialex.agent.domain.model.PlanStep(it, com.sebialex.agent.domain.agent.Plans.status((el["status"] as? JsonPrimitive)?.content)) }
+                            is JsonPrimitive -> el.content.trim().takeIf { it.isNotEmpty() }?.let { com.sebialex.agent.domain.model.PlanStep(it) }
+                            else -> null
+                        }
+                    }
+                    if (steps.isEmpty()) missing("steps") else ToolCall.SetPlan(id, arg("title")?.trim().orEmpty().ifEmpty { "Plan" }, steps.take(20))
+                }
+                "ask_user" -> arg("question")?.takeIf { it.isNotBlank() }?.let { q ->
+                    ToolCall.AskUser(id, q.trim(), (args["choices"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { c -> c.isNotEmpty() } }.take(6))
+                } ?: missing("question")
+                "todo" -> {
+                    val action = arg("action")?.trim()?.lowercase() ?: return missing("action")
+                    val ids = (args["ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.toIntOrNull() }
+                        .ifEmpty { listOfNotNull(arg("id")?.trim()?.toIntOrNull()) }
+                    val items = (args["items"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
+                        .ifEmpty { listOfNotNull(arg("item")?.takeIf { it.isNotBlank() }) }
+                    ToolCall.Todo(id, action, items, ids)
+                }
                 else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
             }
         }
@@ -686,6 +731,13 @@ class OpenRouterBrain(
             - generate_image: create a picture from a description; it is saved in the workspace. When the user asked
               for the picture, attach it with attach_files (a short, human-readable name).
             - device_info: current date, time, time zone, locale and Android version.
+            Working with the user
+            - set_plan: for a task of three or more steps, show the plan as a card in your answer, then call it again
+              with updated statuses (pending, active, done, skipped) as you progress. Not for simple questions.
+            - ask_user: ask one clear question and wait for the reply (the tool result). Offer 2-5 short choices when
+              they fit; the user can also type. Only when you cannot reasonably proceed without their decision.
+            - todo: this conversation's todo list, shown above the input and kept across messages. Add work that is
+              still open, mark entries done as you finish them; the current list is given below when it has entries.
 
             # Tool calls are never text
             - Call tools only through the function-calling interface (tool_calls). A tool call written into your
@@ -800,11 +852,11 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, view_image"
+            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
-            "http_request, device_info, check_tools, attach_files, generate_image, view_image, " +
+            "http_request, device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -1029,6 +1081,92 @@ class OpenRouterBrain(
                         "Call it before a command that depends on such a program.",
                     "tools", "Program names, e.g. [\"yt-dlp\", \"ffmpeg\"]",
                 ),
+                buildJsonObject {
+                    put("type", "function")
+                    putJsonObject("function") {
+                        put("name", "set_plan")
+                        put(
+                            "description",
+                            "Show the user your plan for a multi-step task as a card in your answer, or update it: each call " +
+                                "replaces the card, so send all steps with their current status as you progress.",
+                        )
+                        putJsonObject("parameters") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("title") { put("type", "string"); put("description", "Short title of the plan") }
+                                putJsonObject("steps") {
+                                    put("type", "array")
+                                    put("description", "Every step, in order")
+                                    putJsonObject("items") {
+                                        put("type", "object")
+                                        putJsonObject("properties") {
+                                            putJsonObject("text") { put("type", "string"); put("description", "What the step does, a few words") }
+                                            putJsonObject("status") {
+                                                put("type", "string")
+                                                putJsonArray("enum") { listOf("pending", "active", "done", "skipped").forEach { add(it) } }
+                                            }
+                                        }
+                                        putJsonArray("required") { add("text"); add("status") }
+                                    }
+                                }
+                            }
+                            putJsonArray("required") { add("title"); add("steps") }
+                        }
+                    }
+                },
+                buildJsonObject {
+                    put("type", "function")
+                    putJsonObject("function") {
+                        put("name", "ask_user")
+                        put(
+                            "description",
+                            "Ask the user a question and wait for the answer, which is returned as the result. The question " +
+                                "appears as a card in the chat with the choices as buttons; the user can also type any reply. Use it " +
+                                "only when you cannot reasonably continue without their decision.",
+                        )
+                        putJsonObject("parameters") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("question") { put("type", "string"); put("description", "One clear question") }
+                                putJsonObject("choices") {
+                                    put("type", "array"); putJsonObject("items") { put("type", "string") }
+                                    put("description", "Optional 2-5 short answers to pick from")
+                                }
+                            }
+                            putJsonArray("required") { add("question") }
+                        }
+                    }
+                },
+                buildJsonObject {
+                    put("type", "function")
+                    putJsonObject("function") {
+                        put("name", "todo")
+                        put(
+                            "description",
+                            "This conversation's todo list, shown to the user in a panel above the input and kept across " +
+                                "messages. add: new entries (items); done / reopen / remove: entries by number (ids); clear_done; " +
+                                "list. Returns the whole list with numbers.",
+                        )
+                        putJsonObject("parameters") {
+                            put("type", "object")
+                            putJsonObject("properties") {
+                                putJsonObject("action") {
+                                    put("type", "string")
+                                    putJsonArray("enum") { com.sebialex.agent.domain.model.TODO_ACTIONS.forEach { add(it) } }
+                                }
+                                putJsonObject("items") {
+                                    put("type", "array"); putJsonObject("items") { put("type", "string") }
+                                    put("description", "For add: the new entries, plain text")
+                                }
+                                putJsonObject("ids") {
+                                    put("type", "array"); putJsonObject("items") { put("type", "integer") }
+                                    put("description", "For done, reopen, remove: entry numbers")
+                                }
+                            }
+                            putJsonArray("required") { add("action") }
+                        }
+                    }
+                },
                 typedFn(
                     "view_image", "Look at a workspace image (png, jpg, webp, gif) or a few frames of a video. The picture is shown to you after the tool result.",
                     Param("path", "string", "Path relative to /workspace, e.g. imports/photo.jpg"),

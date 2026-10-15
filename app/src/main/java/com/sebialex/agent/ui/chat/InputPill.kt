@@ -50,6 +50,8 @@ fun InputPill(
      * pressing it shows the whole answer at once.
      */
     revealing: Boolean = false,
+    /** The agent asked a question: what is typed here is the answer. */
+    answering: Boolean = false,
 ) {
     // The input is never blocked: while an answer runs, a typed message is queued (one button:
     // the arrow queues it when there is something to send, otherwise it is the stop button).
@@ -93,7 +95,7 @@ fun InputPill(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                 decorationBox = { inner ->
                     if (value.text.isEmpty()) {
-                        Text(if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                        Text(if (answering) "Type your answer" else if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
                     }
                     inner()
                 },
@@ -113,6 +115,7 @@ fun InputPill(
                 if (showStop) R.drawable.ic_stop else R.drawable.ic_arrow_up,
                 contentDescription = when {
                     showStop -> "Stop"
+                    answering -> "Send answer"
                     running -> "Queue message"
                     else -> "Send"
                 },

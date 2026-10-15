@@ -26,6 +26,9 @@ sealed interface AgentEvent {
         /** Files the agent attached to the answer (attach_files). */
         val artifacts: List<FileAttachment> = emptyList(),
     ) : AgentEvent
+
+    /** set_plan: the answer's plan card, replaced as a whole. */
+    data class PlanUpdated(val plan: com.sebialex.agent.domain.model.Plan) : AgentEvent
 }
 
 data class ApprovalRequest(val stepId: String, val summary: String, val reason: String)
@@ -58,7 +61,12 @@ class AgentOrchestrator(
 ) {
     private var seq = 0L
 
-    fun run(task: String, history: List<Turn>, gate: ApprovalGate): Flow<AgentEvent> = channelFlow {
+    /**
+     * [chat] answers the chat tools (questions and the todo list); see [ChatTools]. set_plan,
+     * ask_user and todo never reach the permission policy or the device: they only change what
+     * the chat shows, and they get no step row (their card is the row).
+     */
+    fun run(task: String, history: List<Turn>, gate: ApprovalGate, chat: ChatTools = ChatTools.None): Flow<AgentEvent> = channelFlow {
         val observations = mutableListOf<Observation>()
         val attachments = linkedMapOf<String, FileAttachment>()
         val artifacts = linkedMapOf<String, FileAttachment>()
@@ -91,7 +99,10 @@ class AgentOrchestrator(
 
         while (executed < maxSteps) {
             val memory = memoryEnabled()
-            val ctx = BrainContext(modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images)
+            val ctx = BrainContext(
+                modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
+                todos = chat.todos(),
+            )
             val requestedAt = now()
             // Live reasoning: each model call gets its own thought step, created on the first
             // non-blank streamed delta and updated (throttled) while the model thinks. Steps are
@@ -152,6 +163,31 @@ class AgentOrchestrator(
                         val visionRefusal = vision.refusal(call)
                         if (visionRefusal != null) {
                             observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
+                            continue
+                        }
+                        // Chat tools are answered here: a plan card, a question card, the todo list.
+                        if (call is ToolCall.SetPlan || call is ToolCall.AskUser || call is ToolCall.Todo) {
+                            val result = when (call) {
+                                is ToolCall.SetPlan -> {
+                                    val plan = com.sebialex.agent.domain.model.Plan(call.title, call.steps, now())
+                                    send(AgentEvent.PlanUpdated(plan))
+                                    ToolResult(call.callId, true, Plans.summary(plan))
+                                }
+                                is ToolCall.AskUser -> {
+                                    val answer = chat.ask(nextId(), call.question, call.choices)
+                                    if (answer != null) ToolResult(call.callId, true, "The user answered: $answer")
+                                    else ToolResult(call.callId, false, "The user did not answer.")
+                                }
+                                is ToolCall.Todo -> {
+                                    // Always from the chat's list: the user may have ticked entries meanwhile.
+                                    val outcome = Todos.apply(chat.todos(), call.action, call.items, call.ids)
+                                    if (outcome.ok) chat.setTodos(outcome.items)
+                                    ToolResult(call.callId, outcome.ok, outcome.message)
+                                }
+                                else -> ToolResult(call.callId, false, "unreachable")
+                            }
+                            audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
+                            observations += Observation(call, result, batch)
                             continue
                         }
                         // The tool is not advertised when memory is off; a call anyway is refused.
@@ -400,6 +436,10 @@ class AgentOrchestrator(
         is ToolCall.CheckTools -> Step(nextId(), StepKind.SHELL, "check " + call.tools.joinToString(", "), "check_tools", args(call), startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())
+        // Audit-only rows: the chat shows these as cards.
+        is ToolCall.SetPlan -> Step(nextId(), StepKind.FILE_READ, "plan: ${call.title}", "set_plan", args(call), startedAt = now())
+        is ToolCall.AskUser -> Step(nextId(), StepKind.PERMISSION, "ask: ${call.question.take(80)}", "ask_user", args(call), startedAt = now())
+        is ToolCall.Todo -> Step(nextId(), StepKind.FILE_WRITE, "todo ${call.action}", "todo", args(call), startedAt = now())
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
 
