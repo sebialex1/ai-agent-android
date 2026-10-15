@@ -96,7 +96,13 @@ object ToolCheck {
         return out.toList()
     }
 
-    /** Splits on `&&`, `||`, `;`, `|`, `&` and newlines outside quotes; `$(…)` and backticks are not entered. */
+    /**
+     * Splits on `&&`, `||`, `;`, `|`, `|&`, `&` and unescaped newlines outside quotes; `$(…)` and
+     * backticks are not entered. A `&` that belongs to a redirection (`2>&1`, `>&2`, `<&3`, `&>log`)
+     * is not a separator, and a backslash escapes the next character (`\;`, a `\` line continuation),
+     * so the file descriptor of `2>&1` or the next line of a continued command is never taken for a
+     * program name (that made `yt-dlp … 2>&1` fail with "1 is not installed").
+     */
     private fun segments(command: String): List<String> {
         val parts = mutableListOf<String>()
         val cur = StringBuilder()
@@ -105,15 +111,24 @@ object ToolCheck {
         var i = 0
         while (i < command.length) {
             val c = command[i]
+            val next = command.getOrNull(i + 1)
             when {
+                quote == '\'' -> { if (c == quote) quote = null; cur.append(c) }
+                c == '\\' -> {
+                    // A line continuation joins the lines; any other escaped character is literal.
+                    if (next == '\n') cur.append(' ') else { cur.append(c); if (next != null) cur.append(next) }
+                    i++
+                }
                 quote != null -> { if (c == quote) quote = null; cur.append(c) }
                 c == '\'' || c == '"' || c == '`' -> { quote = c; cur.append(c) }
-                c == '$' && command.getOrNull(i + 1) == '(' -> { depth++; cur.append("$("); i++ }
+                c == '$' && next == '(' -> { depth++; cur.append("$("); i++ }
                 c == ')' && depth > 0 -> { depth--; cur.append(c) }
+                depth == 0 && c == '&' && (cur.endsWith(">") || cur.endsWith("<") || next == '>') -> cur.append(c)
+                depth == 0 && c == '|' && cur.endsWith(">") -> cur.append(c) // `>|` (noclobber override)
                 depth == 0 && (c == ';' || c == '|' || c == '&' || c == '\n') -> {
                     parts += cur.toString(); cur.clear()
-                    // `&&` / `||` are one separator.
-                    if ((c == '&' || c == '|') && command.getOrNull(i + 1) == c) i++
+                    // `&&`, `||` and `|&` are one separator.
+                    if ((c == '&' || c == '|') && next == c) i++ else if (c == '|' && next == '&') i++
                 }
                 else -> cur.append(c)
             }
@@ -122,6 +137,14 @@ object ToolCheck {
         parts += cur.toString()
         return parts.filter { it.isNotBlank() }
     }
+
+    /**
+     * True when [command] changes the program search path itself (`PATH=… cmd`, `export PATH=…`):
+     * the probe runs without that change, so it cannot speak for the command and is skipped.
+     */
+    fun changesPath(command: String): Boolean = PATH_CHANGE.containsMatchIn(command)
+
+    private val PATH_CHANGE = Regex("(^|[\\s;&|(])(export\\s+)?PATH\\+?=")
 
     /** One shell probe for every program: prints `ok:<name>:<path>` or `missing:<name>` per line. */
     fun script(programs: List<String>): String =

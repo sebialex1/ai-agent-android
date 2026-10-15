@@ -65,6 +65,12 @@ data class TermuxResult(
 
 class TermuxException(message: String) : Exception(message)
 
+/** The part of [TermuxBridge] the sandbox shell runs commands through (a fake in tests). */
+interface TermuxRunner {
+    fun status(): TermuxStatus
+    fun run(script: String, workdir: String, timeoutSeconds: Long, label: String = "agent command"): TermuxResult
+}
+
 /**
  * Runs commands inside the real Termux environment (its own bash, apt/dpkg, pkg, Python, pip)
  * through Termux's documented `RUN_COMMAND` intent (`com.termux.app.RunCommandService`).
@@ -77,9 +83,9 @@ class TermuxException(message: String) : Exception(message)
  * - Shared storage access, because Termux runs as a different Linux user and cannot see this
  *   app's private files; each conversation's workspace is mirrored to [sharedRoot].
  */
-class TermuxBridge(private val context: Context) {
+class TermuxBridge(private val context: Context) : TermuxRunner {
 
-    fun status(): TermuxStatus = TermuxStatus(
+    override fun status(): TermuxStatus = TermuxStatus(
         installed = isInstalled(),
         runPermission = context.checkSelfPermission(PERMISSION_RUN_COMMAND) == PackageManager.PERMISSION_GRANTED,
         storage = hasStorageAccess(),
@@ -112,7 +118,7 @@ class TermuxBridge(private val context: Context) {
      * The script is wrapped in coreutils `timeout`, so it is killed after [timeoutSeconds].
      * Throws [TermuxException] when Termux cannot be reached or does not answer.
      */
-    fun run(script: String, workdir: String, timeoutSeconds: Long, label: String = "agent command"): TermuxResult {
+    override fun run(script: String, workdir: String, timeoutSeconds: Long, label: String): TermuxResult {
         status().problem?.let { throw TermuxException(it.message) }
         val id = nextId.incrementAndGet()
         val future = CompletableFuture<Bundle>()

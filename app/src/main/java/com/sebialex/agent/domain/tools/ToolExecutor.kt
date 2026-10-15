@@ -173,7 +173,7 @@ class ToolExecutor(
      * (nothing to check, it installs something itself, or the lookup could not answer).
      */
     private fun missingPrograms(command: String): List<String>? {
-        if (ToolCheck.installs(command)) return null
+        if (ToolCheck.installs(command) || ToolCheck.changesPath(command)) return null
         val programs = ToolCheck.programs(command, shell.builtins)
         if (programs.isEmpty()) return null
         val found = shell.which(programs) ?: return null

@@ -39,31 +39,52 @@ interface Shell {
  */
 class SandboxShell(
     private val ws: Workspace,
-    private val termux: TermuxBridge? = null,
+    private val termux: TermuxRunner? = null,
     private val mirror: WorkspaceMirror? = null,
 ) : Shell {
 
-    /** Programs already found installed (name to path); removals and uninstalls clear it. */
+    /** Where external commands run right now. */
+    private enum class Backend { TERMUX, DEVICE }
+
+    /**
+     * Programs already found installed (name to path) in [knownIn]; removals and uninstalls
+     * clear it, and so does a change of backend, so a path found in Termux never vouches for a
+     * command that would run on the device shell (or the other way round).
+     */
     private val known = java.util.concurrent.ConcurrentHashMap<String, String>()
+    @Volatile private var knownIn: Backend? = null
 
     override val builtins: Set<String> get() = BUILTINS
 
+    /**
+     * The one decision of where an external command runs, shared by [which] and [external] so a
+     * lookup always answers for the environment that will execute the command.
+     */
+    private fun backend(status: TermuxStatus?): Backend =
+        if (termux != null && mirror != null && status?.ready == true) Backend.TERMUX else Backend.DEVICE
+
     override fun which(programs: List<String>): Map<String, String?>? {
         if (programs.isEmpty()) return emptyMap()
+        val status = termux?.status()
+        val backend = backend(status)
+        if (knownIn != backend) { known.clear(); knownIn = backend }
         val todo = programs.filter { !known.containsKey(it) }
         val looked = HashMap<String, String?>()
         if (todo.isNotEmpty()) {
             val script = ToolCheck.script(todo)
-            val t = termux
-            val m = mirror
             val output = try {
-                if (t != null && m != null && t.status().ready) {
-                    // A probe needs no workspace sync: it runs in the shared folder and changes nothing.
-                    val dir = m.shared.apply { mkdirs() }
-                    t.run(script, dir.absolutePath, PROBE_TIMEOUT_SECONDS, label = "check tools").stdout
+                if (backend == Backend.TERMUX) {
+                    // Termux's bash, through the same RUN_COMMAND wrapper as the command itself (see
+                    // inTermux); a probe needs no workspace sync because it changes nothing.
+                    val dir = mirror!!.shared.apply { mkdirs() }
+                    termux!!.run(script, dir.absolutePath, PROBE_TIMEOUT_SECONDS, label = "check tools").stdout
                 } else {
                     // Without Termux, Termux-only programs fail with their own clear reason.
                     if (todo.any { it in TERMUX_PROGRAMS }) return null
+                    // Termux is there but cannot be reached (permission, storage): its programs
+                    // may well be installed, so "missing on the device shell" would be the wrong
+                    // diagnosis. The command runs and fails with the real reason instead.
+                    if (status?.installed == true) return null
                     systemShell(script, "/", null).output
                 }
             } catch (e: Exception) {
@@ -264,13 +285,21 @@ class SandboxShell(
     /** Runs a command line for real: in Termux when it is ready, otherwise with the device shell. */
     private fun external(command: String, cwd: String, stdin: String?): ShellResult {
         val status = termux?.status()
-        if (termux != null && mirror != null && status?.ready == true) return inTermux(command, cwd, stdin)
+        if (backend(status) == Backend.TERMUX) return inTermux(command, cwd, stdin)
         if (needsTermux(command)) {
             val reason = status?.problem?.message ?: TermuxProblem.NOT_INSTALLED.message
             val program = tokenize(command).firstOrNull().orEmpty()
             return fail("$program: cannot run, the Termux environment is not available.\n$reason", cwd, 127)
         }
-        return systemShell(command, cwd, stdin)
+        val r = systemShell(command, cwd, stdin)
+        // "not found" on the device shell while Termux is installed but unreachable: the program
+        // may be installed in Termux, so say why it was not used rather than leave a bare 127.
+        val reason = status?.problem
+        if (r.exitCode == 127 && status?.installed == true && reason != null) {
+            return r.copy(output = (r.output.trimEnd() + "\nThis ran on the device shell because the Termux environment is not available, " +
+                "so programs installed in Termux cannot be used.\n" + reason.message).trim())
+        }
+        return r
     }
 
     /** Executes in Termux, inside this conversation's mirrored workspace. */
