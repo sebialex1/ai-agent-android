@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.sebialex.agent.R
 import com.sebialex.agent.domain.markdown.Align
 import com.sebialex.agent.domain.markdown.InlineParser
@@ -51,7 +52,10 @@ import com.sebialex.agent.ui.theme.Mono
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 
-/** Converts inline Markdown to an AnnotatedString with clickable links (handled by LocalUriHandler). */
+/**
+ * Converts inline Markdown to an AnnotatedString with clickable links (handled by LocalUriHandler).
+ * Inline math (`$…$`, `\(…\)`) becomes styled runs in the same string.
+ */
 fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
     fun emit(nodes: List<MdInline>) {
         nodes.forEach { n ->
@@ -69,6 +73,8 @@ fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
                         TextLinkStyles(style = SpanStyle(color = Palette.Link, textDecoration = TextDecoration.Underline)),
                     ),
                 ) { emit(n.children) }
+                // Inline math (and $$…$$ written mid-sentence) flows with the words; see MathView.
+                is MdInline.Math -> appendMath(n.tex)
             }
         }
     }
@@ -121,6 +127,7 @@ fun MarkdownBlockView(block: MdBlock, compact: Boolean, onToggleTask: ((Int) -> 
         }
         is MdBlock.ListItem -> ListItemView(block, body, onToggleTask)
         is MdBlock.Table -> TableView(block)
+        is MdBlock.Math -> MathBlock(block.tex, fontSize = if (compact) 18.sp else 20.sp)
         MdBlock.Rule -> Box(
             Modifier.fillMaxWidth().padding(vertical = 6.dp).height(1.dp).background(Palette.SurfaceHighest),
         )

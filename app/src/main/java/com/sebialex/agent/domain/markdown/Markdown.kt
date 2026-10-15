@@ -17,6 +17,13 @@ sealed interface MdBlock {
     ) : MdBlock
     data class Table(val header: List<String>, val align: List<Align>, val rows: List<List<String>>) : MdBlock
     data object Rule : MdBlock
+
+    /**
+     * Display math: a `$$…$$` or `\[…\]` block (one line or several). [tex] is the formula
+     * without its delimiters. Only produced once the closing delimiter is there; until then
+     * (an answer still being revealed) the lines stay ordinary paragraph text.
+     */
+    data class Math(val tex: String) : MdBlock
 }
 
 enum class Align { START, CENTER, END }
@@ -31,6 +38,35 @@ object MarkdownParser {
     private val tableSep = Regex("^\\s*\\|?\\s*:?-{2,}:?\\s*(\\|\\s*:?-{2,}:?\\s*)*\\|?\\s*$")
 
     fun parse(source: String): List<MdBlock> = parseLines(source.replace("\r\n", "\n").split('\n'), 0)
+
+    /**
+     * A display-math block starting at [start]: the formula and the index of its last line, or
+     * null when the line does not open one or the closing delimiter never comes.
+     */
+    private fun displayMath(lines: List<String>, start: Int): Pair<String, Int>? {
+        val first = lines[start].trim()
+        val (open, close) = when {
+            first.startsWith("$$") -> "$$" to "$$"
+            first.startsWith("\\[") -> "\\[" to "\\]"
+            else -> return null
+        }
+        val tex = StringBuilder()
+        var rest = first.substring(open.length)
+        var i = start
+        while (true) {
+            val end = rest.indexOf(close)
+            if (end >= 0) {
+                tex.append(rest, 0, end)
+                // Text after the closing delimiter on the same line would be lost: not a block then.
+                if (rest.substring(end + close.length).isNotBlank()) return null
+                return tex.toString().trim().takeIf { it.isNotEmpty() }?.let { it to i }
+            }
+            tex.append(rest).append('\n')
+            i++
+            if (i >= lines.size) return null
+            rest = lines[i]
+        }
+    }
 
     private fun parseLines(lines: List<String>, offset: Int): List<MdBlock> {
         val out = mutableListOf<MdBlock>()
@@ -57,6 +93,12 @@ object MarkdownParser {
                     out += MdBlock.Code(lang, code.toString().trimEnd('\n'))
                 }
                 line.isBlank() -> flush()
+                displayMath(lines, i) != null -> {
+                    flush()
+                    val (tex, last) = displayMath(lines, i)!!
+                    out += MdBlock.Math(tex)
+                    i = last
+                }
                 heading.matchEntire(line) != null -> {
                     flush()
                     val m = heading.matchEntire(line)!!
@@ -164,6 +206,9 @@ sealed interface MdInline {
     data class Strike(val children: List<MdInline>) : MdInline
     data class Code(val text: String) : MdInline
     data class Link(val children: List<MdInline>, val url: String) : MdInline
+
+    /** A formula inside text: `$…$`, `\(…\)`, or [display] `$$…$$` / `\[…\]` written mid-paragraph. */
+    data class Math(val tex: String, val display: Boolean = false) : MdInline
 }
 
 object InlineParser {
@@ -175,6 +220,21 @@ object InlineParser {
         while (i < text.length) {
             val c = text[i]
             when {
+                // Math first: `\(` and `\[` would otherwise be read as escaped brackets.
+                c == '\\' && (text.startsWith("\\(", i) || text.startsWith("\\[", i)) -> {
+                    val close = if (text[i + 1] == '(') "\\)" else "\\]"
+                    val end = text.indexOf(close, i + 2)
+                    if (end > i + 2) {
+                        flush(); out += MdInline.Math(text.substring(i + 2, end).trim(), display = close == "\\]"); i = end + 2; continue
+                    }
+                }
+                c == '$' -> {
+                    val math = dollarMath(text, i)
+                    if (math != null) { flush(); out += math.first; i = math.second; continue }
+                    // Not math (a price, or the closing $ has not arrived yet): literal dollar signs.
+                    val run = if (text.startsWith("$$", i)) 2 else 1
+                    buf.append(text, i, i + run); i += run; continue
+                }
                 c == '\\' && i + 1 < text.length -> { buf.append(text[i + 1]); i += 2; continue }
                 c == '`' -> {
                     val end = text.indexOf('`', i + 1)
@@ -218,6 +278,36 @@ object InlineParser {
         }
         flush()
         return out
+    }
+
+    /**
+     * `$$…$$` (display) or `$…$` (inline) starting at [start]: the node and the index after it.
+     * Inline math follows Pandoc's rule so prices are left alone: the opening `$` is not
+     * followed by a space, the closing one is not preceded by a space nor followed by a digit
+     * ("costs $5 and $10" stays text). An escaped `\$` is never a delimiter.
+     */
+    private fun dollarMath(text: String, start: Int): Pair<MdInline, Int>? {
+        if (text.startsWith("$$", start)) {
+            val end = text.indexOf("$$", start + 2)
+            if (end < 0) return null
+            val tex = text.substring(start + 2, end).trim()
+            return if (tex.isEmpty()) null else MdInline.Math(tex, display = true) to end + 2
+        }
+        val open = start + 1
+        if (open >= text.length || text[open].isWhitespace()) return null
+        var j = open
+        while (j < text.length) {
+            val ch = text[j]
+            if (ch == '\\') { j += 2; continue }
+            if (ch == '$') {
+                val ok = j > open && !text[j - 1].isWhitespace() && (j + 1 >= text.length || !text[j + 1].isDigit())
+                if (ok) return MdInline.Math(text.substring(open, j)) to j + 1
+                // A "$ " that cannot close: this was not math (prices), stop looking.
+                if (text[j - 1].isWhitespace()) return null
+            }
+            j++
+        }
+        return null
     }
 
     private fun findClose(text: String, start: Int, open: Char, close: Char): Int {

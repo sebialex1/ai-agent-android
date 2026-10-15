@@ -724,6 +724,8 @@ class OpenRouterBrain(
             - Respect the permission prompts: if the user denies an action, do not retry it; find another way or stop.
             - Keep the final answer short, direct and in the user's language. Do not narrate the tools you used;
               the app shows every step. Use Markdown only when it helps (lists, tables, short code the user asked for).
+            - Math renders: write formulas as LaTeX, inline with $...$ and on their own line with $$...$$ (no code
+              block around them). Plain prices like $5 stay text.
         """.trimIndent()
 
         /**
