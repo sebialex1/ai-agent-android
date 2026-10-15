@@ -378,9 +378,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun handle(sessionId: String, turnId: String, event: AgentEvent) {
         when (event) {
-            is AgentEvent.StepAdded -> mutateTurn(sessionId, turnId) {
-                // Steps keep the real order of events (tool, think, tool, tool, think).
-                if (it.steps.any { s -> s.id == event.step.id }) it else it.copy(steps = it.steps + event.step)
+            is AgentEvent.StepAdded -> {
+                mutateTurn(sessionId, turnId) {
+                    // Steps keep the real order of events (tool, think, tool, tool, think).
+                    if (it.steps.any { s -> s.id == event.step.id }) it else it.copy(steps = it.steps + event.step)
+                }
+                // A tool starting is a checkpoint: a kill from here on leaves a trail Continue can build on.
+                persist(sessionId)
             }
             // Upsert: live reasoning updates may arrive for a row whose first event was dropped.
             is AgentEvent.StepUpdated -> mutateTurn(sessionId, turnId) { t ->
@@ -388,6 +392,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     t.steps.any { it.id == event.step.id } -> t.copy(steps = t.steps.map { if (it.id == event.step.id) event.step else it })
                     else -> t.copy(steps = t.steps + event.step)
                 }
+            }.also {
+                // Only state a resume can build on is saved at once; the throttled live-reasoning
+                // stream (RUNNING) waits for the checkpoint that follows it.
+                if (Resume.durable(event.step)) persist(sessionId)
             }
             is AgentEvent.PreviewReady -> {
                 mutateTurn(sessionId, turnId) { t -> t.copy(previews = t.previews.filterNot { it.path == event.preview.path } + event.preview) }

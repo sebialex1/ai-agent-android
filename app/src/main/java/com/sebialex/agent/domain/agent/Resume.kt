@@ -2,6 +2,7 @@ package com.sebialex.agent.domain.agent
 
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
+import com.sebialex.agent.domain.model.Step
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.Turn
 
@@ -60,4 +61,13 @@ object Resume {
 
     /** What the model receives for a continued turn: the original request and [CONTINUE_NOTE]. */
     fun continuationTask(task: String): String = task + CONTINUE_NOTE
+
+    /**
+     * True when a step update is a checkpoint worth saving at once: the step reached a state a
+     * later resume can build on. Live reasoning (RUNNING) streams many updates and no side
+     * effect has happened yet, so it waits for the next checkpoint; a permission card waiting for
+     * the user (AWAITING_APPROVAL) is saved together with the decision that follows it.
+     */
+    fun durable(step: Step): Boolean =
+        step.status != StepStatus.RUNNING && step.status != StepStatus.AWAITING_APPROVAL
 }

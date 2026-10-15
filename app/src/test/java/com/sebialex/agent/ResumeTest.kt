@@ -71,4 +71,15 @@ class ResumeTest {
         assertFalse(s.turns.single().interrupted)
         assertTrue(Resume.markInterrupted(s, emptySet(), 5).turns.single().interrupted)
     }
+
+    @Test fun onlyDurableStepUpdatesAreCheckpoints() {
+        // A tool that finished (or failed, or was denied) is a state a resume can build on.
+        listOf(StepStatus.DONE, StepStatus.FAILED, StepStatus.DENIED).forEach { st ->
+            assertTrue(Resume.durable(Step("1", StepKind.SHELL, "", "shell", "", status = st, startedAt = 0)))
+        }
+        // The throttled live-reasoning stream and a card still waiting for the user are not.
+        listOf(StepStatus.RUNNING, StepStatus.AWAITING_APPROVAL).forEach { st ->
+            assertFalse(Resume.durable(Step("1", StepKind.SHELL, "", "shell", "", status = st, startedAt = 0)))
+        }
+    }
 }
