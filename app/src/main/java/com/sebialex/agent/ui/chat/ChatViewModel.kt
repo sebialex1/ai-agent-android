@@ -6,6 +6,7 @@ import com.sebialex.agent.AppContainer
 import com.sebialex.agent.domain.agent.AgentEvent
 import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
+import com.sebialex.agent.domain.agent.TurnStop
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
 import com.sebialex.agent.domain.model.SessionSummary
@@ -61,9 +62,12 @@ data class ConversationsUiState(
  */
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
-    private class Run(val job: Job) {
+    /** One running turn. [stopped] is set by the user's Stop, so the queue is not drained after it. */
+    private class Run(val turnId: String) {
+        lateinit var job: Job
         var approval: CompletableDeferred<Boolean>? = null
         var pending: ApprovalRequest? = null
+        var stopped = false
     }
 
     private val cache = HashMap<String, Session>()
@@ -297,16 +301,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
         }
-        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+        val run = Run(assistant.id)
+        run.job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator(sessionId).run(task, history, gate).collect { event -> handle(sessionId, assistant.id, event) }
+                container.newOrchestrator(sessionId).run(task, history, gate).collect { event ->
+                    // After Stop nothing more of this run reaches the chat, even an event already in flight.
+                    if (runs[sessionId] === run) handle(sessionId, assistant.id, event)
+                }
             } finally {
-                finishIfIncomplete(sessionId, assistant.id)
+                finishIfIncomplete(sessionId, run)
             }
         }
-        runs[sessionId] = Run(job)
+        runs[sessionId] = run
         publish()
-        job.start()
+        run.job.start()
     }
 
     private fun handle(sessionId: String, turnId: String, event: AgentEvent) {
@@ -343,30 +351,55 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         publish()
     }
 
-    private fun finishIfIncomplete(sessionId: String, turnId: String) {
-        val turn = cache[sessionId]?.turns?.firstOrNull { it.id == turnId }
+    /**
+     * Ends [run]'s turn: an unfinished turn is closed as stopped ([TurnStop]) and saved, and the
+     * run is forgotten. Called once by Stop (immediately) and again when the job itself ends;
+     * the second call finds nothing left to do, and never touches a newer run of the chat.
+     */
+    private fun finishIfIncomplete(sessionId: String, run: Run) {
+        val turn = cache[sessionId]?.turns?.firstOrNull { it.id == run.turnId }
         if (turn != null && !turn.complete) {
-            mutateTurn(sessionId, turnId) { t ->
-                t.copy(
-                    text = t.text.ifBlank { "Stopped." },
-                    complete = true,
-                    steps = t.steps.map { s ->
-                        if (s.status == StepStatus.RUNNING || s.status == StepStatus.AWAITING_APPROVAL)
-                            s.copy(status = StepStatus.FAILED, output = s.output.ifEmpty { "cancelled" }, finishedAt = System.currentTimeMillis())
-                        else s
-                    },
-                )
-            }
+            mutateTurn(sessionId, run.turnId) { TurnStop.stopped(it, System.currentTimeMillis()) }
             persist(sessionId)
         }
+        if (runs[sessionId] !== run) return
         runs.remove(sessionId)
         publish()
-        // The turn is over (answered or stopped): the next queued message goes out now.
-        drainQueue(sessionId)
+        // The turn is over: the next queued message goes out now, unless the user stopped it.
+        if (TurnStop.drainsQueue(stoppedByUser = run.stopped)) drainQueue(sessionId)
     }
 
+    /**
+     * Stop is immediate: the run is cancelled (its model stream is disconnected, see
+     * cancellableIo), the turn is closed with what it has, the button flips back to send in the
+     * same frame, and an answer still typing out is shown whole at once. Queued messages stay
+     * queued (paused) instead of starting a new turn the user just tried to stop.
+     */
     fun stop() {
-        runs[currentId]?.let { it.approval?.complete(false); it.job.cancel() }
+        val sessionId = currentId
+        endReveal(sessionId)
+        val run = runs[sessionId] ?: run { publish(); return }
+        run.stopped = true
+        run.approval?.complete(false)
+        run.job.cancel()
+        // Not waiting for the job: a blocking tool may take a moment to notice the cancel.
+        finishIfIncomplete(sessionId, run)
+    }
+
+    /** Ends the typewriter of every answer of [sessionId] being revealed: the full text shows at once. */
+    private fun endReveal(sessionId: String) {
+        val ids = cache[sessionId]?.turns?.map { it.id }?.toSet().orEmpty()
+        revealing = revealing - ids
+    }
+
+    /** Sends a queued message now (a paused queue after Stop), or leaves it queued while a turn runs. */
+    fun sendQueuedNow(id: String) {
+        val sessionId = currentId
+        if (runs.containsKey(sessionId)) return
+        val q = queues[sessionId].orEmpty()
+        val msg = q.firstOrNull { it.id == id } ?: return
+        queues[sessionId] = q.filterNot { it.id == id }
+        startTurn(sessionId, msg.task)
     }
 
     fun respondToApproval(allow: Boolean) {
@@ -535,7 +568,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val run = runs[currentId]
         _state.value = ChatUiState(
             session = session,
-            running = run != null,
+            running = run != null && !run.stopped,
             expanded = expanded,
             pendingApproval = run?.pending,
             revealing = revealing,

@@ -182,7 +182,12 @@ fun ChatScreen(
         ) {
             // Queued messages sit at the very bottom (reverse layout), under the running turn.
             items(state.queued.asReversed(), key = { "queued:" + it.id }) { q ->
-                QueuedBubble(q, resolveFile = vm::workspaceFile, onRemove = { vm.removeQueued(q.id) })
+                QueuedBubble(
+                    q, resolveFile = vm::workspaceFile, onRemove = { vm.removeQueued(q.id) },
+                    // Nothing runs (the user pressed Stop): the queue waits until one is sent by hand.
+                    paused = !state.running,
+                    onSendNow = { vm.sendQueuedNow(q.id) },
+                )
             }
             items(turns.asReversed(), key = { it.id }) { turn ->
                 if (turn.role == Role.USER) {
@@ -249,6 +254,7 @@ fun ChatScreen(
             onValueChange = { updateInput(it) },
             running = state.running,
             hasAttachments = pending.isNotEmpty(),
+            revealing = state.revealing.isNotEmpty(),
             onSend = {
                 val editing = editingId
                 if (editing != null) {

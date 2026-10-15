@@ -82,7 +82,7 @@ class OllamaBrain(
 
     private class UnsupportedFeature(message: String, val tools: Boolean, val thinking: Boolean) : Exception(message)
 
-    private fun request(
+    private suspend fun request(
         ctx: BrainContext,
         name: String,
         withTools: Boolean,
@@ -99,6 +99,11 @@ class OllamaBrain(
         }.toString()
 
         val conn = URL(cloud.chatEndpoint).openConnection() as HttpURLConnection
+        // Stop disconnects the stream at once instead of reading it to the end.
+        return com.sebialex.agent.data.web.cancellableIo(close = { conn.disconnect() }) { stream(conn, ctx, name, body, onReasoning) }
+    }
+
+    private fun stream(conn: HttpURLConnection, ctx: BrainContext, name: String, body: String, onReasoning: (String) -> Unit): BrainDecision {
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 20_000

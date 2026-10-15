@@ -152,9 +152,16 @@ private fun MentionChip(file: java.io.File, onClick: () -> Unit) {
 /**
  * A message sent while the agent was busy: shown like your own message, dimmed, with a small
  * "Queued" badge and a remove button. It is sent as soon as the running turn finishes.
+ * After Stop the queue is [paused]: the badge says so and a send button sends it now.
  */
 @Composable
-fun QueuedBubble(message: com.sebialex.agent.ui.chat.QueuedMessage, resolveFile: (String) -> java.io.File?, onRemove: () -> Unit) {
+fun QueuedBubble(
+    message: com.sebialex.agent.ui.chat.QueuedMessage,
+    resolveFile: (String) -> java.io.File?,
+    onRemove: () -> Unit,
+    paused: Boolean = false,
+    onSendNow: () -> Unit = {},
+) {
     val paths = remember(message.task) { com.sebialex.agent.domain.agent.Mentions.paths(message.task).filter { resolveFile(it) != null } }
     val body = remember(message.task, paths) { com.sebialex.agent.domain.agent.Mentions.strip(message.task, paths) }
     Column(
@@ -177,8 +184,11 @@ fun QueuedBubble(message: com.sebialex.agent.ui.chat.QueuedMessage, resolveFile:
             if (body.isNotBlank()) Text(body, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (paused) com.sebialex.agent.ui.components.QuietIconButton(
+                R.drawable.ic_arrow_up, "Send now", onClick = onSendNow, size = 28.dp, iconSize = 14.dp, tint = Palette.IconActive,
+            )
             Text(
-                "Queued",
+                if (paused) "Paused" else "Queued",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextSecondary,
                 modifier = Modifier

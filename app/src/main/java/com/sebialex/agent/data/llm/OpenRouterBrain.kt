@@ -253,8 +253,14 @@ class OpenRouterBrain(
      * parsing above is shared. Reasoning deltas are forwarded to [onReasoning] as they arrive.
      * A plain JSON body (some errors, or providers that ignore `stream`) is handled too.
      */
-    private fun postStreaming(body: String, onReasoning: (String) -> Unit): JsonObject {
-        val conn = open(body, accept = "text/event-stream")
+    private suspend fun postStreaming(body: String, onReasoning: (String) -> Unit): JsonObject {
+        val conn = connection(accept = "text/event-stream")
+        // Stop disconnects the stream at once instead of reading it to the end.
+        return com.sebialex.agent.data.web.cancellableIo(close = { conn.disconnect() }) { readStream(conn, body, onReasoning) }
+    }
+
+    private fun readStream(conn: HttpURLConnection, body: String, onReasoning: (String) -> Unit): JsonObject {
+        conn.outputStream.use { it.write(body.toByteArray()) }
         try {
             val code = conn.responseCode
             if (code !in 200..299) throw httpError(code, conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty())
@@ -405,7 +411,8 @@ class OpenRouterBrain(
         }
     }
 
-    private fun open(body: String, accept: String): HttpURLConnection {
+    /** A configured POST to the endpoint; the body is written by the caller (so a cancel can disconnect it). */
+    private fun connection(accept: String): HttpURLConnection {
         val conn = URL(endpoint).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.connectTimeout = 20_000
@@ -418,7 +425,6 @@ class OpenRouterBrain(
             conn.setRequestProperty("HTTP-Referer", "https://github.com/sebialex1/ai-agent-android")
             conn.setRequestProperty("X-Title", "Agent for Android")
         }
-        conn.outputStream.use { it.write(body.toByteArray()) }
         return conn
     }
 

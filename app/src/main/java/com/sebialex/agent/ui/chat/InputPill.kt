@@ -45,13 +45,24 @@ fun InputPill(
     placeholder: String = "Ask anything",
     /** Imports are waiting above the input, so an empty message can still be sent. */
     hasAttachments: Boolean = false,
+    /**
+     * An answer is still typing out (no run any more): the button stays a stop button, and
+     * pressing it shows the whole answer at once.
+     */
+    revealing: Boolean = false,
 ) {
     // The input is never blocked: while an answer runs, a typed message is queued (one button:
     // the arrow queues it when there is something to send, otherwise it is the stop button).
     val hasContent = value.text.isNotBlank() || hasAttachments
     val canSend = hasContent
-    val showStop = running && !hasContent
-    val fill by animateColorAsState(if (canSend || running) Palette.Accent else Palette.SurfaceHighest, label = "send")
+    val stoppable = running || revealing
+    val showStop = stoppable && !hasContent
+    // Snaps (no fade) when the state changes, so after Stop the button is a send button that very frame.
+    val fill by animateColorAsState(
+        if (canSend || stoppable) Palette.Accent else Palette.SurfaceHighest,
+        animationSpec = androidx.compose.animation.core.snap(),
+        label = "send",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -95,7 +106,7 @@ fun InputPill(
                 .size(36.dp)
                 .clip(CircleShape)
                 .background(fill)
-                .clickable(enabled = canSend || running) { if (showStop) onStop() else onSend() },
+                .clickable(enabled = canSend || stoppable) { if (showStop) onStop() else onSend() },
             contentAlignment = Alignment.Center,
         ) {
             AppIcon(
@@ -105,7 +116,7 @@ fun InputPill(
                     running -> "Queue message"
                     else -> "Send"
                 },
-                tint = if (canSend || running) Palette.OnAccent else Palette.IconMuted,
+                tint = if (canSend || stoppable) Palette.OnAccent else Palette.IconMuted,
                 size = 20.dp,
             )
         }
