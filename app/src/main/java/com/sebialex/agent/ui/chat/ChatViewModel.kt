@@ -389,6 +389,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     else -> t.copy(steps = t.steps + event.step)
                 }
             }
+            is AgentEvent.PreviewReady -> {
+                mutateTurn(sessionId, turnId) { t -> t.copy(previews = t.previews.filterNot { it.path == event.preview.path } + event.preview) }
+                persist(sessionId)
+            }
             is AgentEvent.PlanUpdated -> {
                 mutateTurn(sessionId, turnId) { it.copy(plan = event.plan) }
                 persist(sessionId)
@@ -615,6 +619,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** The current conversation's workspace file at [path], or null when it is not an existing file. */
+    /** The workspace folder a web preview is served from; null when it no longer exists. */
+    fun workspaceFolder(path: String): java.io.File? =
+        runCatching { container.runtime(currentId).workspace.resolve(path) }.getOrNull()?.takeIf { it.isDirectory }
+
     fun workspaceFile(path: String): java.io.File? =
         runCatching { container.runtime(currentId).workspace.resolve(path) }.getOrNull()?.takeIf { it.isFile }
 

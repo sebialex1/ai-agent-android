@@ -27,6 +27,9 @@ sealed interface AgentEvent {
         val artifacts: List<FileAttachment> = emptyList(),
     ) : AgentEvent
 
+    /** preview_webapp: a web app is ready to preview (a card in the answer). */
+    data class PreviewReady(val preview: com.sebialex.agent.domain.model.WebPreview) : AgentEvent
+
     /** set_plan: the answer's plan card, replaced as a whole. */
     data class PlanUpdated(val plan: com.sebialex.agent.domain.model.Plan) : AgentEvent
 }
@@ -268,6 +271,7 @@ class AgentOrchestrator(
                         }
                         // Artifacts come from a real attach_files call only: no other tool attaches by side effect.
                         if (call is ToolCall.AttachFiles) result.artifacts.forEach { a -> artifacts.remove(a.path); artifacts[a.path] = a }
+                        if (call is ToolCall.PreviewWebapp && result.ok) result.preview?.let { send(AgentEvent.PreviewReady(it)) }
                         // Only pages that were actually fetched and read become website sources.
                         if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
                         observations += Observation(call, result, batch)
@@ -436,6 +440,7 @@ class AgentOrchestrator(
         is ToolCall.CheckTools -> Step(nextId(), StepKind.SHELL, "check " + call.tools.joinToString(", "), "check_tools", args(call), startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())
+        is ToolCall.PreviewWebapp -> Step(nextId(), StepKind.FILE_READ, "preview ${call.path}", "preview_webapp", args(call), startedAt = now())
         // Audit-only rows: the chat shows these as cards.
         is ToolCall.SetPlan -> Step(nextId(), StepKind.FILE_READ, "plan: ${call.title}", "set_plan", args(call), startedAt = now())
         is ToolCall.AskUser -> Step(nextId(), StepKind.PERMISSION, "ask: ${call.question.take(80)}", "ask_user", args(call), startedAt = now())

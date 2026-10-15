@@ -85,6 +85,13 @@ data class AskRecord(
     val askedAt: Long = 0,
 )
 
+/**
+ * A web app the agent built and offered to preview (preview_webapp): the workspace folder it
+ * is served from, the page to open in it, and a display name for the preview window.
+ */
+@Serializable
+data class WebPreview(val path: String, val title: String, val entry: String = "index.html")
+
 /** One entry of a conversation's todo list (the todo tool and the panel above the input). */
 @Serializable
 data class TodoItem(val id: Int, val text: String, val done: Boolean = false)
@@ -113,6 +120,8 @@ data class Turn(
     val plan: Plan? = null,
     /** Questions the agent asked in this turn (ask_user), in order, with the answers. */
     val questions: List<AskRecord> = emptyList(),
+    /** Web apps offered for preview in this turn (preview_webapp), each shown as a Preview card. */
+    val previews: List<WebPreview> = emptyList(),
 )
 
 /**

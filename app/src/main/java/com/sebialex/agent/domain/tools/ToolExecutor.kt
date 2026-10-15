@@ -1,5 +1,6 @@
 package com.sebialex.agent.domain.tools
 
+import java.io.File
 import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.Shell
 import com.sebialex.agent.data.shell.SharedTerminal
@@ -109,6 +110,7 @@ class ToolExecutor(
                 is ToolCall.HttpRequest -> NetTools.request(call)
                 is ToolCall.DeviceInfo -> ToolResult(call.callId, true, NetTools.deviceInfo())
                 is ToolCall.ViewImage -> viewImage(call)
+                is ToolCall.PreviewWebapp -> previewWebapp(call)
                 // Answered by the orchestrator through the chat (ChatTools); never run on the device.
                 is ToolCall.SetPlan, is ToolCall.AskUser, is ToolCall.Todo ->
                     ToolResult(call.callId, false, "This tool is only available in the chat.")
@@ -179,6 +181,36 @@ class ToolExecutor(
     }
 
     /** Loads a workspace image (or video frames) so the brain can show it to the model. */
+    /**
+     * Checks that [ToolCall.PreviewWebapp.path] is a folder with an index.html (or an .html file,
+     * served from its folder) and offers it as a Preview card. Nothing is started here: the
+     * preview window runs its own local server only while it is open.
+     */
+    private fun previewWebapp(call: ToolCall.PreviewWebapp): ToolResult {
+        val f = workspace.resolve(call.path)
+        val (folder, entry) = when {
+            f.isDirectory -> f to "index.html"
+            f.isFile && f.extension.lowercase() in setOf("html", "htm") -> f.parentFile!! to f.name
+            f.isFile -> return ToolResult(call.callId, false, "${workspace.virtualOf(f)} is not an HTML file: pass the folder with index.html.")
+            else -> return ToolResult(call.callId, false, "${call.path}: no such folder")
+        }
+        val label = workspace.virtualOf(folder)
+        if (!File(folder, entry).isFile) {
+            val pages = folder.listFiles().orEmpty().filter { it.isFile && it.extension.lowercase() in setOf("html", "htm") }.map { it.name }
+            return ToolResult(
+                call.callId, false,
+                "$label has no $entry" + if (pages.isEmpty()) "." else ". HTML files there: ${pages.joinToString(", ")} (pass one as the path).",
+            )
+        }
+        val title = call.title?.trim()?.takeIf { it.isNotEmpty() } ?: folder.name.ifEmpty { "Web app" }
+        return ToolResult(
+            call.callId, true,
+            "Preview of $label/$entry is offered to the user as a card; it opens in the app's preview window, served " +
+                "from this folder by a local server. Later changes to the files show when the user reloads it.",
+            preview = com.sebialex.agent.domain.model.WebPreview(label, title, entry),
+        )
+    }
+
     private fun viewImage(call: ToolCall.ViewImage): ToolResult {
         val f = workspace.resolve(call.path)
         if (!f.isFile) return ToolResult(call.callId, false, "${call.path}: no such file")

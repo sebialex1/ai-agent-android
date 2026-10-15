@@ -226,6 +226,9 @@ fun AssistantTurn(
     /** Id of the question (ask_user) that waits for a reply, if any; [onAnswer] replies to it. */
     askingId: String? = null,
     onAnswer: (String) -> Unit = {},
+    /** Web apps of this turn (preview_webapp): whether each folder still exists, and opening one. */
+    previewAvailable: (com.sebialex.agent.domain.model.WebPreview) -> Boolean = { true },
+    onOpenPreview: (com.sebialex.agent.domain.model.WebPreview) -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
@@ -261,6 +264,13 @@ fun AssistantTurn(
                 }
                 if (turn.sources.isNotEmpty()) {
                     SourceCluster(turn.sources, onOpenSource, onMoreSources)
+                }
+            }
+        }
+        if (turn.previews.isNotEmpty()) AnimatedVisibility(visible = !reveal, enter = fadeIn(tween(220)), exit = fadeOut(tween(1))) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                turn.previews.forEach { p ->
+                    com.sebialex.agent.ui.preview.PreviewCard(p, available = previewAvailable(p), onOpen = { onOpenPreview(p) })
                 }
             }
         }

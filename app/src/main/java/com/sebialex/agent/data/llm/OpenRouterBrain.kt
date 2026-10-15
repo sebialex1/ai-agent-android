@@ -471,6 +471,7 @@ class OpenRouterBrain(
             is ToolCall.SetPlan -> "set_plan"
             is ToolCall.AskUser -> "ask_user"
             is ToolCall.Todo -> "todo"
+            is ToolCall.PreviewWebapp -> "preview_webapp"
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -533,6 +534,7 @@ class OpenRouterBrain(
                 put("question", c.question)
                 if (c.choices.isNotEmpty()) putJsonArray("choices") { c.choices.forEach { add(it) } }
             }.toString()
+            is ToolCall.PreviewWebapp -> buildJsonObject { put("path", c.path); c.title?.let { put("title", it) } }.toString()
             is ToolCall.Todo -> buildJsonObject {
                 put("action", c.action)
                 if (c.items.isNotEmpty()) putJsonArray("items") { c.items.forEach { add(it) } }
@@ -662,6 +664,9 @@ class OpenRouterBrain(
                 "ask_user" -> arg("question")?.takeIf { it.isNotBlank() }?.let { q ->
                     ToolCall.AskUser(id, q.trim(), (args["choices"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { c -> c.isNotEmpty() } }.take(6))
                 } ?: missing("question")
+                "preview_webapp" -> arg("path")?.takeIf { it.isNotBlank() }?.let {
+                    ToolCall.PreviewWebapp(id, it.trim(), arg("title")?.takeIf { t -> t.isNotBlank() })
+                } ?: missing("path")
                 "todo" -> {
                     val action = arg("action")?.trim()?.lowercase() ?: return missing("action")
                     val ids = (args["ids"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.toIntOrNull() }
@@ -731,6 +736,9 @@ class OpenRouterBrain(
             - generate_image: create a picture from a description; it is saved in the workspace. When the user asked
               for the picture, attach it with attach_files (a short, human-readable name).
             - device_info: current date, time, time zone, locale and Android version.
+            - preview_webapp: after building a web app (HTML/CSS/JS in a workspace folder with index.html), offer it to
+              the user as a live preview card. It is served locally, so use relative paths and no build server; after
+              changing files, tell the user to reload the preview rather than calling it again.
             Working with the user
             - set_plan: for a task of three or more steps, show the plan as a card in your answer, then call it again
               with updated statuses (pending, active, done, skipped) as you progress. Not for simple questions.
@@ -852,11 +860,11 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo"
+            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
-            "http_request, device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, " +
+            "http_request, device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp, " +
             "and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -1167,6 +1175,12 @@ class OpenRouterBrain(
                         }
                     }
                 },
+                typedFn(
+                    "preview_webapp", "Offer a web app you built in the workspace as a live preview: the user gets a Preview " +
+                        "card that opens it in the app, served from the folder by a local server (static files only).",
+                    Param("path", "string", "Folder with index.html (or an .html file), relative to /workspace, e.g. apps/timer"),
+                    Param("title", "string", "Short name of the app for the preview window", required = false),
+                ),
                 typedFn(
                     "view_image", "Look at a workspace image (png, jpg, webp, gif) or a few frames of a video. The picture is shown to you after the tool result.",
                     Param("path", "string", "Path relative to /workspace, e.g. imports/photo.jpg"),

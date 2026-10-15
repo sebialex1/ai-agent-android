@@ -89,6 +89,7 @@ class PermissionPolicy(
         is ToolCall.ViewImage -> outsideOr(call.path)
         // Chat tools: a card in the answer, a question, the todo list. Nothing leaves the app.
         is ToolCall.SetPlan, is ToolCall.AskUser, is ToolCall.Todo -> PermissionDecision.Allow
+        is ToolCall.PreviewWebapp -> outsideOr(call.path)
         is ToolCall.Invalid -> PermissionDecision.Allow
     }
 

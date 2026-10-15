@@ -74,6 +74,8 @@ fun ChatScreen(
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     // Long-pressed own message (its actions sheet) and the message being edited, per conversation.
     var actionsFor by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    // The web app preview window that is open (preview_webapp), by turn and folder.
+    var previewOpen by remember(sessionId) { mutableStateOf<com.sebialex.agent.domain.model.WebPreview?>(null) }
     var editingId by rememberSaveable(sessionId, key = "editing:$sessionId") { mutableStateOf<String?>(null) }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var moreSources by remember { mutableStateOf<List<SourceRef>?>(null) }
@@ -216,6 +218,8 @@ fun ChatScreen(
                         } else null,
                         askingId = state.askingId,
                         onAnswer = { vm.answerQuestion(it) },
+                        previewAvailable = { vm.workspaceFolder(it.path) != null },
+                        onOpenPreview = { previewOpen = it },
                     )
                 }
             }
@@ -304,6 +308,11 @@ fun ChatScreen(
                 onOpenPath = { openStepId = null; onOpenFile(it, null) },
             )
         }
+    }
+    previewOpen?.let { p ->
+        val root = remember(p) { vm.workspaceFolder(p.path) }
+        if (root == null) previewOpen = null
+        else com.sebialex.agent.ui.preview.PreviewWindow(p, root, onClose = { previewOpen = null })
     }
     actionsFor?.let { id ->
         val text = remember(id) { vm.copyText(id) }

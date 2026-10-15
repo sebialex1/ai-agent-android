@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Everything stays HTTPS-only, except servers on this phone itself (a llama.cpp, Ollama or
      LM Studio-style server started in Termux, or the emulator's host), which usually speak
-     plain http on localhost. -->
+     plain http on localhost, and the app's own web preview server on 127.0.0.1). -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
