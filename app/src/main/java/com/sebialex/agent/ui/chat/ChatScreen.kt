@@ -260,6 +260,7 @@ fun ChatScreen(
                         onAnswer = { vm.answerQuestion(it) },
                         previewAvailable = { vm.workspaceFolder(it.path) != null },
                         onOpenPreview = { previewOpen = it },
+                        onStopSubagent = vm::stopSubagent,
                     )
                 }
             }

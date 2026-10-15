@@ -14,7 +14,9 @@ import com.sebialex.agent.domain.permission.PermissionDecision
 import com.sebialex.agent.domain.permission.PermissionPolicy
 import com.sebialex.agent.domain.tools.ToolExecutor
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
 
 sealed interface AgentEvent {
     data class StepAdded(val step: Step) : AgentEvent
@@ -32,6 +34,9 @@ sealed interface AgentEvent {
 
     /** set_plan: the answer's plan card, replaced as a whole. */
     data class PlanUpdated(val plan: com.sebialex.agent.domain.model.Plan) : AgentEvent
+
+    /** spawn_subagent: a subagent of this turn started, took a step or finished (its card, replaced as a whole). */
+    data class SubagentUpdated(val run: com.sebialex.agent.domain.model.SubagentRun) : AgentEvent
 }
 
 data class ApprovalRequest(val stepId: String, val summary: String, val reason: String)
@@ -61,6 +66,8 @@ class AgentOrchestrator(
     /** Memory of earlier conversations is on for this conversation (per-conversation toggle). */
     private val memoryEnabled: () -> Boolean = { false },
     private val maxSteps: Int = 30,
+    /** Where spawn_subagent gets its children; null when this orchestrator cannot start any. */
+    private val subagents: Subagents? = null,
 ) {
     private var seq = 0L
 
@@ -69,7 +76,21 @@ class AgentOrchestrator(
      * ask_user and todo never reach the permission policy or the device: they only change what
      * the chat shows, and they get no step row (their card is the row).
      */
-    fun run(task: String, history: List<Turn>, gate: ApprovalGate, chat: ChatTools = ChatTools.None): Flow<AgentEvent> = channelFlow {
+    /**
+     * [control] stops single subagents from the chat. [parent] is set when this run IS a
+     * subagent: it then reads the main conversation through it, never asks the user, and
+     * cannot start subagents of its own.
+     */
+    fun run(
+        task: String,
+        history: List<Turn>,
+        gate: ApprovalGate,
+        chat: ChatTools = ChatTools.None,
+        control: SubagentControl = SubagentControl(),
+        parent: ParentLink? = null,
+    ): Flow<AgentEvent> = channelFlow {
+        val isChild = parent != null
+        var spawned = 0
         val observations = mutableListOf<Observation>()
         val attachments = linkedMapOf<String, FileAttachment>()
         val artifacts = linkedMapOf<String, FileAttachment>()
@@ -105,6 +126,8 @@ class AgentOrchestrator(
             val ctx = BrainContext(
                 modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
                 todos = chat.todos(),
+                mode = if (isChild) AgentMode.SUBAGENT else AgentMode.MAIN,
+                subagentModels = if (isChild) emptyList() else subagents?.models().orEmpty(),
             )
             val requestedAt = now()
             // Live reasoning: each model call gets its own thought step, created on the first
@@ -156,9 +179,34 @@ class AgentOrchestrator(
                 is BrainDecision.Act -> {
                     batch++
                     decision.thought?.let { thoughts[batch] = it }
+                    // Subagents start first and run in parallel with each other and with the
+                    // rest of this batch; their reports are collected once the batch is done.
+                    val children = decision.calls.filterIsInstance<ToolCall.SpawnSubagent>().map { call ->
+                        val allowed = !isChild && subagents != null && subagents.models().isNotEmpty() && spawned < SubagentRuns.MAX_PER_TURN
+                        if (allowed) spawned++
+                        call to async {
+                            if (!allowed) ToolResult(
+                                call.callId, false,
+                                if (isChild || subagents == null || subagents.models().isEmpty()) "Subagents are not available here."
+                                else "At most ${SubagentRuns.MAX_PER_TURN} subagents per answer; do the rest yourself.",
+                            ) else runSubagent(this@channelFlow, call, task, history, control)
+                        }
+                    }
                     for (requested in decision.calls) {
                         executed++
+                        if (requested is ToolCall.SpawnSubagent) continue
                         var call = requested
+                        if (call is ToolCall.MainConversation) {
+                            val result = if (parent != null) ToolResult(call.callId, true, parent.recent(call.count))
+                            else ToolResult(call.callId, false, "main_conversation is only for subagents: the conversation is already above.")
+                            audit.record(stepFor(call).copy(status = if (result.ok) StepStatus.DONE else StepStatus.FAILED, output = result.output, finishedAt = now()))
+                            observations += Observation(call, result, batch)
+                            continue
+                        }
+                        if (isChild && (call is ToolCall.SetPlan || call is ToolCall.AskUser || call is ToolCall.Todo || call is ToolCall.AttachFiles || call is ToolCall.PreviewWebapp)) {
+                            observations += Observation(call, ToolResult(call.callId, false, "Not available to a subagent: report back to the main agent instead."), batch)
+                            continue
+                        }
                         if (call is ToolCall.Invalid) {
                             observations += Observation(call, ToolResult(call.callId, false, call.reason), batch)
                             continue
@@ -233,6 +281,18 @@ class AgentOrchestrator(
                             is PermissionDecision.Ask -> if (autoApprove()) {
                                 autoRisk = d.reason.label
                                 true
+                            } else if (isChild) {
+                                // No approval card for a subagent: the main agent can do it and ask.
+                                val s = permissionStep(d.summary, d.reason.label).copy(
+                                    status = StepStatus.DENIED, output = "needs the user's approval; left to the main agent", finishedAt = now(),
+                                )
+                                send(AgentEvent.StepAdded(s)); audit.record(s)
+                                observations += Observation(
+                                    call,
+                                    ToolResult(call.callId, false, "Needs the user's approval (${d.reason.label}: ${d.summary}), which a subagent cannot ask for. Do not retry; report it to the main agent."),
+                                    batch,
+                                )
+                                continue
                             } else {
                                 val s = permissionStep(d.summary, d.reason.label)
                                 send(AgentEvent.StepAdded(s))
@@ -277,13 +337,82 @@ class AgentOrchestrator(
                         if (result.ok) result.sources.forEach { sources.putIfAbsent(it.url, it) }
                         observations += Observation(call, result, batch)
                     }
+                    for ((call, report) in children) observations += Observation(call, report.await(), batch)
                 }
             }
         }
         send(AgentEvent.Finished("I stopped after $maxSteps tool calls without finishing.", attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
     }
 
+    /**
+     * Runs one subagent to its end and returns its report for the main agent. Its progress goes
+     * to the chat as [AgentEvent.SubagentUpdated] (the card); its steps stay in its own run.
+     * Cancelled with the parent turn; [control] stops it alone, and the parent goes on.
+     */
+    private suspend fun runSubagent(
+        out: kotlinx.coroutines.channels.SendChannel<AgentEvent>,
+        call: ToolCall.SpawnSubagent,
+        task: String,
+        history: List<Turn>,
+        control: SubagentControl,
+    ): ToolResult {
+        val factory = subagents ?: return ToolResult(call.callId, false, "Subagents are not available here.")
+        val models = factory.models()
+        val model = call.model?.takeIf { it in models } ?: models.first()
+        var card = com.sebialex.agent.domain.model.SubagentRun(nextId(), call.objective, model, startedAt = now())
+        val objective = buildString {
+            append(call.objective)
+            call.context?.let { append("\n\nContext from the main agent:\n").append(it) }
+        }
+        val files = linkedSetOf<String>()
+        var finished: AgentEvent.Finished? = null
+        var error: String? = null
+        val stoppedByUser = kotlinx.coroutines.coroutineScope {
+            // Registered before its card is shown, so the card's stop button always reaches it.
+            val job = launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                try {
+                    factory.orchestrator(model).run(objective, emptyList(), REFUSE, ChatTools.None, parent = ParentLink(history, task)).collect { ev ->
+                        when (ev) {
+                            is AgentEvent.StepAdded -> card = SubagentRuns.upsert(card, ev.step)
+                            is AgentEvent.StepUpdated -> card = SubagentRuns.upsert(card, ev.step)
+                            is AgentEvent.Finished -> { finished = ev; ev.attachments.forEach { files += it.path } }
+                            else -> return@collect
+                        }
+                        out.send(AgentEvent.SubagentUpdated(card))
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    error = e.message ?: e.javaClass.simpleName
+                }
+            }
+            control.register(card.id, job)
+            try {
+                out.send(AgentEvent.SubagentUpdated(card))
+                job.join()
+            } finally {
+                control.unregister(card.id)
+            }
+            job.isCancelled && finished == null
+        }
+        val done = finished
+        card = when {
+            done != null -> card.copy(status = com.sebialex.agent.domain.model.SubagentStatus.DONE, result = done.text, finishedAt = now())
+            stoppedByUser -> SubagentRuns.closed(card, com.sebialex.agent.domain.model.SubagentStatus.STOPPED, now())
+            else -> SubagentRuns.closed(card, com.sebialex.agent.domain.model.SubagentStatus.FAILED, now()).copy(result = error ?: "no answer")
+        }
+        out.send(AgentEvent.SubagentUpdated(card))
+        val report = SubagentRuns.report(card, files.toList())
+        audit.record(stepFor(call).copy(status = if (done != null) StepStatus.DONE else StepStatus.FAILED, output = report, finishedAt = now()))
+        return ToolResult(call.callId, done != null, report)
+    }
+
     private companion object {
+        /** A subagent never shows approval cards (see the Ask branch); this gate is never asked. */
+        val REFUSE = object : ApprovalGate {
+            override suspend fun request(request: ApprovalRequest) = false
+        }
+
         /** The one neutral word shown on the reasoning row. */
         const val THOUGHT_LABEL = "thought"
         /** Minimum gap between live reasoning updates, so the UI is not flooded per token. */
@@ -372,7 +501,9 @@ class AgentOrchestrator(
     private fun workspaceFiles(): List<String> =
         workspace.walk().map { workspace.virtualOf(it) }.filterNot { it.startsWith("/.") }.sorted()
 
-    private fun nextId() = "st-${System.currentTimeMillis().toString(36)}-${seq++}"
+    // Parent and subagent orchestrators run at the same time: the tag keeps their step ids apart.
+    private val idTag = (System.identityHashCode(this).toLong() and 0xffffff).toString(36)
+    @Synchronized private fun nextId() = "st-${System.currentTimeMillis().toString(36)}-$idTag-${seq++}"
     private fun now() = System.currentTimeMillis()
 
     private fun permissionStep(summary: String, reason: String) = Step(
@@ -446,6 +577,9 @@ class AgentOrchestrator(
         is ToolCall.SetPlan -> Step(nextId(), StepKind.FILE_READ, "plan: ${call.title}", "set_plan", args(call), startedAt = now())
         is ToolCall.AskUser -> Step(nextId(), StepKind.PERMISSION, "ask: ${call.question.take(80)}", "ask_user", args(call), startedAt = now())
         is ToolCall.Todo -> Step(nextId(), StepKind.FILE_WRITE, "todo ${call.action}", "todo", args(call), startedAt = now())
+        // Audit-only: the subagent's card is its row.
+        is ToolCall.SpawnSubagent -> Step(nextId(), StepKind.SEARCH, "subagent: ${call.objective.take(80)}", "spawn_subagent", args(call), startedAt = now())
+        is ToolCall.MainConversation -> Step(nextId(), StepKind.FILE_READ, "main conversation", "main_conversation", args(call), startedAt = now())
         is ToolCall.Invalid -> Step(nextId(), StepKind.SHELL, call.name, call.name, call.arguments, startedAt = now())
     }
 

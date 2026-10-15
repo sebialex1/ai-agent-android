@@ -236,6 +236,8 @@ fun AssistantTurn(
     /** Web apps of this turn (preview_webapp): whether each folder still exists, and opening one. */
     previewAvailable: (com.sebialex.agent.domain.model.WebPreview) -> Boolean = { true },
     onOpenPreview: (com.sebialex.agent.domain.model.WebPreview) -> Unit = {},
+    /** The stop button on one of this answer's subagent cards. */
+    onStopSubagent: (String) -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
@@ -254,6 +256,8 @@ fun AssistantTurn(
         if (turn.text.isNotBlank()) {
             if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
         }
+        // Subagents of this answer: compact live cards under the message, their steps apart.
+        SubagentCards(turn.subagents, onOpenStep, onStopSubagent)
         // Files and sources follow the answer once it has been revealed.
         // A file that is attached as an artifact is not repeated as a file pill below it.
         val pills = remember(turn.attachments, turn.artifacts) {

@@ -93,7 +93,7 @@ class OllamaBrain(
         val body = buildJsonObject {
             put("model", name)
             put("messages", nativeMessages(shared.messages(ctx)))
-            if (withTools) put("tools", OpenRouterBrain.toolsFor(ctx.memoryTool))
+            if (withTools) put("tools", OpenRouterBrain.toolsFor(ctx))
             if (thinkValue != null) put("think", thinkValue)
             put("stream", true)
         }.toString()

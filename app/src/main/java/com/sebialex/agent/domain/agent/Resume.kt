@@ -43,6 +43,7 @@ object Resume {
                             s.copy(status = StepStatus.FAILED, output = s.output.ifEmpty { "interrupted" }, finishedAt = s.finishedAt ?: now)
                         else s
                     },
+                    subagents = t.subagents.map { SubagentRuns.closed(it, com.sebialex.agent.domain.model.SubagentStatus.STOPPED, now) },
                 )
             },
         )

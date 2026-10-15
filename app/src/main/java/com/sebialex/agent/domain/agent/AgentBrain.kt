@@ -17,6 +17,9 @@ data class Observation(val call: ToolCall, val result: ToolResult, val batch: In
  * [details] is the raw `reasoning_details` JSON array, replayed unchanged so providers that
  * require it (for example during tool calls) get their reasoning blocks back.
  */
+/** Who is asking the brain: the conversation's agent or one of its subagents. */
+enum class AgentMode { MAIN, SUBAGENT }
+
 data class Thought(val text: String, val details: String? = null)
 
 data class BrainContext(
@@ -40,6 +43,13 @@ data class BrainContext(
     val imagesDropped: Boolean = false,
     /** The conversation's todo list as it is now, shown to the model when it has entries. */
     val todos: List<com.sebialex.agent.domain.model.TodoItem> = emptyList(),
+    /** The conversation's own agent, or a subagent it started (spawn_subagent). */
+    val mode: AgentMode = AgentMode.MAIN,
+    /**
+     * Models a subagent may run on, as the user allowed them (Settings > Models > Subagents);
+     * the first is the default. spawn_subagent is only offered to the main agent when non-empty.
+     */
+    val subagentModels: List<String> = emptyList(),
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }

@@ -72,6 +72,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val reasoningOverrides: Map<String, String> = emptyMap(),
         /** Custom-provider models marked as image models by hand, by app model id. */
         val imageOverrides: Set<String> = emptySet(),
+        /** The main agent may start subagents (spawn_subagent). Default on. */
+        val subagentsOn: Boolean = true,
+        /** Models picked for subagents, in order (first = default); empty means the chat model. */
+        val subagentModels: List<String> = emptyList(),
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -411,6 +415,29 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
     fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
+
+    // ---- Subagents (spawn_subagent) ----
+    fun subagentsOn(): Boolean = prefs.getBoolean(KEY_SUBAGENTS_ON, true)
+    fun setSubagentsOn(value: Boolean) = edit { putBoolean(KEY_SUBAGENTS_ON, value) }
+    /** The models picked for subagents, in order; empty means "the chat model". */
+    fun subagentModels(): List<String> =
+        prefs.getString(KEY_SUBAGENT_MODELS, null).orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    fun setSubagentModels(models: List<String>) =
+        edit { putOrRemove(KEY_SUBAGENT_MODELS, models.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n").ifEmpty { null }) }
+    /** Adds or removes [model] from the subagent models (the picker's tap). */
+    fun toggleSubagentModel(model: String) {
+        val now = subagentModels()
+        setSubagentModels(if (model in now) now - model else now + model)
+    }
+    /**
+     * The models a subagent may run on right now: the picked ones, or the chat model. On-device
+     * models are left out: the phone runs one local model at a time, which the main agent may be
+     * using. Empty when subagents are off.
+     */
+    fun effectiveSubagentModels(): List<String> {
+        if (!subagentsOn()) return emptyList()
+        return subagentModels().ifEmpty { listOf(model()) }.filterNot { it.startsWith(LOCAL_PREFIX) }
+    }
     fun setReasoningEnabled(model: String, value: Boolean) = edit { putBoolean(reasoningOnKey(model), value) }
     fun setReasoningEffort(model: String, value: String?) = edit { putOrRemove(reasoningEffortKey(model), value) }
 
@@ -481,6 +508,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         mediaImage = storedMediaImageModel(),
         reasoningOverrides = reasoningOverrides(),
         imageOverrides = imageOverrides(),
+        subagentsOn = subagentsOn(),
+        subagentModels = subagentModels(),
     )
 
     private fun hint(key: String?): String = if (key == null) "" else "\u2022\u2022\u2022\u2022 " + key.takeLast(4)
@@ -501,6 +530,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MODEL = "openrouter_model"
         private const val KEY_ASK_WEB = "ask_before_web"
         private const val KEY_AUTO_APPROVE = "auto_approve_actions"
+        private const val KEY_SUBAGENTS_ON = "subagents_on"
+        private const val KEY_SUBAGENT_MODELS = "subagent_models_v1"
         private const val KEY_REASONING_ON_PREFIX = "reasoning_enabled::"
         private const val KEY_REASONING_EFFORT_PREFIX = "reasoning_effort::"
         const val KEY_REASONING_OVERRIDE_PREFIX = "reasoning_override::"

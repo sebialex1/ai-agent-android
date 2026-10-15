@@ -157,6 +157,12 @@ fun ModelList(
     onPicked: () -> Unit,
     onOpenOnDevice: () -> Unit,
     maxHeight: androidx.compose.ui.unit.Dp = 520.dp,
+    /**
+     * Multi-select mode (Settings > Models > Subagents): rows show [chosen] as selected and a tap
+     * calls [onToggle] instead of switching the chat model. On-device models are left out there.
+     */
+    chosen: Set<String>? = null,
+    onToggle: ((String) -> Unit)? = null,
 ) {
     val snap by settings.state.collectAsStateWithLifecycle()
     val statuses by store.statuses.collectAsStateWithLifecycle()
@@ -189,7 +195,10 @@ fun ModelList(
         }
     }
 
+    val multi = onToggle != null
+    fun isSelected(id: String) = if (multi) id in chosen.orEmpty() else snap.model == id
     fun pickCloud(id: String) {
+        if (onToggle != null) { onToggle(id); return }
         settings.setModel(id)
         engine.unloadAsync()
         onPicked()
@@ -228,11 +237,11 @@ fun ModelList(
         val screen = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
         LazyColumn(Modifier.fillMaxWidth().height(minOf(maxHeight, screen * 0.62f)).keepScrollInside()) {
             // ---- On this phone: only models that are ready to run.
-            item(key = "h:device") { Header("On this phone", action = "Manage", onAction = onOpenOnDevice) }
-            if (device.isEmpty() && q.isEmpty()) item(key = "device:none") {
+            if (!multi) item(key = "h:device") { Header("On this phone", action = "Manage", onAction = onOpenOnDevice) }
+            if (!multi && device.isEmpty() && q.isEmpty()) item(key = "device:none") {
                 Note("No downloaded models. Get Gemma 4 and others under Manage.")
             }
-            items(device, key = { "d:" + it.id }) { m ->
+            items(if (multi) emptyList() else device, key = { "d:" + it.id }) { m ->
                 PickRow(
                     title = m.name,
                     subtitle = listOfNotNull(
@@ -240,7 +249,7 @@ fun ModelList(
                         if (snap.localBackend == SecureSettings.BACKEND_CPU) "CPU" else "GPU",
                         if (m.thinking) "thinking" else null,
                     ).joinToString(" \u00b7 "),
-                    selected = snap.model == m.id,
+                    selected = isSelected(m.id),
                     onClick = { settings.setModel(m.id); engine.preload(m); onPicked() },
                 )
             }
@@ -252,7 +261,7 @@ fun ModelList(
                 val extra = listOfNotNull(custom, snap.ollamaModel.takeIf { it.isNotEmpty() })
                     .distinct().filter { id -> hostedItems.none { it.id == id } && matches(id) }
                 items(extra, key = { "ox:$it" }) { id ->
-                    PickRow(OllamaCloud.wireName(id), if (id == custom) "Custom model ID" else "Last used", snap.model == id, onClick = { pickCloud(id) })
+                    PickRow(OllamaCloud.wireName(id), if (id == custom) "Custom model ID" else "Last used", isSelected(id), onClick = { pickCloud(id) })
                 }
                 when (val l = hosted) {
                     Listing.Loading -> item(key = "o:loading") { Note("Loading models\u2026") }
@@ -261,7 +270,7 @@ fun ModelList(
                         PickRow(
                             title = m.name,
                             subtitle = if (OllamaCloud.knownThinking(m.name) || OllamaCloud.alwaysThinking(m.name)) "thinking" else null,
-                            selected = snap.model == m.id,
+                            selected = isSelected(m.id),
                             onClick = { pickCloud(m.id) },
                         )
                     }
@@ -288,7 +297,7 @@ fun ModelList(
                     PickRow(
                         title = if (id == SecureSettings.DEFAULT_MODEL) "Auto" else id,
                         subtitle = if (id == SecureSettings.DEFAULT_MODEL) "Picks a suitable model per request" else "Last used",
-                        selected = snap.model == id,
+                        selected = isSelected(id),
                         onClick = { pickCloud(id) },
                     )
                 }
@@ -304,7 +313,7 @@ fun ModelList(
                                 if (m.thinking) "thinking" else null,
                                 if (m.free) "free" else null,
                             ).joinToString(" \u00b7 "),
-                            selected = snap.model == m.id,
+                            selected = isSelected(m.id),
                             onClick = { pickCloud(m.id) },
                         )
                     }
@@ -323,10 +332,10 @@ fun ModelList(
                 val ids = customItems[p.id].orEmpty()
                 items(ids, key = { "c:" + p.id + ":" + it }) { m ->
                     val id = com.sebialex.agent.data.llm.CustomProviders.modelId(p.id, m)
-                    PickRow(title = m, subtitle = null, selected = snap.model == id, onClick = { pickCloud(id) })
+                    PickRow(title = m, subtitle = null, selected = isSelected(id), onClick = { pickCloud(id) })
                 }
                 val current = com.sebialex.agent.data.llm.CustomProviders.parse(snap.model)?.takeIf { it.first == p.id }?.second
-                if (current != null && current !in ids && matches(current)) item(key = "c:" + p.id + ":current") {
+                if (!multi && current != null && current !in ids && matches(current)) item(key = "c:" + p.id + ":current") {
                     PickRow(title = current, subtitle = "Typed model id", selected = true, onClick = { })
                 }
                 if (ids.isEmpty() && q.isEmpty()) item(key = "c:" + p.id + ":manual") {

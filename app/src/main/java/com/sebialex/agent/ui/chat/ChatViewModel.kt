@@ -75,6 +75,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         /** ask_user waiting for a reply: the card's id and the answer to complete. */
         var question: CompletableDeferred<String?>? = null
         var questionId: String? = null
+        /** Stops one subagent of this turn from its card. */
+        val subagents = com.sebialex.agent.domain.agent.SubagentControl()
     }
 
     private val cache = HashMap<String, Session>()
@@ -363,7 +365,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val run = Run(assistant.id)
         run.job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator(sessionId).run(modelTask, history, gate, chatTools).collect { event ->
+                container.newOrchestrator(sessionId).run(modelTask, history, gate, chatTools, run.subagents).collect { event ->
                     // After Stop nothing more of this run reaches the chat, even an event already in flight.
                     if (runs[sessionId] === run) handle(sessionId, assistant.id, event)
                 }
@@ -400,6 +402,18 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             is AgentEvent.PreviewReady -> {
                 mutateTurn(sessionId, turnId) { t -> t.copy(previews = t.previews.filterNot { it.path == event.preview.path } + event.preview) }
                 persist(sessionId)
+            }
+            // A subagent's card: its own steps, kept apart from this turn's steps. Saved when it
+            // starts, finishes, or a step of it reaches a state worth keeping.
+            is AgentEvent.SubagentUpdated -> {
+                var durable = true
+                mutateTurn(sessionId, turnId) { t ->
+                    val before = t.subagents.firstOrNull { it.id == event.run.id }
+                    durable = before == null || before.status != event.run.status ||
+                        event.run.steps.lastOrNull()?.let { Resume.durable(it) } == true
+                    t.copy(subagents = com.sebialex.agent.domain.agent.SubagentRuns.merge(t.subagents, event.run))
+                }
+                if (durable) persist(sessionId)
             }
             is AgentEvent.PlanUpdated -> {
                 mutateTurn(sessionId, turnId) { it.copy(plan = event.plan) }
@@ -511,6 +525,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun clearDoneTodos() {
         val s = cache[currentId] ?: return
         updateTodos(currentId, s.todos.filterNot { it.done })
+    }
+
+    /** The stop button on a subagent's card: only that subagent ends; the answer goes on. */
+    fun stopSubagent(id: String) {
+        runs[currentId]?.subagents?.stop(id)
     }
 
     fun respondToApproval(allow: Boolean) {
@@ -660,7 +679,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             .toList()
     }
 
-    fun step(stepId: String): Step? = _state.value.session.turns.asSequence().flatMap { it.steps }.firstOrNull { it.id == stepId }
+    fun step(stepId: String): Step? = _state.value.session.turns.asSequence()
+        .flatMap { it.steps.asSequence() + it.subagents.asSequence().flatMap { r -> r.steps.asSequence() } }
+        .firstOrNull { it.id == stepId }
 
     // ---- Internals ----------------------------------------------------------------------
 

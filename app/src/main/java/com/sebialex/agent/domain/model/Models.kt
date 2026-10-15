@@ -92,6 +92,27 @@ data class AskRecord(
 @Serializable
 data class WebPreview(val path: String, val title: String, val entry: String = "index.html")
 
+/** Where a subagent stands. */
+@Serializable
+enum class SubagentStatus { RUNNING, DONE, FAILED, STOPPED }
+
+/**
+ * One subagent the main agent spawned during a turn (spawn_subagent): its bounded [objective],
+ * the [model] it ran on, its own steps (kept here, never mixed into the parent turn's steps or
+ * replayed to the main model as history) and the [result] handed back to the main agent.
+ */
+@Serializable
+data class SubagentRun(
+    val id: String,
+    val objective: String,
+    val model: String,
+    val status: SubagentStatus = SubagentStatus.RUNNING,
+    val steps: List<Step> = emptyList(),
+    val result: String = "",
+    val startedAt: Long = 0,
+    val finishedAt: Long? = null,
+)
+
 /** One entry of a conversation's todo list (the todo tool and the panel above the input). */
 @Serializable
 data class TodoItem(val id: Int, val text: String, val done: Boolean = false)
@@ -122,6 +143,8 @@ data class Turn(
     val questions: List<AskRecord> = emptyList(),
     /** Web apps offered for preview in this turn (preview_webapp), each shown as a Preview card. */
     val previews: List<WebPreview> = emptyList(),
+    /** Subagents spawned in this turn (spawn_subagent), each shown as a compact status card. */
+    val subagents: List<SubagentRun> = emptyList(),
 )
 
 /**

@@ -222,8 +222,8 @@ fun SettingsScreen(
                         }
                         // generate_image's provider and model (only models that can make images).
                         ImageModelGroup(settings, snap, models)
-                        // Reasoning detection for custom providers, with a manual override per model.
-                        ThinkingSupportGroup(settings, snap)
+                        // Which models subagents (spawn_subagent) may run on: the same picker, multi-select.
+                        SubagentGroup(settings, snap, models, ollama, modelStore, localEngine)
                         if (picking) ModelPickerSheet(
                             settings, models, ollama, modelStore, localEngine,
                             onOpenOnDevice = { section = SettingsSection.ON_DEVICE },

@@ -25,6 +25,8 @@ object TurnStop {
                     s.copy(status = StepStatus.FAILED, output = s.output.ifEmpty { "cancelled" }, finishedAt = now)
                 else s
             },
+            // Its subagents were cancelled with it.
+            subagents = turn.subagents.map { SubagentRuns.closed(it, com.sebialex.agent.domain.model.SubagentStatus.STOPPED, now) },
         )
     }
 

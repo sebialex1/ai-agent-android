@@ -83,7 +83,7 @@ class OpenRouterBrain(
             put("model", model)
             put("messages", messages(ctx))
             if (withTools) {
-                put("tools", toolsFor(ctx.memoryTool))
+                put("tools", toolsFor(ctx))
                 if (openRouterExtras) {
                     put("tool_choice", "auto")
                     put("parallel_tool_calls", true)
@@ -241,7 +241,13 @@ class OpenRouterBrain(
         val todos = if (ctx.todos.isEmpty() || !withTools) "" else
             "\nThis conversation's todo list (todo tool):\n" + com.sebialex.agent.domain.agent.Todos.render(ctx.todos) + "\n"
         val record = com.sebialex.agent.domain.agent.TurnRecord.context(replayed(ctx))
-        return SYSTEM_PROMPT + noTools + memory + todos + record + "\nToday is $date.\n" +
+        val role = when {
+            !withTools -> ""
+            ctx.mode == com.sebialex.agent.domain.agent.AgentMode.SUBAGENT -> "\n" + SUBAGENT_ROLE_PROMPT
+            ctx.subagentModels.isNotEmpty() -> "\n" + subagentsPrompt(ctx.subagentModels)
+            else -> ""
+        }
+        return SYSTEM_PROMPT + noTools + role + memory + todos + record + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
@@ -467,6 +473,8 @@ class OpenRouterBrain(
             is ToolCall.AskUser -> "ask_user"
             is ToolCall.Todo -> "todo"
             is ToolCall.PreviewWebapp -> "preview_webapp"
+            is ToolCall.SpawnSubagent -> SPAWN_TOOL_NAME
+            is ToolCall.MainConversation -> MAIN_CONVERSATION_TOOL_NAME
             is ToolCall.Invalid -> c.name.ifBlank { "unknown" }
         }
 
@@ -530,6 +538,12 @@ class OpenRouterBrain(
                 if (c.choices.isNotEmpty()) putJsonArray("choices") { c.choices.forEach { add(it) } }
             }.toString()
             is ToolCall.PreviewWebapp -> buildJsonObject { put("path", c.path); c.title?.let { put("title", it) } }.toString()
+            is ToolCall.SpawnSubagent -> buildJsonObject {
+                put("objective", c.objective)
+                c.context?.let { put("context", it) }
+                c.model?.let { put("model", it) }
+            }.toString()
+            is ToolCall.MainConversation -> buildJsonObject { put("count", c.count) }.toString()
             is ToolCall.Todo -> buildJsonObject {
                 put("action", c.action)
                 if (c.items.isNotEmpty()) putJsonArray("items") { c.items.forEach { add(it) } }
@@ -670,6 +684,10 @@ class OpenRouterBrain(
                         .ifEmpty { listOfNotNull(arg("item")?.takeIf { it.isNotBlank() }) }
                     ToolCall.Todo(id, action, items, ids)
                 }
+                SPAWN_TOOL_NAME -> arg("objective")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                    ToolCall.SpawnSubagent(id, it.take(600), arg("context")?.trim()?.takeIf { c -> c.isNotEmpty() }, arg("model")?.trim()?.takeIf { m -> m.isNotEmpty() })
+                } ?: missing("objective")
+                MAIN_CONVERSATION_TOOL_NAME -> ToolCall.MainConversation(id, (arg("count")?.trim()?.toDoubleOrNull()?.toInt() ?: 6).coerceIn(1, 20))
                 else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
             }
         }
@@ -855,12 +873,12 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp"
+            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp, spawn_subagent"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
             "http_request, device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp, " +
-            "and conversation_memory when memory of past chats is on."
+            "spawn_subagent (parallel subagents) when subagent models are set, and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
 
@@ -906,6 +924,90 @@ class OpenRouterBrain(
             val base = if (compact) TOOLS.filter { t -> toolNameOf(t) in COMPACT_TOOLS } else TOOLS
             return JsonArray(if (memory) base + MEMORY_TOOL else base)
         }
+
+        /**
+         * The tools for one request. The main agent also gets spawn_subagent when the user
+         * allowed subagent models; a subagent gets main_conversation instead and none of the
+         * tools that talk to the user or shape the answer (they belong to the main agent).
+         */
+        fun toolsFor(ctx: com.sebialex.agent.domain.agent.BrainContext): JsonArray {
+            val base = toolsFor(ctx.memoryTool)
+            return when {
+                ctx.mode == com.sebialex.agent.domain.agent.AgentMode.SUBAGENT ->
+                    JsonArray(base.filter { toolNameOf(it) !in MAIN_ONLY_TOOLS } + MAIN_CONVERSATION_TOOL)
+                ctx.subagentModels.isNotEmpty() -> JsonArray(base + spawnTool(ctx.subagentModels))
+                else -> base
+            }
+        }
+
+        const val SPAWN_TOOL_NAME = "spawn_subagent"
+        const val MAIN_CONVERSATION_TOOL_NAME = "main_conversation"
+
+        /** Tools a subagent never gets: the user, the answer and the todo list belong to the main agent. */
+        internal val MAIN_ONLY_TOOLS = setOf("set_plan", "ask_user", "todo", "attach_files", "preview_webapp", SPAWN_TOOL_NAME)
+
+        /** spawn_subagent, with the allowed models as an enum (the first one is the default). */
+        internal fun spawnTool(models: List<String>): JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", SPAWN_TOOL_NAME)
+                put(
+                    "description",
+                    "Start a subagent: a separate agent that works on ONE bounded objective in parallel with you, with the same " +
+                        "workspace and tools (no questions to the user, no attachments). Call it several times in one step to run " +
+                        "independent pieces at the same time. Its final report comes back as this tool's result; you then use it " +
+                        "in your own answer. Give a self-contained objective and the context it needs.",
+                )
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("objective") {
+                            put("type", "string")
+                            put("description", "One concrete, bounded task with a clear end, e.g. \"Find the release date and price of X from official sources\"")
+                        }
+                        putJsonObject("context") {
+                            put("type", "string")
+                            put("description", "Facts, file paths and constraints the subagent needs from this conversation")
+                        }
+                        putJsonObject("model") {
+                            put("type", "string")
+                            putJsonArray("enum") { models.forEach { add(it) } }
+                            put("description", "Model to run the subagent on; default ${models.first()}")
+                        }
+                    }
+                    putJsonArray("required") { add("objective") }
+                }
+            }
+        }
+
+        private val MAIN_CONVERSATION_TOOL: JsonElement = typedFn(
+            MAIN_CONVERSATION_TOOL_NAME,
+            "Read the main conversation you are working for: its latest messages (the user's requests and the main " +
+                "agent's answers), newest last. Use it when the objective refers to something you were not told.",
+            Param("count", "integer", "How many recent messages, 1-20, default 6", required = false),
+        )
+
+        /** System prompt section for the main agent when subagents are allowed. */
+        internal fun subagentsPrompt(models: List<String>): String =
+            "Subagents\n" +
+                "- spawn_subagent: hand a bounded, independent piece of work (research one question, inspect one folder, try one " +
+                "approach) to a subagent that runs in parallel with you. Call it several times in one step for parallel work; " +
+                "each result comes back as that call's tool result. Do simple things yourself: a subagent costs a full model run.\n" +
+                "- Give each one a self-contained objective and the context it needs (it can also read this conversation and " +
+                "shares the workspace). It cannot ask the user or attach files: you attach and answer.\n" +
+                "- The user sees each subagent as a small live card; do not repeat its steps in your answer.\n" +
+                "- Models allowed for subagents: ${models.joinToString(", ")} (default ${models.first()}).\n"
+
+        /** System prompt section for a subagent. */
+        internal const val SUBAGENT_ROLE_PROMPT =
+            "# You are a subagent\n" +
+                "The main agent of this conversation started you for ONE objective (the user message below). Work on it with " +
+                "your tools until it is done, then answer with a short report for the main agent: what you found or did, exact " +
+                "facts, file paths you created or changed, and anything that failed. The report goes to the main agent, not to " +
+                "the user. Stay within the objective. You cannot ask the user, attach files, keep the todo list or start other " +
+                "subagents; set_plan, ask_user, todo, attach_files and preview_webapp are not available to you. Use " +
+                "main_conversation when the objective refers to earlier messages you were not given. A risky action that needs " +
+                "the user's approval is refused for you: report it so the main agent can do it.\n"
 
         private fun toolNameOf(t: JsonElement): String? =
             (((t as? JsonObject)?.get("function") as? JsonObject)?.get("name") as? JsonPrimitive)?.content

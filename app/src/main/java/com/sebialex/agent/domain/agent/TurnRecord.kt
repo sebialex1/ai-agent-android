@@ -31,6 +31,7 @@ object TurnRecord {
             t.attachments.map { "- file: ${it.path}" } +
             t.artifacts.map { "- attached: ${it.path}" } +
             t.questions.map { "- asked the user: ${it.question.take(160)} -> ${it.answer?.take(160) ?: "(no answer)"}" } +
+            t.subagents.map { "- subagent (${it.status.name.lowercase()}): ${it.objective.take(120)} -> ${it.result.replace(Regex("\\s+"), " ").take(160)}" } +
             listOfNotNull(t.plan?.let { p -> "- plan \"${p.title}\": " + p.steps.joinToString("; ") { "${it.text} (${it.status.name.lowercase()})" }.take(400) })
     }
 

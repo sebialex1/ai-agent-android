@@ -118,9 +118,15 @@ class AppContainer(app: Application) {
         },
     )
 
-    private val brain = RoutingBrain(
+    private val brain = routingBrain { settings.model() }
+
+    /**
+     * Sends each request to the provider of [model]'s current value: the chat model for the main
+     * agent, a fixed model for a subagent. Same providers, keys and reasoning settings for both.
+     */
+    private fun routingBrain(model: () -> String) = RoutingBrain(
         keys = settings,
-        model = { settings.model() },
+        model = model,
         remote = { key, model ->
             OpenRouterBrain(key, model, reasoningFields = {
                 // Read the model's live reasoning metadata before every chat request.
@@ -217,6 +223,20 @@ class AppContainer(app: Application) {
 
     fun newOrchestrator(sessionId: String): AgentOrchestrator {
         val rt = runtime(sessionId)
+        // Subagents share this conversation's workspace, tools, policy and audit log; each runs
+        // on its own model and keeps its own transcript (see Subagents).
+        val subagents = object : com.sebialex.agent.domain.agent.Subagents {
+            override fun models() = settings.effectiveSubagentModels()
+            override fun orchestrator(model: String) = AgentOrchestrator(
+                brain = routingBrain { model },
+                tools = rt.tools,
+                policy = policy,
+                workspace = rt.workspace,
+                audit = rt.audit,
+                autoApprove = { settings.autoApprove() },
+                maxSteps = com.sebialex.agent.domain.agent.SubagentRuns.CHILD_MAX_STEPS,
+            )
+        }
         return AgentOrchestrator(
             brain = brain,
             tools = rt.tools,
@@ -225,6 +245,7 @@ class AppContainer(app: Application) {
             audit = rt.audit,
             autoApprove = { settings.autoApprove() },
             memoryEnabled = { settings.conversationMemory(sessionId) },
+            subagents = subagents,
         )
     }
 }

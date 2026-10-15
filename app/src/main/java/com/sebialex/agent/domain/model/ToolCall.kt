@@ -142,6 +142,24 @@ sealed interface ToolCall {
      */
     data class PreviewWebapp(override val callId: String, val path: String, val title: String? = null) : ToolCall
 
+    /**
+     * Starts a subagent: a separate agent turn that works on one bounded [objective] in parallel
+     * with the main agent and returns its result as this call's output. [context] is what the
+     * main agent passes along; [model] picks one of the models the user allowed for subagents.
+     */
+    data class SpawnSubagent(
+        override val callId: String,
+        val objective: String,
+        val context: String? = null,
+        val model: String? = null,
+    ) : ToolCall
+
+    /**
+     * Subagents only: reads the main conversation (its last [count] messages, newest last), for
+     * context the main agent did not pass along. Workspace files are shared and read directly.
+     */
+    data class MainConversation(override val callId: String, val count: Int = 6) : ToolCall
+
     /** The model asked for a tool that does not exist or sent unusable arguments. Reported back as an error. */
     data class Invalid(override val callId: String, val name: String, val arguments: String, val reason: String) : ToolCall
 }
