@@ -114,26 +114,6 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
         return p
     }
 
-    /**
-     * Loads the page again, making sure the server runs first. A failed page is retried a few
-     * times on its own; after that it waits for a reload or the app coming back.
-     */
-    fun reload(view: WebView, manual: Boolean) {
-        if (manual) retries = 0
-        else if (retries >= MAX_RETRIES) {
-            failed = "The preview server could not be reached. Reload to try again."
-            return
-        }
-        if (!manual) retries += 1
-        scope.launch {
-            val p = ensureServer() ?: return@launch
-            if (!manual) delay(250)
-            val url = pageUrl(p)
-            loadedUrl = url
-            view.loadUrl(url)
-        }
-    }
-
     // In front = the activity is resumed; it counts as away from when it stops (a pause with the
     // window still on screen, as in split screen or under a system dialog, does not count). Read
     // here, outside the dialog, from the screen's owner, which follows the activity.
@@ -147,6 +127,30 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
+
+    /**
+     * Loads the page again, making sure the server runs first. A failed page is retried a few
+     * times on its own; after that it waits for a reload or the app coming back.
+     */
+    fun reload(view: WebView, manual: Boolean) {
+        if (manual) retries = 0
+        else if (retries >= MAX_RETRIES) {
+            failed = "The preview server could not be reached. Reload to try again."
+            return
+        }
+        if (!manual) retries += 1
+        scope.launch {
+            // An automatic retry stops once the app has gone to the background: it would restart
+            // the server there and cancel its idle countdown. Coming back loads the page again.
+            if (!manual && !inFront) return@launch
+            val p = ensureServer() ?: return@launch
+            if (!manual) delay(250)
+            val url = pageUrl(p)
+            loadedUrl = url
+            view.loadUrl(url)
+        }
+    }
+
     LaunchedEffect(inFront) {
         if (inFront) {
             val p = ensureServer()
