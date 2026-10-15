@@ -211,6 +211,9 @@ fun ChatScreen(
                         reveal = turn.id in state.revealing,
                         onRevealed = { vm.markRevealed(turn.id) },
                         resolveFile = vm::workspaceFile,
+                        onContinue = if (turn.interrupted && !state.running && turn.id == turns.lastOrNull()?.id) {
+                            { vm.continueInterrupted(turn.id) }
+                        } else null,
                     )
                 }
             }

@@ -221,6 +221,8 @@ fun AssistantTurn(
     onRevealed: () -> Unit = {},
     /** Resolves a workspace path to its file (for artifact chips); null when it no longer exists. */
     resolveFile: (String) -> java.io.File? = { null },
+    /** The app was killed during this answer and it is the last one: "Continue from where it stopped". */
+    onContinue: (() -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
@@ -257,6 +259,28 @@ fun AssistantTurn(
                 }
             }
         }
+        if (onContinue != null) ContinueChip(onContinue)
+    }
+}
+
+/**
+ * Under an answer the app was killed in the middle of: one tap starts a new run on the same
+ * request, with this conversation (and the steps already done) as context.
+ */
+@Composable
+private fun ContinueChip(onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier
+            .softSurface(shape, Palette.SurfaceHigh, elevation = 2.dp)
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(R.drawable.ic_refresh, null, tint = Palette.IconActive, size = 16.dp)
+        Spacer(Modifier.width(8.dp))
+        Text("Continue from where it stopped", style = MaterialTheme.typography.labelLarge, color = Palette.TextPrimary)
     }
 }
 

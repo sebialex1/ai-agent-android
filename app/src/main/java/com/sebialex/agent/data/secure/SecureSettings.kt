@@ -120,6 +120,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun setMemoryForNewChats(value: Boolean) = edit { putBoolean(KEY_MEMORY_NEW_CHATS, value) }
     fun setAutoTitles(value: Boolean) = edit { putBoolean(KEY_AUTO_TITLES, value) }
 
+    /** The "keep runs alive in the background" offer was shown once (answered either way): never again by itself. */
+    fun batteryOfferShown(): Boolean = prefs.getBoolean(KEY_BATTERY_OFFER_SHOWN, false)
+    fun setBatteryOfferShown() = edit { putBoolean(KEY_BATTERY_OFFER_SHOWN, true) }
+
     /** Reasoning on/off and effort are stored per model id, so each model keeps its own setting. */
     fun reasoning(model: String = model()): ReasoningPreference = ReasoningPreference(
         enabled = if (prefs.contains(reasoningOnKey(model))) prefs.getBoolean(reasoningOnKey(model), false) else null,
@@ -510,6 +514,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
+        private const val KEY_BATTERY_OFFER_SHOWN = "battery_offer_shown"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         /** generate_image model: provider id and model id (plain settings, so they are backed up). */
         const val KEY_MEDIA_IMAGE_PROVIDER = "media_image_provider"

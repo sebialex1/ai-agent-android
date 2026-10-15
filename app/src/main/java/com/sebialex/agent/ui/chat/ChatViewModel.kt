@@ -6,6 +6,7 @@ import com.sebialex.agent.AppContainer
 import com.sebialex.agent.domain.agent.AgentEvent
 import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
+import com.sebialex.agent.domain.agent.Resume
 import com.sebialex.agent.domain.agent.TurnStop
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.Session
@@ -126,7 +127,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             if (active != null && cache[currentId]?.turns.isNullOrEmpty()) {
                 cache.remove(currentId)
                 container.settings.forgetConversation(currentId)
-                cache[active.id] = active
+                cache[active.id] = recovered(active)
                 currentId = active.id
             }
             publish()
@@ -150,7 +151,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     fun open(id: String) {
         if (id == currentId) return
         viewModelScope.launch {
-            val session = cache[id] ?: withContext(Dispatchers.IO) { container.sessions.load(id) } ?: return@launch
+            val session = cache[id] ?: withContext(Dispatchers.IO) { container.sessions.load(id) }?.let(::recovered) ?: return@launch
             cache[id] = session
             dropIfEmpty(currentId)
             currentId = id
@@ -267,7 +268,33 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         startTurn(sessionId, next.task)
     }
 
-    private fun startTurn(sessionId: String, task: String) {
+    /**
+     * A saved conversation as loaded from disk: a turn left unfinished by a killed process is
+     * closed as interrupted (and saved that way), so it never shows as running again.
+     */
+    private fun recovered(session: Session): Session {
+        val next = Resume.markInterrupted(session, running = runs.values.map { it.turnId }.toSet(), now = System.currentTimeMillis())
+        if (next !== session) io.trySend { container.sessions.save(next) }
+        return next
+    }
+
+    /**
+     * "Continue from where it stopped" on an interrupted answer: a fresh agent turn on the same
+     * request, with the whole conversation (the interrupted turn's finished steps included) as
+     * history. No tool call is replayed; the model is told what already happened.
+     */
+    fun continueInterrupted(turnId: String) {
+        val sessionId = currentId
+        if (runs.containsKey(sessionId)) return
+        val s = cache[sessionId] ?: return
+        if (Resume.candidate(s)?.id != turnId) return
+        val task = Resume.taskFor(s, turnId) ?: return
+        mutateTurn(sessionId, turnId) { it.copy(interrupted = false) }
+        startTurn(sessionId, task, resume = true)
+    }
+
+    /** [resume]: continue the last interrupted answer; no new message of yours is added. */
+    private fun startTurn(sessionId: String, task: String, resume: Boolean = false) {
         val now = System.currentTimeMillis()
         val user = Turn(newId(), Role.USER, task, createdAt = now)
         val assistant = Turn(newId(), Role.ASSISTANT, "", createdAt = now + 1, complete = false)
@@ -275,9 +302,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val history = before.turns
         cache[sessionId] = before.copy(
             title = before.title.ifBlank { titleFor(task) },
-            turns = before.turns + user + assistant,
+            turns = before.turns + (if (resume) listOf(assistant) else listOf(user, assistant)),
             updatedAt = now,
         )
+        val modelTask = if (resume) Resume.continuationTask(task) else task
         // Sending a new message collapses every previous execution group.
         if (sessionId == currentId) {
             expanded = setOf(assistant.id)
@@ -304,7 +332,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val run = Run(assistant.id)
         run.job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator(sessionId).run(task, history, gate).collect { event ->
+                container.newOrchestrator(sessionId).run(modelTask, history, gate).collect { event ->
                     // After Stop nothing more of this run reaches the chat, even an event already in flight.
                     if (runs[sessionId] === run) handle(sessionId, assistant.id, event)
                 }
@@ -578,6 +606,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)
         }
         _pendingImports.value = pendingBySession[currentId].orEmpty()
+        // The foreground service lives exactly as long as some conversation has a run.
+        container.runKeeper.update(runs.size)
         _conversations.value = ConversationsUiState(
             items = summaries.values.sortedByDescending { it.updatedAt },
             runningIds = runs.keys.toSet(),

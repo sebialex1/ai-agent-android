@@ -61,6 +61,8 @@ class SessionRuntime(
 /** Manual dependency container. */
 class AppContainer(app: Application) {
     val settings = SecureSettings(app)
+    /** Keeps the process in the foreground (service + notification) while any agent run is active. */
+    val runKeeper = com.sebialex.agent.data.background.RunKeeper(app)
     /** The real on-device environment: Termux's bash, apt/dpkg, pkg, Python and pip. */
     val termux = TermuxBridge(app)
     val sessions = SessionStore(app.filesDir)

@@ -176,6 +176,7 @@ fun SettingsScreen(
                             )
                         }
                         SandboxSetting(termux)
+                        BackgroundSetting()
                     }
                     SettingsSection.MODELS -> {
                         // Everything about models on one page, in sub-sections: what answers, who

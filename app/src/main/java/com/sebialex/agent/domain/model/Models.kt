@@ -73,6 +73,11 @@ data class Turn(
     val sources: List<SourceRef> = emptyList(),
     val createdAt: Long,
     val complete: Boolean = true,
+    /**
+     * The app was killed while this answer ran (see Resume): its steps are kept, and while it is
+     * the last turn the chat offers to continue it. Absent in older saves (false).
+     */
+    val interrupted: Boolean = false,
 )
 
 /**

@@ -64,6 +64,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /** Leaving the app during a run: the one-time "keep working in the background" offer becomes due. */
+    override fun onStop() {
+        super.onStop()
+        val container = (application as AgentApplication).container
+        container.runKeeper.onAppBackgrounded(offerShown = container.settings.batteryOfferShown())
+    }
 }
 
 @Composable
@@ -107,6 +114,7 @@ fun AppRoot(container: AppContainer) {
 
     Box(Modifier.fillMaxSize().background(Palette.Ink)) {
         com.sebialex.agent.ui.settings.RestoreOffer(container.backup, onRestored = vm::reloadConversations)
+        com.sebialex.agent.ui.settings.BatteryOffer(container.runKeeper, container.settings)
         AnimatedContent(
             targetState = stack.last(),
             transitionSpec = {
