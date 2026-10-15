@@ -35,7 +35,10 @@ class LocalEngineLoadTest {
         id = "local/test", name = "Test Model", tagline = "", fileName = "m.litertlm", maxContext = 8192,
     )
 
-    private fun file(): File = tmp.newFile("m.litertlm").apply { writeText("model") }
+    // The same file every time: several engines in one test share it, and a second
+    // TemporaryFolder.newFile with the same name would throw because it already exists.
+    // It is only written once, so its size and modified time stay stable for the cache tests.
+    private fun file(): File = File(tmp.root, "m.litertlm").apply { if (!isFile) writeText("model") }
 
     private fun engine(
         runtime: FakeLmRuntime,
