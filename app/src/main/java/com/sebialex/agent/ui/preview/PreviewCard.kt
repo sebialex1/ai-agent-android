@@ -26,8 +26,8 @@ import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
 /**
- * A web app the agent built (preview_webapp): its name and folder, one tap opens the preview
- * window. A folder that no longer exists shows as unavailable instead of opening a blank page.
+ * A web app the agent built (preview_webapp): just its name, one tap opens the preview window.
+ * A folder that no longer exists shows as unavailable instead of opening a blank page.
  */
 @Composable
 fun PreviewCard(preview: WebPreview, available: Boolean, onOpen: () -> Unit) {
@@ -50,8 +50,9 @@ fun PreviewCard(preview: WebPreview, available: Boolean, onOpen: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(preview.title, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                if (available) "Preview \u00b7 ${preview.path}" else "${preview.path} no longer exists",
+            // The title only; the one exception is saying the app is gone.
+            if (!available) Text(
+                "No longer available",
                 style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }

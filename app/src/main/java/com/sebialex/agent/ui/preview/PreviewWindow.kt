@@ -56,7 +56,7 @@ import java.io.File
 
 /**
  * The preview window of a web app the agent built: a near-full-screen sheet with a title bar
- * (name, folder, whether it is live, reload, close) over a WebView of the app.
+ * (the app's name, reload, close) over a WebView of the app.
  *
  * The app is served from its workspace folder by a [PreviewServer] on 127.0.0.1, which runs
  * while this window is open and the app is in front: it starts when the window opens (or the
@@ -187,16 +187,17 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
                 .softSurface(RoundedCornerShape(22.dp), Palette.Surface, elevation = 8.dp)
                 .clip(RoundedCornerShape(22.dp)),
         ) {
-            TitleBar(preview, live = port != null, onReload = { webView?.let { reload(it, manual = true) } }, onClose = onClose)
+            TitleBar(preview.title, onReload = { webView?.let { reload(it, manual = true) } }, onClose = onClose)
             Box(Modifier.fillMaxWidth().weight(1f).background(Palette.Ink)) {
                 AndroidView(
                     factory = { ctx -> secureWebView(ctx, { port }, onMainFrameError = { broken = true; reload(it, manual = false) }, onPageShown = { broken = false; retries = 0 }).also { webView = it } },
                     onRelease = { it.stopLoading(); it.destroy(); webView = null },
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (port == null || failed != null) {
+                // Only a real problem is shown over the page; there is no running/paused status.
+                failed?.let { reason ->
                     Text(
-                        failed ?: "Paused \u2014 starts again when you come back",
+                        reason,
                         style = MaterialTheme.typography.labelMedium,
                         color = Palette.TextSecondary,
                         modifier = Modifier
@@ -211,20 +212,17 @@ fun PreviewWindow(preview: WebPreview, root: File, onClose: () -> Unit) {
     }
 }
 
+/** The app's name and nothing else, then reload (which also restarts a stopped server) and close. */
 @Composable
-private fun TitleBar(preview: WebPreview, live: Boolean, onReload: () -> Unit, onClose: () -> Unit) {
+private fun TitleBar(title: String, onReload: () -> Unit, onClose: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(preview.title, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                preview.path + (if (preview.entry != "index.html") "/" + preview.entry else "") + if (live) " \u00b7 live" else " \u00b7 paused",
-                style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-        }
-        // Reload also restarts a stopped server, so it is always available.
+        Text(
+            title, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
         QuietIconButton(R.drawable.ic_refresh, "Reload", onReload, iconSize = 20.dp)
         QuietIconButton(R.drawable.ic_close, "Close preview", onClose, iconSize = 20.dp)
     }
