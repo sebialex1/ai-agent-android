@@ -3,7 +3,7 @@ package com.sebialex.agent
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.sebialex.agent.data.local.EngineState
-import com.sebialex.agent.data.local.GpuFailure
+import com.sebialex.agent.data.local.LocalEngine.GpuFailure
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModel
 import kotlinx.coroutines.CoroutineScope
