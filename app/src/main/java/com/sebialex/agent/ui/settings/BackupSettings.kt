@@ -4,9 +4,12 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -151,7 +154,23 @@ fun RestoreOffer(backup: BackupManager, onRestored: () -> Unit) {
     }
 }
 
-/** The "Backup & restore" page: flat rows, status line, four actions. */
+/** The one action the backup folder row offers, depending on its state. */
+enum class BackupFolderAction(val label: String) { CHOOSE("Choose"), RESTORE("Restore"), BACK_UP_NOW("Back up now") }
+
+internal object BackupRows {
+    /** No folder: choose one. A folder that already holds another backup: restore it. Otherwise: back up now. */
+    fun folderAction(folderSet: Boolean, pendingRestore: Boolean): BackupFolderAction = when {
+        !folderSet -> BackupFolderAction.CHOOSE
+        pendingRestore -> BackupFolderAction.RESTORE
+        else -> BackupFolderAction.BACK_UP_NOW
+    }
+}
+
+/**
+ * The "Backup & restore" page: the folder as one row with one contextual action (tap the row to
+ * change the folder), the API-key passphrase (its off switch lives in the edit view), and one
+ * Restore group for both sources.
+ */
 @Composable
 internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onRestored: () -> Unit) {
     val status by backup.status.collectAsStateWithLifecycle()
@@ -163,66 +182,98 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) backup.setFolder(uri) }
     val restore = rememberRestoreFlow(backup, onRestored) { message = it }
+    fun restoreFromFolder() { if (backup.backupInFolder() != null) restore(true) else message = "No backup file in the folder yet." }
 
-    SettingsGroup("Backup folder", help = "Pick a folder outside the app (for example Documents) so the backup survives an uninstall. Without one, only Android's own backup (Google) can bring data back. Backs up automatically a few seconds after each change.") {
-        Text(
-            when {
-                status.folderUri == null -> "Not set"
-                else -> status.folderName.orEmpty()
-            },
-            style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary,
-        )
-        Text(
-            when {
-                status.folderUri == null -> "Choose a folder to back up automatically."
-                status.pendingRestore -> "This folder already holds a backup. Restore it, or tap Back up now to replace it."
-                status.lastError != null -> "Last backup failed: ${status.lastError}"
-                status.lastBackupAt > 0 -> "Last backup " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(status.lastBackupAt)) +
-                    if (status.keysIncluded) " \u00b7 API keys included (encrypted)" else " \u00b7 API keys not included"
-                else -> "Backs up automatically."
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = if (status.lastError != null) Palette.Danger else Palette.TextTertiary,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            PillButton(if (status.folderUri == null) "Choose folder" else "Change folder", { pickFolder.launch(null) }, primary = status.folderUri == null)
-            if (status.folderUri != null) PillButton("Back up now", {
-                scope.launch {
+    SettingsGroup("Backup folder", help = "Pick a folder outside the app (for example Documents) so the backup survives an uninstall. Without one, only Android's own backup (Google) can bring data back. Backs up automatically a few seconds after each change. Tap the folder to change it.") {
+        val action = BackupRows.folderAction(status.folderUri != null, status.pendingRestore)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { pickFolder.launch(null) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (status.folderUri == null) "Not set" else status.folderName.orEmpty(),
+                    style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary,
+                )
+                Text(
+                    when {
+                        status.folderUri == null -> "Choose a folder to back up automatically."
+                        status.pendingRestore -> "This folder already holds a backup. Restore it, or replace it with a new one."
+                        status.lastError != null -> "Last backup failed: ${status.lastError}"
+                        status.lastBackupAt > 0 -> "Last backup " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(status.lastBackupAt)) +
+                            if (status.keysIncluded) " \u00b7 API keys included (encrypted)" else " \u00b7 API keys not included"
+                        else -> "Backs up automatically."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (status.lastError != null) Palette.Danger else Palette.TextTertiary,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            PillButton(
+                action.label,
+                onClick = {
+                    when (action) {
+                        BackupFolderAction.CHOOSE -> pickFolder.launch(null)
+                        BackupFolderAction.RESTORE -> restoreFromFolder()
+                        BackupFolderAction.BACK_UP_NOW -> scope.launch {
+                            val r = backup.backUpNow()
+                            message = if (r.isSuccess) "Backup written." else "Backup failed: ${r.exceptionOrNull()?.message}"
+                        }
+                    }
+                },
+                primary = action != BackupFolderAction.BACK_UP_NOW,
+                enabled = action != BackupFolderAction.BACK_UP_NOW || !status.busy,
+            )
+        }
+        // Only while the folder holds a backup that was not restored: automatic backups wait, so
+        // overwriting it stays a deliberate, separate step (never next to Restore as a second pill).
+        if (status.pendingRestore) {
+            RowDivider()
+            NavRow("Replace it with a new backup", icon = com.sebialex.agent.R.drawable.ic_refresh, onClick = {
+                if (!status.busy) scope.launch {
                     val r = backup.backUpNow()
                     message = if (r.isSuccess) "Backup written." else "Backup failed: ${r.exceptionOrNull()?.message}"
                 }
-            }, enabled = !status.busy)
-            if (status.folderUri != null) PillButton("Restore", { if (backup.backupInFolder() != null) restore(true) else message = "No backup file in the folder yet." })
+            }, chevron = false)
         }
     }
 
     SettingsGroup("API keys in the backup", help = "Without a passphrase, API keys are never written to the backup. The passphrase is not stored in the backup: keep it, you need it to restore the keys on a new install.") {
-        Text(
-            if (hasPass) "Included, encrypted" else "Not included",
-            style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary,
-        )
         if (editingPass) {
             PassphraseField(pass) { pass = it }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (pass.isNotEmpty() && pass.trim().length < 8) Text("At least 8 characters.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 PillButton("Save", {
                     settings.setBackupPassphrase(pass.trim()); hasPass = pass.isNotBlank(); pass = ""; editingPass = false
                     scope.launch { backup.backUpNow() }
                 }, primary = true, enabled = pass.trim().length >= 8)
                 PillButton("Cancel", { pass = ""; editingPass = false })
             }
-            if (pass.isNotEmpty() && pass.trim().length < 8) Text("At least 8 characters.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+            // Turning the keys off belongs to editing the passphrase, not to the row.
+            if (hasPass) PillButton("Stop including API keys", {
+                settings.setBackupPassphrase(null); hasPass = false; pass = ""; editingPass = false
+                scope.launch { backup.backUpNow() }
+            }, danger = true)
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                PillButton(if (hasPass) "Change passphrase" else "Set passphrase", { editingPass = true })
-                if (hasPass) PillButton("Turn off", {
-                    settings.setBackupPassphrase(null); hasPass = false
-                    scope.launch { backup.backUpNow() }
-                })
-            }
+            NavRow(
+                title = if (hasPass) "Included, encrypted" else "Not included",
+                value = if (hasPass) "Tap to change the passphrase" else "Tap to set a passphrase",
+                icon = com.sebialex.agent.R.drawable.ic_key,
+                onClick = { editingPass = true },
+                chevron = true,
+            )
         }
     }
 
-    SettingsGroup("From a file", help = "Restore from any backup file, for example after a reinstall.") {
+    SettingsGroup("Restore", help = "Restore from the backup folder or from any backup file, for example after a reinstall.") {
+        if (status.folderUri != null) {
+            NavRow("Restore from backup folder", value = status.folderName, icon = com.sebialex.agent.R.drawable.ic_folder, onClick = { restoreFromFolder() }, chevron = false)
+            RowDivider()
+        }
         NavRow("Restore from file", icon = com.sebialex.agent.R.drawable.ic_file, onClick = { restore(false) }, chevron = false)
     }
 

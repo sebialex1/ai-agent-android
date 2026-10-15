@@ -43,6 +43,7 @@ import com.sebialex.agent.data.local.ModelStatus
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
+import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 import kotlinx.coroutines.launch
@@ -244,8 +245,9 @@ private fun tierText(tiers: List<Int>): String = when {
 }
 
 /**
- * One model as a flat row: name and size, one line of facts, then a single action line.
- * No card, no per-field pills; only the main action (Download or Use) is filled.
+ * One model as a flat row: name and size, one line of facts, then at most one button. Tapping
+ * the name opens the model card; a downloaded model has a small trash icon on its name row
+ * instead of a Delete button next to Use.
  */
 @Composable
 private fun ModelRow(
@@ -261,8 +263,26 @@ private fun ModelRow(
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(model.name, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+            val page = model.pageUrl
+            Row(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(if (page != null) Modifier.clickable(onClickLabel = "Open the model card") { onOpenPage(page) } else Modifier)
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(model.name, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f, fill = false))
+                if (page != null) {
+                    Spacer(Modifier.width(6.dp))
+                    AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 13.dp)
+                }
+            }
             if (selected) AppIcon(R.drawable.ic_check, "In use", tint = Palette.IconActive, size = 16.dp)
+            if (status is ModelStatus.Ready) QuietIconButton(
+                R.drawable.ic_trash, "Delete ${model.name}", onClick = onDelete,
+                tint = Palette.IconMuted, size = 34.dp, iconSize = 16.dp,
+            )
         }
         Text(model.tagline, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
         val size = (status as? ModelStatus.Ready)?.bytes ?: model.sizeBytes
@@ -310,20 +330,12 @@ private fun ModelRow(
                     color = Palette.TextTertiary,
                 )
             }
-            is ModelStatus.Ready -> Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!selected) PillButton("Use", onClick = onUse, primary = true) else Text("In use", style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
-                PillButton("Delete", onClick = onDelete, danger = true)
-            }
+            is ModelStatus.Ready -> if (!selected) Row { PillButton("Use", onClick = onUse, primary = true) }
             is ModelStatus.Failed -> {
                 Text(status.message, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
                 if (model.url != null) PillButton("Try again", onClick = onDownload)
             }
-            ModelStatus.Missing -> if (model.url != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PillButton("Download", onClick = onDownload, primary = true)
-                    model.pageUrl?.let { url -> PillButton("Model card", onClick = { onOpenPage(url) }) }
-                }
-            }
+            ModelStatus.Missing -> if (model.url != null) Row { PillButton("Download", onClick = onDownload, primary = true) }
         }
     }
 }

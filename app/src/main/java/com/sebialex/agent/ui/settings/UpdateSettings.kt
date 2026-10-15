@@ -1,52 +1,47 @@
 package com.sebialex.agent.ui.settings
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.sebialex.agent.data.update.InstalledInfo
-import com.sebialex.agent.data.update.UpdateChecker
-import com.sebialex.agent.data.update.UpdateResult
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sebialex.agent.data.update.UpdateFlow
 import com.sebialex.agent.ui.theme.Palette
-import kotlinx.coroutines.launch
 
 /**
- * Settings > Updates: compares this install with the newest build on GitHub Releases. Checking
- * is read-only; "Download" hands the APK link to the system, so Android's own installer asks the
- * user to confirm (and to allow installs from that app, if needed). Nothing installs silently.
+ * Settings > Updates: one compact row (status, detail, a progress bar while downloading, at most
+ * one action). All state lives in [UpdateFlow] (app-wide), so recomposing, rotating or reopening
+ * this page never repeats a check, a download or an installer launch; the page only shows the
+ * state and forwards taps. Text and action per state come from [UpdateRows].
  */
 @Composable
-internal fun UpdateSettings(checker: UpdateChecker = remember { UpdateChecker() }) {
+internal fun UpdateSettings(updates: UpdateFlow) {
     val context = LocalContext.current
-    val installed = remember { InstalledInfo.of(context) }
-    var result by remember { mutableStateOf<UpdateResult?>(null) }
-    var checking by remember { mutableStateOf(false) }
-    var autoChecked by rememberSaveable { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    fun check() {
-        if (checking) return
-        checking = true
-        scope.launch {
-            result = checker.check(installed)
-            checking = false
-        }
-    }
-    // One automatic check when the page opens; later ones only on request.
-    LaunchedEffect(Unit) { if (!autoChecked) { autoChecked = true; check() } }
+    val state by updates.state.collectAsStateWithLifecycle()
+    // One automatic check per app run; UpdateFlow ignores repeats.
+    LaunchedEffect(Unit) { updates.checkOnce() }
+    // Back from "Install unknown apps": with the permission granted the installer opens once.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.onResume() }
+    val row = UpdateRows.row(state, updates.installed)
+
     fun open(url: String) {
         runCatching {
             context.startActivity(
@@ -56,48 +51,39 @@ internal fun UpdateSettings(checker: UpdateChecker = remember { UpdateChecker() 
         }
     }
 
-    SettingsGroup("This install") {
-        InfoRow("Version", "${installed.versionName} \u00b7 build ${installed.versionCode}")
-    }
-    SettingsGroup("Latest release") {
-        val r = result
-        when {
-            checking -> StatusText("Checking GitHub Releases\u2026")
-            r is UpdateResult.Available -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                InfoRow("Update available", "${r.release.name} \u00b7 build ${r.release.versionCode}" + (r.release.apkSize?.let { " \u00b7 ${it / (1024 * 1024)} MB" } ?: ""))
-                if (r.keyChanged) StatusText(
-                    "Signed with a different key than this install, so Android will refuse it as an update. " +
-                        "Back up first (Backup & restore), uninstall, install it, then restore. Needed once.",
-                    warning = true,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    r.release.apkUrl?.let { url -> PillButton("Download", onClick = { open(url) }, primary = true) }
-                    PillButton("Release notes", onClick = { open(r.release.pageUrl) })
+    SettingsGroup("Updates") {
+        Column(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(row.status, style = MaterialTheme.typography.bodyLarge, color = if (row.warning) Palette.Warning else Palette.TextPrimary)
+                    Text(row.detail, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+                }
+                row.action?.let { action ->
+                    Spacer(Modifier.width(8.dp))
+                    PillButton(
+                        action.label,
+                        onClick = {
+                            when (action) {
+                                UpdateAction.CHECK -> updates.check()
+                                UpdateAction.RETRY -> updates.retry()
+                                UpdateAction.ALLOW_INSTALLS -> updates.allowInstalls()
+                                UpdateAction.INSTALL -> updates.install()
+                                UpdateAction.RELEASE_NOTES -> row.url?.let(::open)
+                            }
+                        },
+                        primary = action == UpdateAction.INSTALL || action == UpdateAction.ALLOW_INSTALLS,
+                    )
                 }
             }
-            r is UpdateResult.UpToDate -> StatusText(
-                "You have the latest build" + (r.latest?.let { " (${it.name})" } ?: "") + ".",
-            )
-            r is UpdateResult.Offline -> StatusText("No connection. Check the network and try again.", warning = true)
-            r is UpdateResult.Failed -> StatusText("Could not check: ${r.message}.", warning = true)
-            else -> StatusText("Not checked yet.")
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PillButton(if (checking) "Checking\u2026" else "Check now", onClick = { check() }, enabled = !checking)
-            PillButton("All releases", onClick = { open(UpdateChecker.RELEASES_PAGE) })
+            if (row.progress != null || row.indeterminate) {
+                val mod = Modifier.fillMaxWidth().padding(top = 8.dp).height(3.dp).clip(RoundedCornerShape(2.dp))
+                val p = row.progress
+                if (p != null) {
+                    LinearProgressIndicator(progress = { p }, modifier = mod, color = Palette.Accent, trackColor = Palette.SurfaceHigh)
+                } else {
+                    LinearProgressIndicator(modifier = mod, color = Palette.Accent, trackColor = Palette.SurfaceHigh)
+                }
+            }
         }
     }
-}
-
-@Composable
-private fun InfoRow(title: String, value: String) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-        Text(value, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-    }
-}
-
-@Composable
-private fun StatusText(text: String, warning: Boolean = false) {
-    Text(text, style = MaterialTheme.typography.labelSmall, color = if (warning) Palette.Warning else Palette.TextSecondary)
 }

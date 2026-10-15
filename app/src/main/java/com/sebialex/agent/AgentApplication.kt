@@ -83,6 +83,17 @@ class AppContainer(app: Application) {
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
     val localEngine = LocalEngine(modelStore, settings, appScope)
 
+    /**
+     * Settings > Updates: check, download and installer handoff, held here (not in a screen) so a
+     * rotation or recomposition never repeats a download or an installer launch.
+     */
+    val updates = com.sebialex.agent.data.update.UpdateFlow(
+        checker = com.sebialex.agent.data.update.UpdateChecker()::check,
+        downloader = com.sebialex.agent.data.update.HttpApkDownloader(),
+        host = com.sebialex.agent.data.update.AndroidUpdateHost(app),
+        scope = appScope,
+    )
+
     /** Reasoning support of an on-device model: an on/off switch when it has a thinking mode. */
     private fun localReasoning(id: String): ModelReasoning {
         val model = LocalModels.resolve(id) ?: return ModelReasoning.unknown(id, "not an installed on-device model")

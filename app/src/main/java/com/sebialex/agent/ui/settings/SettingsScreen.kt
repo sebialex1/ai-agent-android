@@ -95,6 +95,7 @@ fun SettingsScreen(
     localEngine: LocalEngine,
     ollama: OllamaCloud,
     backup: com.sebialex.agent.data.backup.BackupManager,
+    updates: com.sebialex.agent.data.update.UpdateFlow,
     onRestored: () -> Unit,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
@@ -254,7 +255,7 @@ fun SettingsScreen(
                         }
                     }
                     SettingsSection.BACKUP -> BackupSettings(backup, settings, onRestored)
-                    SettingsSection.UPDATES -> UpdateSettings()
+                    SettingsSection.UPDATES -> UpdateSettings(updates)
                     SettingsSection.ABOUT -> AboutTab()
                 }
                 Spacer(Modifier.height(24.dp))

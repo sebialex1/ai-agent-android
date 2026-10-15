@@ -1,7 +1,10 @@
 package com.sebialex.agent.data.update
 
+import com.sebialex.agent.data.web.cancellableIo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -46,31 +49,46 @@ sealed interface UpdateResult {
             !release.certSha256.equals(installed.certSha256, ignoreCase = true)
     }
     data class UpToDate(val latest: AppRelease?, val installed: InstalledApp) : UpdateResult
-    /** No connection (DNS, connect or timeout failure). */
+    /** No connection (DNS or connect failure). A slow or silent GitHub is [TimedOut], not this. */
     data object Offline : UpdateResult
+    /** GitHub did not answer within the check's time limit (or a socket timed out). */
+    data object TimedOut : UpdateResult {
+        const val MESSAGE = "GitHub did not answer in time"
+    }
     data class Failed(val message: String) : UpdateResult
 }
 
 /**
- * Checks GitHub Releases of the app's repository for a newer build. Read-only: it never
- * downloads or installs anything; the UI hands the APK link to the system (browser / package
- * installer), where the user confirms the install as usual.
+ * Checks GitHub Releases of the app's repository for a newer build. Read-only: it only reads the
+ * release list; downloading and the installer handoff belong to [UpdateFlow].
+ *
+ * The whole check (connect, response and parsing) runs under one limit, [limitMillis]. HTTP
+ * blocks the thread, so a coroutine timeout alone would only take effect after the call returned:
+ * the request runs in [cancellableIo], which disconnects the connection the moment the limit is
+ * reached, and the check ends as [UpdateResult.TimedOut].
  */
 class UpdateChecker(
     private val repo: String = REPO,
     private val api: String = "https://api.github.com",
+    private val limitMillis: Long = CHECK_LIMIT_MILLIS,
 ) {
     suspend fun check(installed: InstalledApp): UpdateResult = withContext(Dispatchers.IO) {
         try {
-            val body = get("$api/repos/$repo/releases?per_page=20")
-            evaluate(parse(body), installed)
+            withTimeout(limitMillis) {
+                val body = get("$api/repos/$repo/releases?per_page=20")
+                evaluate(parse(body), installed)
+            }
+        } catch (e: TimeoutCancellationException) {
+            // The limit, not the caller: report it (the caller's own cancel is rethrown below).
+            UpdateResult.TimedOut
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
+        } catch (e: SocketTimeoutException) {
+            // Connected (or trying to) but no answer in time: GitHub is slow, the phone is not offline.
+            UpdateResult.TimedOut
         } catch (e: UnknownHostException) {
             UpdateResult.Offline
         } catch (e: ConnectException) {
-            UpdateResult.Offline
-        } catch (e: SocketTimeoutException) {
             UpdateResult.Offline
         } catch (e: SSLException) {
             UpdateResult.Failed("secure connection to GitHub failed (${e.message ?: "TLS error"})")
@@ -81,11 +99,15 @@ class UpdateChecker(
         }
     }
 
-    private fun get(url: String): String {
+    private suspend fun get(url: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
+        return cancellableIo(close = { conn.disconnect() }) { read(conn) }
+    }
+
+    private fun read(conn: HttpURLConnection): String {
         try {
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 15_000
+            conn.connectTimeout = SOCKET_TIMEOUT_MILLIS
+            conn.readTimeout = SOCKET_TIMEOUT_MILLIS
             conn.setRequestProperty("Accept", "application/vnd.github+json")
             conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
             conn.setRequestProperty("User-Agent", "AgentForAndroid-UpdateCheck")
@@ -109,6 +131,9 @@ class UpdateChecker(
     companion object {
         const val REPO = "sebialex1/ai-agent-android"
         const val RELEASES_PAGE = "https://github.com/$REPO/releases"
+        /** The limit for one whole check: connect, response and parsing. */
+        const val CHECK_LIMIT_MILLIS = 5_000L
+        const val SOCKET_TIMEOUT_MILLIS = 5_000
 
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
         private val CODE_IN_BODY = Regex("(?im)^\\s*versionCode:\\s*(\\d+)\\s*$")

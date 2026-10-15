@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Updates: hand a downloaded release APK to Android's package installer (the user confirms). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Run apt, pkg, pip and python inside the Termux environment (RUN_COMMAND intent). -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <!-- Termux runs as another Linux user, so each workspace is mirrored to shared storage. -->
@@ -73,5 +75,15 @@
         <receiver
             android:name=".data.shell.TermuxResultReceiver"
             android:exported="false" />
+        <!-- Gives the package installer read access to update APKs in cache/updates/ only. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
     </application>
 </manifest>
