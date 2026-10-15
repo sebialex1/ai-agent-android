@@ -1,5 +1,9 @@
 package com.sebialex.agent.ui.chat
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -72,7 +76,7 @@ fun ChatScreen(
         vm.setDraft(sessionId, value.text)
     }
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
-    // Long-pressed own message (its actions sheet) and the message being edited, per conversation.
+    // Own message whose action row is open (tapped) and the message being edited, per conversation.
     var actionsFor by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
     // The web app preview window that is open (preview_webapp), by turn and folder.
     var previewOpen by remember(sessionId) { mutableStateOf<com.sebialex.agent.domain.model.WebPreview?>(null) }
@@ -157,7 +161,24 @@ fun ChatScreen(
             .fillMaxSize()
             .background(Palette.Ink)
             .systemBarsPadding()
-            .imePadding(),
+            .imePadding()
+            // A tap anywhere else folds an open action row. Only watched, never consumed, so
+            // scrolling, typing and the tapped control all work as usual; a drag leaves it open.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val openAtDown = actionsFor ?: return@awaitEachGesture
+                    while (true) {
+                        val change = awaitPointerEvent(PointerEventPass.Final).changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            val tap = (change.position - down.position).getDistance() < viewConfiguration.touchSlop
+                            // The bubble's own tap toggles it first; anything that left it unchanged was elsewhere.
+                            if (tap && actionsFor == openAtDown) actionsFor = null
+                            break
+                        }
+                    }
+                }
+            },
     ) {
         ChatTopBar(
             title = state.session.title,
@@ -197,7 +218,26 @@ fun ChatScreen(
                         turn,
                         resolveFile = vm::workspaceFile,
                         onOpenFile = { onOpenFile(it, null) },
-                        onLongPress = { actionsFor = turn.id },
+                        onTap = { actionsFor = if (actionsFor == turn.id) null else turn.id },
+                        actionsOpen = actionsFor == turn.id,
+                        canModify = !state.running && vm.canModifyMessages(),
+                        onCopy = {
+                            vm.copyText(turn.id)?.let { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it)) }
+                            actionsFor = null
+                        },
+                        onEdit = {
+                            actionsFor = null
+                            val body = vm.beginEdit(turn.id)
+                            if (body != null) {
+                                editingId = turn.id
+                                updateInput(TextFieldValue(body, TextRange(body.length)))
+                            }
+                        },
+                        onDelete = {
+                            actionsFor = null
+                            if (editingId == turn.id) { editingId = null; updateInput(TextFieldValue("")) }
+                            vm.deleteMessage(turn.id)
+                        },
                     )
                 } else {
                     AssistantTurn(
@@ -314,35 +354,8 @@ fun ChatScreen(
         if (root == null) previewOpen = null
         else com.sebialex.agent.ui.preview.PreviewWindow(p, root, onClose = { previewOpen = null })
     }
-    actionsFor?.let { id ->
-        val text = remember(id) { vm.copyText(id) }
-        if (text == null) {
-            actionsFor = null
-        } else {
-            MessageActionsSheet(
-                preview = text,
-                canModify = !state.running && vm.canModifyMessages(),
-                onCopy = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
-                    actionsFor = null
-                },
-                onEdit = {
-                    actionsFor = null
-                    val body = vm.beginEdit(id)
-                    if (body != null) {
-                        editingId = id
-                        updateInput(TextFieldValue(body, TextRange(body.length)))
-                    }
-                },
-                onDelete = {
-                    actionsFor = null
-                    if (editingId == id) { editingId = null; updateInput(TextFieldValue("")) }
-                    vm.deleteMessage(id)
-                },
-                onDismiss = { actionsFor = null },
-            )
-        }
-    }
+    // The tapped message was deleted or the conversation changed under it: nothing to show.
+    actionsFor?.let { id -> if (state.session.turns.none { it.id == id }) actionsFor = null }
     if (attachMenu) {
         AttachSheet(
             settings = settings,

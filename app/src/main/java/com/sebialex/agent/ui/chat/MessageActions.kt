@@ -1,6 +1,13 @@
 package com.sebialex.agent.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,52 +24,39 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.ui.components.AppIcon
-import com.sebialex.agent.ui.components.AppSheet
 import com.sebialex.agent.ui.components.QuietIconButton
-import com.sebialex.agent.ui.components.SheetOption
 import com.sebialex.agent.ui.theme.Palette
-import com.sebialex.agent.ui.theme.softSurface
 
 /**
- * Long-press menu of one of your own messages, in the app's sheet style: a quoted preview of the
- * message on top, then Copy, Edit and Delete. Edit and Delete wait while an answer is running.
+ * The actions of one of your own messages, shown when you tap it: a quiet row of icons that
+ * unfolds from the bottom edge of the bubble (and folds back into it), sitting between the
+ * bubble and whatever comes next, so it never covers another message. No pills, no surface:
+ * just Copy, Edit and Delete in the app's icon style. Edit and Delete wait while an answer is
+ * running (shown dimmed).
  */
 @Composable
-fun MessageActionsSheet(
-    preview: String,
+fun MessageActionRow(
+    visible: Boolean,
     canModify: Boolean,
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onDismiss: () -> Unit,
 ) {
-    AppSheet(onDismiss = onDismiss) {
-        // The message itself, as a quiet quote, so it is clear which one the actions apply to.
-        Text(
-            preview.ifBlank { "Attachment" },
-            style = MaterialTheme.typography.bodyMedium,
-            color = Palette.TextSecondary,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 6.dp, end = 6.dp, bottom = 10.dp)
-                .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 1.dp)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-        )
-        SheetOption(R.drawable.ic_copy, "Copy message", onClick = onCopy)
-        SheetOption(
-            R.drawable.ic_edit, "Edit message", onClick = onEdit,
-            subtitle = if (canModify) "Change it and send again; later replies are replaced" else "Available when the answer finishes",
-            enabled = canModify,
-        )
-        SheetOption(
-            R.drawable.ic_trash, "Delete message", onClick = onDelete,
-            subtitle = if (canModify) "Removes it and its reply" else null,
-            danger = canModify, enabled = canModify,
-        )
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(tween(ROW_MS), expandFrom = Alignment.Top) + fadeIn(tween(ROW_MS)),
+        exit = shrinkVertically(tween(ROW_MS), shrinkTowards = Alignment.Top) + fadeOut(tween(ROW_MS - 60)),
+    ) {
+        Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            QuietIconButton(R.drawable.ic_copy, "Copy message", onCopy, tint = Palette.IconMuted, size = 36.dp, iconSize = 18.dp)
+            QuietIconButton(R.drawable.ic_edit, "Edit message", onEdit, tint = Palette.IconMuted, enabled = canModify, size = 36.dp, iconSize = 18.dp)
+            QuietIconButton(R.drawable.ic_trash, "Delete message", onDelete, tint = Palette.IconMuted, enabled = canModify, size = 36.dp, iconSize = 18.dp)
+        }
     }
 }
+
+/** How long the action row takes to unfold or fold. */
+private const val ROW_MS = 180
 
 /** Thin strip above the input while a sent message is being edited: what is edited, and a cancel. */
 @Composable

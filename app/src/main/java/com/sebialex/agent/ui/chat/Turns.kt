@@ -79,11 +79,17 @@ fun UserMessage(
     /** Resolves an `@path` mention to its workspace file; null when it is not an existing file. */
     resolveFile: (String) -> java.io.File? = { null },
     onOpenFile: (String) -> Unit = {},
-    /** Long-press on the message: the Copy / Edit / Delete sheet. */
-    onLongPress: (() -> Unit)? = null,
+    /** A tap on the bubble: shows or hides its action row. Null: the message has no actions. */
+    onTap: (() -> Unit)? = null,
+    /** The action row under the bubble is open. */
+    actionsOpen: Boolean = false,
+    /** Edit and Delete are possible now (not while an answer runs). */
+    canModify: Boolean = false,
+    onCopy: () -> Unit = {},
+    onEdit: () -> Unit = {},
+    onDelete: () -> Unit = {},
 ) {
-    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val press = rememberUpdatedState(onLongPress)
+    val tap = rememberUpdatedState(onTap)
     // Imports become previews and their @path text is not repeated. Files @-mentioned while
     // typing stay in the text (highlighted) and get a compact chip under the bubble.
     val resolved = remember(turn.text) {
@@ -108,24 +114,25 @@ fun UserMessage(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         files.forEach { (path, file) -> ImportCard(path, file, onClick = { onOpenFile(path) }) }
-        if (body.isNotBlank()) Text(
-            styledBody,
-            style = MaterialTheme.typography.bodyLarge,
-            color = Palette.TextPrimary,
-            modifier = Modifier
-                .softSurface(RoundedCornerShape(22.dp), Palette.SurfaceHigh, elevation = 2.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .then(
-                    if (onLongPress == null) Modifier
-                    else Modifier.pointerInput(Unit) {
-                        detectTapGestures(onLongPress = {
-                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                            press.value?.invoke()
-                        })
-                    },
-                )
-                .padding(horizontal = 16.dp, vertical = 11.dp),
-        )
+        // The bubble and its action row as one block, so the row unfolds right from the bubble's
+        // bottom edge (no gap of the outer spacing while it is folded away).
+        if (body.isNotBlank()) Column(horizontalAlignment = Alignment.End) {
+            Text(
+                styledBody,
+                style = MaterialTheme.typography.bodyLarge,
+                color = Palette.TextPrimary,
+                modifier = Modifier
+                    .softSurface(RoundedCornerShape(22.dp), Palette.SurfaceHigh, elevation = 2.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .then(
+                        // A plain tap only: drags still scroll the list and long-press stays free.
+                        if (onTap == null) Modifier
+                        else Modifier.pointerInput(Unit) { detectTapGestures(onTap = { tap.value?.invoke() }) },
+                    )
+                    .padding(horizontal = 16.dp, vertical = 11.dp),
+            )
+            if (onTap != null) MessageActionRow(actionsOpen, canModify, onCopy, onEdit, onDelete)
+        }
         mentioned.forEach { (path, file) -> MentionChip(file, onClick = { onOpenFile(path) }) }
     }
 }
