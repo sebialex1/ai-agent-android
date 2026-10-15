@@ -251,7 +251,6 @@ fun AssistantTurn(
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
         }
-        turn.plan?.let { PlanCard(it, live = !turn.complete) }
         turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
         if (turn.text.isNotBlank()) {
             if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)

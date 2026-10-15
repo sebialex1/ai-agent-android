@@ -32,9 +32,6 @@ sealed interface AgentEvent {
     /** preview_webapp: a web app is ready to preview (a card in the answer). */
     data class PreviewReady(val preview: com.sebialex.agent.domain.model.WebPreview) : AgentEvent
 
-    /** set_plan: the answer's plan card, replaced as a whole. */
-    data class PlanUpdated(val plan: com.sebialex.agent.domain.model.Plan) : AgentEvent
-
     /** spawn_subagent: a subagent of this turn started, took a step or finished (its card, replaced as a whole). */
     data class SubagentUpdated(val run: com.sebialex.agent.domain.model.SubagentRun) : AgentEvent
 }
@@ -72,8 +69,8 @@ class AgentOrchestrator(
     private var seq = 0L
 
     /**
-     * [chat] answers the chat tools (questions and the todo list); see [ChatTools]. set_plan,
-     * ask_user and todo never reach the permission policy or the device: they only change what
+     * [chat] answers the chat tools (questions and the todo list); see [ChatTools]. ask_user
+     * and todo never reach the permission policy or the device: they only change what
      * the chat shows, and they get no step row (their card is the row).
      */
     /**
@@ -203,7 +200,7 @@ class AgentOrchestrator(
                             observations += Observation(call, result, batch)
                             continue
                         }
-                        if (isChild && (call is ToolCall.SetPlan || call is ToolCall.AskUser || call is ToolCall.Todo || call is ToolCall.AttachFiles || call is ToolCall.PreviewWebapp)) {
+                        if (isChild && (call is ToolCall.AskUser || call is ToolCall.Todo || call is ToolCall.AttachFiles || call is ToolCall.PreviewWebapp)) {
                             observations += Observation(call, ToolResult(call.callId, false, "Not available to a subagent: report back to the main agent instead."), batch)
                             continue
                         }
@@ -217,14 +214,9 @@ class AgentOrchestrator(
                             observations += Observation(call, ToolResult(call.callId, false, visionRefusal), batch)
                             continue
                         }
-                        // Chat tools are answered here: a plan card, a question card, the todo list.
-                        if (call is ToolCall.SetPlan || call is ToolCall.AskUser || call is ToolCall.Todo) {
+                        // Chat tools are answered here: a question card, the todo list.
+                        if (call is ToolCall.AskUser || call is ToolCall.Todo) {
                             val result = when (call) {
-                                is ToolCall.SetPlan -> {
-                                    val plan = com.sebialex.agent.domain.model.Plan(call.title, call.steps, now())
-                                    send(AgentEvent.PlanUpdated(plan))
-                                    ToolResult(call.callId, true, Plans.summary(plan))
-                                }
                                 is ToolCall.AskUser -> {
                                     val answer = chat.ask(nextId(), call.question, call.choices)
                                     if (answer != null) ToolResult(call.callId, true, "The user answered: $answer")
@@ -574,7 +566,6 @@ class AgentOrchestrator(
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())
         is ToolCall.PreviewWebapp -> Step(nextId(), StepKind.FILE_READ, "preview ${call.path}", "preview_webapp", args(call), startedAt = now())
         // Audit-only rows: the chat shows these as cards.
-        is ToolCall.SetPlan -> Step(nextId(), StepKind.FILE_READ, "plan: ${call.title}", "set_plan", args(call), startedAt = now())
         is ToolCall.AskUser -> Step(nextId(), StepKind.PERMISSION, "ask: ${call.question.take(80)}", "ask_user", args(call), startedAt = now())
         is ToolCall.Todo -> Step(nextId(), StepKind.FILE_WRITE, "todo ${call.action}", "todo", args(call), startedAt = now())
         // Audit-only: the subagent's card is its row.

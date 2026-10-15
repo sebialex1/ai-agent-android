@@ -112,7 +112,7 @@ class ToolExecutor(
                 is ToolCall.ViewImage -> viewImage(call)
                 is ToolCall.PreviewWebapp -> previewWebapp(call)
                 // Answered by the orchestrator through the chat (ChatTools); never run on the device.
-                is ToolCall.SetPlan, is ToolCall.AskUser, is ToolCall.Todo, is ToolCall.SpawnSubagent, is ToolCall.MainConversation ->
+                is ToolCall.AskUser, is ToolCall.Todo, is ToolCall.SpawnSubagent, is ToolCall.MainConversation ->
                     ToolResult(call.callId, false, "This tool is only available in the chat.")
                 is ToolCall.Invalid -> ToolResult(call.callId, false, call.reason)
             }

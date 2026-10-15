@@ -299,12 +299,6 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp),
             )
         }
-        TodoPanel(
-            sessionId = sessionId,
-            items = state.session.todos,
-            onToggle = vm::toggleTodo,
-            onClearDone = vm::clearDoneTodos,
-        )
         InputPill(
             value = input,
             onValueChange = { updateInput(it) },
@@ -334,6 +328,17 @@ fun ChatScreen(
                 }
             },
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp),
+            // The todo list is the top of the chatbox itself (same surface), not a card above it.
+            top = if (TodoStrip.visible(state.session.todos)) {
+                {
+                    TodoPanel(
+                        sessionId = sessionId,
+                        items = state.session.todos,
+                        onToggle = vm::toggleTodo,
+                        onClearDone = vm::clearDoneTodos,
+                    )
+                }
+            } else null,
         )
     }
 

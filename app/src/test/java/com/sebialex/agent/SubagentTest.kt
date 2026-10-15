@@ -197,7 +197,7 @@ class SubagentTest {
         assertFalse("\"spawn_subagent\"" in off)
         val child = OpenRouterBrain.toolsFor(BrainContext("t", emptyList(), emptyList(), emptyList(), mode = AgentMode.SUBAGENT, subagentModels = listOf("a/b"))).toString()
         assertTrue("\"main_conversation\"" in child)
-        for (name in listOf("spawn_subagent", "ask_user", "todo", "set_plan", "attach_files", "preview_webapp")) assertFalse(name, "\"$name\"" in child)
+        for (name in listOf("spawn_subagent", "ask_user", "todo", "attach_files", "preview_webapp")) assertFalse(name, "\"$name\"" in child)
         // Parsed like any other tool call, round-trips its arguments.
         val c = OpenRouterBrain.parseToolCall("1", "spawn_subagent", """{"objective":"find X","context":"use docs","model":"a/b"}""") as ToolCall.SpawnSubagent
         assertEquals("find X", c.objective)

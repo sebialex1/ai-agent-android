@@ -58,20 +58,6 @@ data class SourceRef(
     val snippet: String = "",
 )
 
-/** Where one step of a [Plan] stands. */
-@Serializable
-enum class PlanStatus { PENDING, ACTIVE, DONE, SKIPPED }
-
-@Serializable
-data class PlanStep(val text: String, val status: PlanStatus = PlanStatus.PENDING)
-
-/**
- * The plan the agent showed for a turn (set_plan), rendered as a card in the answer. Each new
- * set_plan call replaces it, so the card always shows the latest statuses.
- */
-@Serializable
-data class Plan(val title: String, val steps: List<PlanStep>, val updatedAt: Long = 0)
-
 /**
  * A question the agent asked during a turn (ask_user) and the user's reply. [answer] is null
  * while it waits; in a finished turn null means it was never answered (the turn was stopped).
@@ -137,8 +123,6 @@ data class Turn(
      * the last turn the chat offers to continue it. Absent in older saves (false).
      */
     val interrupted: Boolean = false,
-    /** The plan card of this answer (set_plan); absent in older saves. */
-    val plan: Plan? = null,
     /** Questions the agent asked in this turn (ask_user), in order, with the answers. */
     val questions: List<AskRecord> = emptyList(),
     /** Web apps offered for preview in this turn (preview_webapp), each shown as a Preview card. */

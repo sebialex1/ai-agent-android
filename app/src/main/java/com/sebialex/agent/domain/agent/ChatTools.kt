@@ -1,14 +1,12 @@
 package com.sebialex.agent.domain.agent
 
-import com.sebialex.agent.domain.model.Plan
-import com.sebialex.agent.domain.model.PlanStatus
 import com.sebialex.agent.domain.model.TODO_ACTIONS
 import com.sebialex.agent.domain.model.TodoItem
 
 /**
- * The tools that live in the chat rather than on the device: set_plan (a card in the answer),
- * ask_user (a question card that pauses the loop, like the approval card) and todo (the
- * conversation's list above the input). They are real tool calls like any other — the model
+ * The tools that live in the chat rather than on the device: ask_user (a question card that
+ * pauses the loop, like the approval card) and todo (the conversation's list, attached to the
+ * top of the input). They are real tool calls like any other — the model
  * never prints their JSON — but the orchestrator answers them itself with this interface,
  * which the chat implements.
  */
@@ -73,27 +71,4 @@ object Todos {
 
     /** The first entry still open, shown as the hint of the collapsed panel. */
     fun nextOpen(items: List<TodoItem>): TodoItem? = items.firstOrNull { !it.done }
-}
-
-/** Plan card facts. */
-object Plans {
-    /** Steps that count as finished (done or skipped) out of all steps. */
-    fun progress(plan: Plan): Pair<Int, Int> =
-        plan.steps.count { it.status == PlanStatus.DONE || it.status == PlanStatus.SKIPPED } to plan.steps.size
-
-    /** What the model is told after set_plan. */
-    fun summary(plan: Plan): String {
-        val (done, total) = progress(plan)
-        val active = plan.steps.firstOrNull { it.status == PlanStatus.ACTIVE }?.text
-        return "Plan shown to the user: $done of $total steps done" + (active?.let { "; in progress: $it" } ?: "") +
-            ". Call set_plan again with updated statuses as you go."
-    }
-
-    /** Status from the model's word for it; unknown words count as pending. */
-    fun status(word: String?): PlanStatus = when (word?.trim()?.lowercase()) {
-        "done", "completed", "complete", "finished", "x" -> PlanStatus.DONE
-        "active", "in_progress", "in progress", "doing", "running", "current" -> PlanStatus.ACTIVE
-        "skipped", "skip", "cancelled", "canceled" -> PlanStatus.SKIPPED
-        else -> PlanStatus.PENDING
-    }
 }

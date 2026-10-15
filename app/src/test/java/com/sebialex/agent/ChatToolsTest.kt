@@ -1,11 +1,7 @@
 package com.sebialex.agent
 
 import com.sebialex.agent.data.llm.OpenRouterBrain
-import com.sebialex.agent.domain.agent.Plans
 import com.sebialex.agent.domain.agent.Todos
-import com.sebialex.agent.domain.model.Plan
-import com.sebialex.agent.domain.model.PlanStatus
-import com.sebialex.agent.domain.model.PlanStep
 import com.sebialex.agent.domain.model.Session
 import com.sebialex.agent.domain.model.TodoItem
 import com.sebialex.agent.domain.model.ToolCall
@@ -17,7 +13,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** set_plan, ask_user and todo: parsing, the todo list logic, plan progress, old saves. */
+/** ask_user and todo: parsing, the todo list logic, old saves; set_plan is gone (todo covers plans). */
 class ChatToolsTest {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -58,21 +54,28 @@ class ChatToolsTest {
         assertNull(Todos.nextOpen(listOf(TodoItem(1, "x", done = true))))
     }
 
-    @Test fun planProgressAndStatusWords() {
-        val plan = Plan("Ship", listOf(PlanStep("a", PlanStatus.DONE), PlanStep("b", PlanStatus.SKIPPED), PlanStep("c", PlanStatus.ACTIVE), PlanStep("d")))
-        assertEquals(2 to 4, Plans.progress(plan))
-        assertTrue("in progress: c" in Plans.summary(plan))
-        assertEquals(PlanStatus.ACTIVE, Plans.status("in_progress"))
-        assertEquals(PlanStatus.DONE, Plans.status("Completed"))
-        assertEquals(PlanStatus.PENDING, Plans.status("whatever"))
+    @Test fun setPlanIsGoneEverywhere() {
+        // Not advertised to any model (cloud, compact, subagent), not named in the tool lists or the prompt.
+        for (tools in listOf(OpenRouterBrain.toolsFor(memory = false), OpenRouterBrain.toolsFor(memory = true), OpenRouterBrain.toolsFor(memory = false, compact = true))) {
+            assertFalse("\"set_plan\"" in tools.toString())
+        }
+        assertFalse("set_plan" in OpenRouterBrain.TOOL_NAMES)
+        assertFalse("set_plan" in OpenRouterBrain.TOOL_SUMMARY)
+        assertFalse("set_plan" in OpenRouterBrain.SYSTEM_PROMPT)
+        assertFalse("set_plan" in OpenRouterBrain.MAIN_ONLY_TOOLS)
+        // A model that still calls it gets the ordinary unknown-tool answer, which lists todo instead.
+        val c = OpenRouterBrain.parseToolCall("1", "set_plan", """{"title":"Build","steps":["Fetch"]}""")
+        assertTrue(c is ToolCall.Invalid)
+        assertTrue("todo" in (c as ToolCall.Invalid).reason)
     }
 
-    @Test fun setPlanParsesObjectsAndStrings() {
-        val c = OpenRouterBrain.parseToolCall("1", "set_plan", """{"title":"Build","steps":[{"text":"Fetch","status":"done"},"Render",{"text":" "}]}""")
-        c as ToolCall.SetPlan
-        assertEquals("Build", c.title)
-        assertEquals(listOf(PlanStep("Fetch", PlanStatus.DONE), PlanStep("Render")), c.steps)
-        assertTrue(OpenRouterBrain.parseToolCall("2", "set_plan", """{"title":"x","steps":[]}""") is ToolCall.Invalid)
+    @Test fun oldSavesWithAPlanStillLoad() {
+        // Conversations saved while set_plan existed carry a "plan" field per turn; it is ignored.
+        val old = """{"id":"s","title":"t","createdAt":0,"turns":[{"id":"a","role":"ASSISTANT","text":"hi","createdAt":1,""" +
+            """"plan":{"title":"Ship","steps":[{"text":"a","status":"DONE"}],"updatedAt":3}}],"todos":[{"id":1,"text":"x"}]}"""
+        val s = json.decodeFromString(Session.serializer(), old)
+        assertEquals("hi", s.turns.single().text)
+        assertEquals("x", s.todos.single().text)
     }
 
     @Test fun askUserAndTodoParse() {
@@ -89,17 +92,16 @@ class ChatToolsTest {
     @Test fun theNewToolsAreOfferedToCloudModelsOnly() {
         val full = OpenRouterBrain.toolsFor(memory = false).toString()
         val compact = OpenRouterBrain.toolsFor(memory = false, compact = true).toString()
-        for (name in listOf("set_plan", "ask_user", "todo")) {
+        for (name in listOf("ask_user", "todo")) {
             assertTrue("\"$name\"" in full)
             assertFalse("\"$name\"" in compact)
         }
     }
 
-    @Test fun oldSavesWithoutPlansQuestionsOrTodosLoad() {
+    @Test fun oldSavesWithoutQuestionsOrTodosLoad() {
         val old = """{"id":"s","title":"t","createdAt":0,"turns":[{"id":"a","role":"ASSISTANT","text":"hi","createdAt":1}]}"""
         val s = json.decodeFromString(Session.serializer(), old)
         assertTrue(s.todos.isEmpty())
-        assertNull(s.turns.single().plan)
         assertTrue(s.turns.single().questions.isEmpty())
         val again = json.decodeFromString(Session.serializer(), json.encodeToString(Session.serializer(), s.copy(todos = listOf(TodoItem(1, "x")))))
         assertEquals("x", again.todos.single().text)

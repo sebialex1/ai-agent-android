@@ -6,7 +6,7 @@ import com.sebialex.agent.domain.model.Turn
 
 /**
  * The app's own record of what earlier answers did (tools run, files written or attached,
- * questions asked, the plan), so a follow-up has real context.
+ * questions asked, subagents run), so a follow-up has real context.
  *
  * This record is app-made context, not something the model said. It used to be appended to each
  * replayed assistant message under an `[actions taken in this turn]` header. The model then saw
@@ -31,8 +31,7 @@ object TurnRecord {
             t.attachments.map { "- file: ${it.path}" } +
             t.artifacts.map { "- attached: ${it.path}" } +
             t.questions.map { "- asked the user: ${it.question.take(160)} -> ${it.answer?.take(160) ?: "(no answer)"}" } +
-            t.subagents.map { "- subagent (${it.status.name.lowercase()}): ${it.objective.take(120)} -> ${it.result.replace(Regex("\\s+"), " ").take(160)}" } +
-            listOfNotNull(t.plan?.let { p -> "- plan \"${p.title}\": " + p.steps.joinToString("; ") { "${it.text} (${it.status.name.lowercase()})" }.take(400) })
+            t.subagents.map { "- subagent (${it.status.name.lowercase()}): ${it.objective.take(120)} -> ${it.result.replace(Regex("\\s+"), " ").take(160)}" }
     }
 
     /**

@@ -114,12 +114,6 @@ sealed interface ToolCall {
     data class ViewImage(override val callId: String, val path: String) : ToolCall
 
     /**
-     * Shows (or replaces) the plan card of the current answer: a [title] and [steps] with their
-     * status. Handled by the chat, not the device.
-     */
-    data class SetPlan(override val callId: String, val title: String, val steps: List<PlanStep>) : ToolCall
-
-    /**
      * Asks the user [question] (optionally with [choices]) and waits for the answer, which comes
      * back as the tool result. The user can tap a choice or type any reply.
      */

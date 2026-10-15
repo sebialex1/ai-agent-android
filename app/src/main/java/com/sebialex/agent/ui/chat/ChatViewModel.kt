@@ -415,10 +415,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 if (durable) persist(sessionId)
             }
-            is AgentEvent.PlanUpdated -> {
-                mutateTurn(sessionId, turnId) { it.copy(plan = event.plan) }
-                persist(sessionId)
-            }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, artifacts = event.artifacts, sources = event.sources, complete = true) }

@@ -6,6 +6,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -38,14 +42,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sebialex.agent.R
-import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.TermuxBridge
-import com.sebialex.agent.data.shell.TermuxException
+import com.sebialex.agent.data.shell.TermuxSetupCheck
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -75,7 +79,7 @@ fun SandboxSetting(termux: TermuxBridge) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf(termux.status()) }
-    var check by remember { mutableStateOf<String?>(null) }
+    var check by remember { mutableStateOf<TermuxSetupCheck.Result?>(null) }
     var checking by remember { mutableStateOf(false) }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -94,32 +98,18 @@ fun SandboxSetting(termux: TermuxBridge) {
         if (checking || !status.ready) return
         checking = true
         scope.launch {
-            check = withContext(Dispatchers.IO) {
-                try {
-                    // Also proves Termux can write the shared workspace root, which is
-                    // what every mirrored command needs (termux-setup-storage).
-                    val shared = termux.sharedRoot.apply { mkdirs() }.absolutePath
-                    val q = SandboxShell.shellQuote(shared)
-                    val r = termux.run(
-                        "echo \"termux ok\"; for p in bash apt dpkg pkg python pip; do printf '%s: ' \"\$p\"; command -v \"\$p\" || echo missing; done; " +
-                            "if touch $q/.agent-check 2>/dev/null && rm -f $q/.agent-check; then echo 'shared workspace: ok'; " +
-                            "else echo 'shared workspace: not writable from Termux (run termux-setup-storage in Termux)'; fi",
-                        workdir = "~/",
-                        timeoutSeconds = SandboxShell.TIMEOUT_SECONDS,
-                        label = "agent environment check",
-                    )
-                    val out = (r.stdout + r.stderr).trim()
-                    if (r.err != -1 && r.errmsg.isNotBlank()) "termux error ${r.err}: ${r.errmsg.trim()}" else out.ifEmpty { "exit ${r.exitCode}" }
-                } catch (e: TermuxException) {
-                    e.message ?: "Termux did not answer"
-                }
-            }
+            // Same readiness gate and tool probe as a real command (see TermuxSetupCheck).
+            check = withContext(Dispatchers.IO) { TermuxSetupCheck.run(termux, termux.sharedRoot) }
             checking = false
             status = termux.status()
         }
     }
+    // Opening the page checks by itself, once per visit (not on every recomposition): as soon as
+    // Termux is ready, which may be on entry or after the missing permission was granted here.
+    val entry = remember { TermuxSetupCheck.OncePerEntry() }
+    LaunchedEffect(status.ready) { if (entry.claim(status.ready)) runCheck() }
     // The setup step passed when Termux answered, every tool was found and the shared folder is writable.
-    val checkOk: Boolean? = check?.let { c -> "termux ok" in c && "missing" !in c && "shared workspace: ok" in c }
+    val checkOk: Boolean? = check?.takeIf { it.ran }?.ok
 
     SettingsGroup("Termux sandbox", help = "Commands the agent runs (apt, pkg, pip, python) go through Termux. Each step shows a check when it is done.") {
         // One list, one rhythm: status mark, label, and a plain text action only when something is missing.
@@ -141,7 +131,7 @@ fun SandboxSetting(termux: TermuxBridge) {
             failed = checkOk == false || status.externalApps == false,
             checking = checking,
             canCheck = status.ready,
-            result = check,
+            result = check?.text,
             onCopy = { clipboard.setText(AnnotatedString(TERMUX_SETUP)) },
             onOpenTermux = {
                 if (status.externalApps == false) {
@@ -187,6 +177,12 @@ private fun SetupStep(
 ) {
     var open by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_600)
+            copied = false
+        }
+    }
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { open = !open }.heightIn(min = 48.dp),
@@ -198,6 +194,7 @@ private fun SetupStep(
                 Text("Setup command in Termux", style = MaterialTheme.typography.bodyLarge, color = if (ok) Palette.TextSecondary else Palette.TextPrimary)
                 Text(
                     when {
+                        copied -> "Copied \u00b7 paste it in Termux"
                         checking -> "Checking\u2026"
                         ok -> "Verified"
                         failed -> "Not working yet \u00b7 tap for details"
@@ -207,9 +204,13 @@ private fun SetupStep(
                     color = if (failed && !checking) Palette.Warning else Palette.TextTertiary,
                 )
             }
+            // The copy icon stays a copy icon (a check here would read as "verified"): the copy is
+            // acknowledged by a brief dip of the icon and "Copied" in the line under the title.
+            val copyAlpha by animateFloatAsState(if (copied) 0.4f else 1f, animationSpec = tween(160), label = "copied")
             QuietIconButton(
-                if (copied) R.drawable.ic_check else R.drawable.ic_copy, "Copy Termux setup command",
+                R.drawable.ic_copy, if (copied) "Copied" else "Copy Termux setup command",
                 onClick = { onCopy(); copied = true }, tint = Palette.IconMuted, size = 38.dp, iconSize = 17.dp,
+                modifier = Modifier.alpha(copyAlpha),
             )
             QuietIconButton(
                 R.drawable.ic_check, "Check that the setup worked", onClick = onCheck, enabled = canCheck && !checking,

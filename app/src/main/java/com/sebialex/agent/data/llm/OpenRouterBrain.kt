@@ -469,7 +469,6 @@ class OpenRouterBrain(
             is ToolCall.UnzipFile -> "unzip_file"
             is ToolCall.GenerateImage -> "generate_image"
             is ToolCall.ViewImage -> "view_image"
-            is ToolCall.SetPlan -> "set_plan"
             is ToolCall.AskUser -> "ask_user"
             is ToolCall.Todo -> "todo"
             is ToolCall.PreviewWebapp -> "preview_webapp"
@@ -527,12 +526,6 @@ class OpenRouterBrain(
             }.toString()
             is ToolCall.CheckTools -> buildJsonObject { putJsonArray("tools") { c.tools.forEach { add(it) } } }.toString()
             is ToolCall.ViewImage -> buildJsonObject { put("path", c.path) }.toString()
-            is ToolCall.SetPlan -> buildJsonObject {
-                put("title", c.title)
-                putJsonArray("steps") {
-                    c.steps.forEach { st -> add(buildJsonObject { put("text", st.text); put("status", st.status.name.lowercase()) }) }
-                }
-            }.toString()
             is ToolCall.AskUser -> buildJsonObject {
                 put("question", c.question)
                 if (c.choices.isNotEmpty()) putJsonArray("choices") { c.choices.forEach { add(it) } }
@@ -658,18 +651,6 @@ class OpenRouterBrain(
                     if (tools.isEmpty()) missing("tools") else ToolCall.CheckTools(id, tools)
                 }
                 "view_image" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ViewImage(id, it) } ?: missing("path")
-                "set_plan" -> {
-                    // steps: [{text, status}] or plain strings (all pending).
-                    val steps = (args["steps"] as? JsonArray).orEmpty().mapNotNull { el ->
-                        when (el) {
-                            is JsonObject -> ((el["text"] ?: el["title"] ?: el["step"]) as? JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() }
-                                ?.let { com.sebialex.agent.domain.model.PlanStep(it, com.sebialex.agent.domain.agent.Plans.status((el["status"] as? JsonPrimitive)?.content)) }
-                            is JsonPrimitive -> el.content.trim().takeIf { it.isNotEmpty() }?.let { com.sebialex.agent.domain.model.PlanStep(it) }
-                            else -> null
-                        }
-                    }
-                    if (steps.isEmpty()) missing("steps") else ToolCall.SetPlan(id, arg("title")?.trim().orEmpty().ifEmpty { "Plan" }, steps.take(20))
-                }
                 "ask_user" -> arg("question")?.takeIf { it.isNotBlank() }?.let { q ->
                     ToolCall.AskUser(id, q.trim(), (args["choices"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { c -> c.isNotEmpty() } }.take(6))
                 } ?: missing("question")
@@ -753,12 +734,11 @@ class OpenRouterBrain(
               the user as a live preview card. It is served locally, so use relative paths and no build server; after
               changing files, tell the user to reload the preview rather than calling it again.
             Working with the user
-            - set_plan: for a task of three or more steps, show the plan as a card in your answer, then call it again
-              with updated statuses (pending, active, done, skipped) as you progress. Not for simple questions.
             - ask_user: ask one clear question and wait for the reply (the tool result). Offer 2-5 short choices when
               they fit; the user can also type. Only when you cannot reasonably proceed without their decision.
-            - todo: this conversation's todo list, shown above the input and kept across messages. Add work that is
-              still open, mark entries done as you finish them; the current list is given below when it has entries.
+            - todo: this conversation's todo list, shown above the input and kept across messages. For a task of three
+              or more steps, add the steps first, then mark entries done as you finish them; not for simple questions.
+              The current list is given below when it has entries.
 
             # Tool calls are never text
             - Call tools only through the function-calling interface (tool_calls). A tool call written into your
@@ -873,11 +853,11 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp, spawn_subagent"
+            "device_info, check_tools, attach_files, generate_image, view_image, ask_user, todo, preview_webapp, spawn_subagent"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
-            "http_request, device_info, check_tools, attach_files, generate_image, view_image, set_plan, ask_user, todo, preview_webapp, " +
+            "http_request, device_info, check_tools, attach_files, generate_image, view_image, ask_user, todo, preview_webapp, " +
             "spawn_subagent (parallel subagents) when subagent models are set, and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -944,7 +924,7 @@ class OpenRouterBrain(
         const val MAIN_CONVERSATION_TOOL_NAME = "main_conversation"
 
         /** Tools a subagent never gets: the user, the answer and the todo list belong to the main agent. */
-        internal val MAIN_ONLY_TOOLS = setOf("set_plan", "ask_user", "todo", "attach_files", "preview_webapp", SPAWN_TOOL_NAME)
+        internal val MAIN_ONLY_TOOLS = setOf("ask_user", "todo", "attach_files", "preview_webapp", SPAWN_TOOL_NAME)
 
         /** spawn_subagent, with the allowed models as an enum (the first one is the default). */
         internal fun spawnTool(models: List<String>): JsonElement = buildJsonObject {
@@ -1005,7 +985,7 @@ class OpenRouterBrain(
                 "your tools until it is done, then answer with a short report for the main agent: what you found or did, exact " +
                 "facts, file paths you created or changed, and anything that failed. The report goes to the main agent, not to " +
                 "the user. Stay within the objective. You cannot ask the user, attach files, keep the todo list or start other " +
-                "subagents; set_plan, ask_user, todo, attach_files and preview_webapp are not available to you. Use " +
+                "subagents; ask_user, todo, attach_files and preview_webapp are not available to you. Use " +
                 "main_conversation when the objective refers to earlier messages you were not given. A risky action that needs " +
                 "the user's approval is refused for you: report it so the main agent can do it.\n"
 
@@ -1186,39 +1166,6 @@ class OpenRouterBrain(
                         "Call it before a command that depends on such a program.",
                     "tools", "Program names, e.g. [\"yt-dlp\", \"ffmpeg\"]",
                 ),
-                buildJsonObject {
-                    put("type", "function")
-                    putJsonObject("function") {
-                        put("name", "set_plan")
-                        put(
-                            "description",
-                            "Show the user your plan for a multi-step task as a card in your answer, or update it: each call " +
-                                "replaces the card, so send all steps with their current status as you progress.",
-                        )
-                        putJsonObject("parameters") {
-                            put("type", "object")
-                            putJsonObject("properties") {
-                                putJsonObject("title") { put("type", "string"); put("description", "Short title of the plan") }
-                                putJsonObject("steps") {
-                                    put("type", "array")
-                                    put("description", "Every step, in order")
-                                    putJsonObject("items") {
-                                        put("type", "object")
-                                        putJsonObject("properties") {
-                                            putJsonObject("text") { put("type", "string"); put("description", "What the step does, a few words") }
-                                            putJsonObject("status") {
-                                                put("type", "string")
-                                                putJsonArray("enum") { listOf("pending", "active", "done", "skipped").forEach { add(it) } }
-                                            }
-                                        }
-                                        putJsonArray("required") { add("text"); add("status") }
-                                    }
-                                }
-                            }
-                            putJsonArray("required") { add("title"); add("steps") }
-                        }
-                    }
-                },
                 buildJsonObject {
                     put("type", "function")
                     putJsonObject("function") {

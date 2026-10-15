@@ -1,9 +1,13 @@
 package com.sebialex.agent.ui.chat
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -52,6 +56,11 @@ fun InputPill(
     revealing: Boolean = false,
     /** The agent asked a question: what is typed here is the answer. */
     answering: Boolean = false,
+    /**
+     * A section that is part of the chatbox itself, above the text field (the todo list): same
+     * surface, same shadow, one shape around both, a hairline between them. Null: the plain pill.
+     */
+    top: (@Composable () -> Unit)? = null,
 ) {
     // The input is never blocked: while an answer runs, a typed message is queued (one button:
     // the arrow queues it when there is something to send, otherwise it is the stop button).
@@ -65,63 +74,76 @@ fun InputPill(
         animationSpec = androidx.compose.animation.core.snap(),
         label = "send",
     )
-    Row(
-        modifier = modifier
+    // With a top section the pill grows into one card: smaller corners so the section's rows fit,
+    // and the size change animates so the list unfolds out of the box instead of jumping.
+    val shape = RoundedCornerShape(if (top != null) 24.dp else 28.dp)
+    Column(
+        modifier
             .fillMaxWidth()
-            .softSurface(RoundedCornerShape(28.dp), Palette.SurfaceHigh, elevation = 10.dp)
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.Bottom,
+            .softSurface(shape, Palette.SurfaceHigh, elevation = 10.dp)
+            .animateContentSize(tween(200)),
     ) {
-        if (onAttach != null) {
-            QuietIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
-        } else {
-            Spacer(Modifier.width(10.dp))
+        if (top != null) {
+            top()
+            Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(1.dp).background(Palette.SurfaceHighest))
         }
-        Box(
-            Modifier
-                .weight(1f)
-                .heightIn(min = 44.dp)
-                .padding(horizontal = 4.dp),
-            contentAlignment = Alignment.CenterStart,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.Bottom,
         ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Palette.TextPrimary),
-                cursorBrush = SolidColor(Palette.TextPrimary),
-                maxLines = 6,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                decorationBox = { inner ->
-                    if (value.text.isEmpty()) {
-                        Text(if (answering) "Type your answer" else if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
-                    }
-                    inner()
-                },
-            )
-        }
-        QuietIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
-        Box(
-            Modifier
-                .padding(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(fill)
-                .clickable(enabled = canSend || stoppable) { if (showStop) onStop() else onSend() },
-            contentAlignment = Alignment.Center,
-        ) {
-            AppIcon(
-                if (showStop) R.drawable.ic_stop else R.drawable.ic_arrow_up,
-                contentDescription = when {
-                    showStop -> "Stop"
-                    answering -> "Send answer"
-                    running -> "Queue message"
-                    else -> "Send"
-                },
-                tint = if (canSend || stoppable) Palette.OnAccent else Palette.IconMuted,
-                size = 20.dp,
-            )
+            if (onAttach != null) {
+                QuietIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
+            } else {
+                Spacer(Modifier.width(10.dp))
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .heightIn(min = 44.dp)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Palette.TextPrimary),
+                    cursorBrush = SolidColor(Palette.TextPrimary),
+                    maxLines = 6,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    decorationBox = { inner ->
+                        if (value.text.isEmpty()) {
+                            Text(if (answering) "Type your answer" else if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                        }
+                        inner()
+                    },
+                )
+            }
+            QuietIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
+            Box(
+                Modifier
+                    .padding(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(fill)
+                    .clickable(enabled = canSend || stoppable) { if (showStop) onStop() else onSend() },
+                contentAlignment = Alignment.Center,
+            ) {
+                AppIcon(
+                    if (showStop) R.drawable.ic_stop else R.drawable.ic_arrow_up,
+                    contentDescription = when {
+                        showStop -> "Stop"
+                        answering -> "Send answer"
+                        running -> "Queue message"
+                        else -> "Send"
+                    },
+                    tint = if (canSend || stoppable) Palette.OnAccent else Palette.IconMuted,
+                    size = 20.dp,
+                )
+            }
         }
     }
 }
