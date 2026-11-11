@@ -100,7 +100,7 @@ fun ConversationsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.Ink)
+            .background(Palette.backgroundBrush())
             .systemBarsPadding()
             .imePadding(),
     ) {

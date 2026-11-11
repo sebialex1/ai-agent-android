@@ -77,9 +77,12 @@ import com.sebialex.agent.ui.theme.softSurface
  */
 enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes val icon: Int, val parent: String? = null) {
     GENERAL("General", R.drawable.ic_shield),
+    APPEARANCE("Appearance", R.drawable.ic_palette),
     MODELS("Models", R.drawable.ic_code),
-    /** A sub-page of Models (not on the home list); the model picker's "Manage" opens it directly. */
+    /** Sub-pages of Models (not on the home list); the model picker's "Manage" opens On-device directly. */
     ON_DEVICE("On-device models", R.drawable.ic_phone, parent = "MODELS"),
+    IMAGE("Image model", R.drawable.ic_image, parent = "MODELS"),
+    THINKING("Thinking", R.drawable.ic_lightbulb, parent = "MODELS"),
     CHATS("Chats", R.drawable.ic_history),
     BACKUP("Backup & restore", R.drawable.ic_download),
     UPDATES("Updates", R.drawable.ic_refresh),
@@ -123,7 +126,7 @@ fun SettingsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.Ink)
+            .background(Palette.backgroundBrush())
             .systemBarsPadding()
             .imePadding(),
     ) {
@@ -171,7 +174,7 @@ fun SettingsScreen(
                             )
                             SwitchRow(
                                 title = "Auto-approve agent actions",
-                                subtitle = "Installs, deletions and network commands run without asking. Blocked actions stay blocked.",
+                                subtitle = null,
                                 checked = snap.autoApprove,
                                 onChange = settings::setAutoApprove,
                             )
@@ -179,6 +182,7 @@ fun SettingsScreen(
                         SandboxSetting(termux)
                         BackgroundSetting()
                     }
+                    SettingsSection.APPEARANCE -> AppearanceSettings(settings, snap)
                     SettingsSection.MODELS -> {
                         // Everything about models on one page, in sub-sections: what answers, who
                         // provides it (keys, custom providers), image generation, and the
@@ -199,12 +203,7 @@ fun SettingsScreen(
                                 onClick = { section = SettingsSection.ON_DEVICE },
                             )
                         }
-                        SettingsGroup(
-                            "Providers",
-                            help = "Each provider holds a few keys. When the active key fails (invalid, out of credit, rate limited), " +
-                                "the next one takes over. Custom providers: any OpenAI-compatible API, from a preset or an auto-detected URL. " +
-                                "TinyFish is optional; without it the phone searches the web directly.",
-                        ) {
+                        SettingsGroup("Providers") {
                             listOf(
                                 SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
                                 SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
@@ -221,8 +220,20 @@ fun SettingsScreen(
                             RowDivider()
                             CustomProvidersGroup(settings, snap)
                         }
-                        // generate_image's provider and model (only models that can make images).
-                        ImageModelGroup(settings, snap, models)
+                        // generate_image's model and the thinking control: their own sub-pages,
+                        // like On-device models, so this page stays short.
+                        NavRow(
+                            title = "Image model",
+                            value = imageModelLine(snap),
+                            icon = R.drawable.ic_image,
+                            onClick = { section = SettingsSection.IMAGE },
+                        )
+                        NavRow(
+                            title = "Thinking",
+                            value = modelName(snap.model),
+                            icon = R.drawable.ic_lightbulb,
+                            onClick = { section = SettingsSection.THINKING },
+                        )
                         // Which models subagents (spawn_subagent) may run on: the same picker, multi-select.
                         SubagentGroup(settings, snap, models, ollama, modelStore, localEngine)
                         if (picking) ModelPickerSheet(
@@ -232,6 +243,8 @@ fun SettingsScreen(
                         )
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
+                    SettingsSection.IMAGE -> ImageModelGroup(settings, snap, models)
+                    SettingsSection.THINKING -> ThinkingGroup(settings, snap, models)
                     SettingsSection.CHATS -> {
                         // Memory of past chats has no row here: its only switch is in each chat's
                         // options (the \u22ef next to a chat in the list).
@@ -299,7 +312,7 @@ private fun AboutTab() {
     }
     SettingsGroup("Agent for Android") {
         NavRow("Version", version)
-        ExpandRow("Agent tools", value = "What the agent can do") {
+        ExpandRow("Agent tools") {
             Note(com.sebialex.agent.data.llm.OpenRouterBrain.TOOL_SUMMARY)
         }
     }

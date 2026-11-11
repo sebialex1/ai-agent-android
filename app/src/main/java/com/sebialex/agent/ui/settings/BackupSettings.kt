@@ -184,7 +184,7 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
     val restore = rememberRestoreFlow(backup, onRestored) { message = it }
     fun restoreFromFolder() { if (backup.backupInFolder() != null) restore(true) else message = "No backup file in the folder yet." }
 
-    SettingsGroup("Backup folder", help = "Pick a folder outside the app (for example Documents) so the backup survives an uninstall. Without one, only Android's own backup (Google) can bring data back. Backs up automatically a few seconds after each change. Tap the folder to change it.") {
+    SettingsGroup("Backup folder") {
         val action = BackupRows.folderAction(status.folderUri != null, status.pendingRestore)
         Row(
             Modifier
@@ -242,7 +242,7 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
         }
     }
 
-    SettingsGroup("API keys in the backup", help = "Without a passphrase, API keys are never written to the backup. The passphrase is not stored in the backup: keep it, you need it to restore the keys on a new install.") {
+    SettingsGroup("API keys in the backup") {
         if (editingPass) {
             PassphraseField(pass) { pass = it }
             if (pass.isNotEmpty() && pass.trim().length < 8) Text("At least 8 characters.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
@@ -269,7 +269,7 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
         }
     }
 
-    SettingsGroup("Restore", help = "Restore from the backup folder or from any backup file, for example after a reinstall.") {
+    SettingsGroup("Restore") {
         if (status.folderUri != null) {
             NavRow("Restore from backup folder", value = status.folderName, icon = com.sebialex.agent.R.drawable.ic_folder, onClick = { restoreFromFolder() }, chevron = false)
             RowDivider()

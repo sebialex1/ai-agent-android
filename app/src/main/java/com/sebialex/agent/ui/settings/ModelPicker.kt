@@ -238,9 +238,6 @@ fun ModelList(
         LazyColumn(Modifier.fillMaxWidth().height(minOf(maxHeight, screen * 0.62f)).keepScrollInside()) {
             // ---- On this phone: only models that are ready to run.
             if (!multi) item(key = "h:device") { Header("On this phone", action = "Manage", onAction = onOpenOnDevice) }
-            if (!multi && device.isEmpty() && q.isEmpty()) item(key = "device:none") {
-                Note("No downloaded models. Get Gemma 4 and others under Manage.")
-            }
             items(if (multi) emptyList() else device, key = { "d:" + it.id }) { m ->
                 PickRow(
                     title = m.name,
@@ -296,7 +293,7 @@ fun ModelList(
                 items(pinnedIds, key = { "rx:$it" }) { id ->
                     PickRow(
                         title = if (id == SecureSettings.DEFAULT_MODEL) "Auto" else id,
-                        subtitle = if (id == SecureSettings.DEFAULT_MODEL) "Picks a suitable model per request" else "Last used",
+                        subtitle = if (id == SecureSettings.DEFAULT_MODEL) null else "Last used",
                         selected = isSelected(id),
                         onClick = { pickCloud(id) },
                     )
@@ -347,9 +344,6 @@ fun ModelList(
                 }
             }
 
-            if (!snap.hasOpenRouterKey && !snap.hasOllamaKey && customs.isEmpty()) item(key = "nokeys") {
-                Note("Add an OpenRouter or Ollama Cloud API key in Settings \u203a Models to use cloud models.")
-            }
             if (q.isNotEmpty() && total == 0) item(key = "nomatch") { Note("No models match \u201c$q\u201d") }
         }
     }

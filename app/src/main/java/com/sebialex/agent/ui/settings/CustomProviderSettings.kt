@@ -52,13 +52,15 @@ import kotlinx.coroutines.launch
 
 /**
  * Settings > Models > Custom providers: every user-added OpenAI-compatible provider as a key
- * ring card (its keys rotate like the built-in ones) with its API root and model count, plus
- * an "Add provider" button that opens the setup sheet.
+ * ring card (its keys rotate like the built-in ones) with its API root, plus "Add provider".
+ * Each card has an edit action: name, base URL (the domain the API is called on), wire API and
+ * keys can all be changed later; the model list is re-detected from the new URL.
  */
 @Composable
 internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings.Snapshot) {
     var adding by rememberSaveable { mutableStateOf(false) }
     var confirmRemove by rememberSaveable { mutableStateOf<String?>(null) }
+    var editing by rememberSaveable { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth()) {
         snap.customProviders.forEach { p ->
             val ring = CustomProviders.keyRing(p.id)
@@ -70,17 +72,22 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
                 onRemove = { settings.removeKey(ring, it) },
                 onActivate = { settings.setActiveKey(ring, it) },
                 action = {
+                    QuietIconButton(R.drawable.ic_edit, "Edit ${p.name}", onClick = { editing = p.id }, size = 38.dp, iconSize = 17.dp, tint = Palette.IconMuted)
                     QuietIconButton(R.drawable.ic_trash, "Remove ${p.name}", onClick = { confirmRemove = p.id }, size = 38.dp, iconSize = 17.dp, tint = Palette.IconMuted)
                 },
                 footer = {
                     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)) {
-                        Text(p.baseUrl, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            if (p.models.isEmpty()) "No model list \u00b7 type a model id in the + sheet"
-                            else "${p.models.size} model${if (p.models.size == 1) "" else "s"} \u00b7 pick one in the chat's + sheet",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Palette.TextTertiary,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (p.api == CustomProviders.API_CHAT) "Chat API" else "Responses API",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Palette.TextTertiary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("\u00b7", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+                            Spacer(Modifier.width(8.dp))
+                            Text(p.baseUrl, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         if (confirmRemove == p.id) {
                             com.sebialex.agent.ui.components.SheetConfirm(
                                 message = "Remove ${p.name} and its keys?",
@@ -93,16 +100,36 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
                 },
             )
         }
-        // OpenAI, Groq, Gemini, Mistral, LM Studio... or any OpenAI-compatible URL (presets in the sheet).
         NavRow("Add provider", icon = R.drawable.ic_plus, onClick = { adding = true }, chevron = false)
     }
     if (adding) AddProviderSheet(settings, onDismiss = { adding = false })
+    editing?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.let { p ->
+        EditProviderSheet(settings, p, onDismiss = { editing = null })
+    } }
+}
+
+/** Which wire API a provider speaks, offered as two choices when adding or editing one. */
+private val API_CHOICES = listOf(
+    CustomProviders.API_RESPONSES to "Responses API",
+    CustomProviders.API_CHAT to "Chat API",
+)
+
+@Composable
+private fun ApiStyleChoice(selected: String, onSelect: (String) -> Unit) {
+    ChoiceChips(
+        options = API_CHOICES.map { it.first },
+        selected = selected,
+        label = { id -> API_CHOICES.firstOrNull { it.first == id }?.second ?: id },
+        onSelect = onSelect,
+    )
 }
 
 /**
  * Setup sheet for a provider: a dropdown of popular providers (plus "Custom / auto-detect"),
- * name, API root and key, then Detect, which probes the URL (see [CustomProviders.detect]) and
- * shows what it found before Add. Saving without detecting first runs detection on the way.
+ * name, API root, wire API and key, then Detect, which probes the URL (see
+ * [CustomProviders.detect]) and shows what it found before Add. Saving without detecting first
+ * runs detection on the way. New providers default to the Responses API; if the endpoint does
+ * not serve it, requests fall back to chat completions automatically.
  */
 @Composable
 private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
@@ -112,6 +139,7 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var url by rememberSaveable { mutableStateOf("") }
     var key by rememberSaveable { mutableStateOf("") }
+    var api by rememberSaveable { mutableStateOf(CustomProviders.API_RESPONSES) }
     var detecting by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<CustomProviders.Detection?>(null) }
     val preset = CustomProviders.preset(presetId)
@@ -137,14 +165,14 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
             SecureSettings.CustomProvider(
                 id = id, name = finalName, baseUrl = base, preset = presetId,
                 models = d?.models.orEmpty(), detected = d?.message.orEmpty(),
-                modelInfo = d?.meta.orEmpty(),
+                modelInfo = d?.meta.orEmpty(), api = api,
             ),
         )
         if (key.isNotBlank()) settings.addKey(CustomProviders.keyRing(id), key.trim())
         onDismiss()
     }
 
-    AppSheet(onDismiss = onDismiss, title = "Add a provider", subtitle = "Anything that speaks the OpenAI chat completions API") {
+    AppSheet(onDismiss = onDismiss, title = "Add a provider") {
         Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // ---- Provider dropdown
             Row(
@@ -157,14 +185,7 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                     .padding(start = 12.dp, end = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(preset?.name ?: "Custom / auto-detect", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
-                    Text(
-                        preset?.keysUrl?.let { "Keys: $it" } ?: if (preset?.local == true) "Runs on your network" else "Paste a base URL and Detect",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Palette.TextTertiary,
-                    )
-                }
+                Text(preset?.name ?: "Custom / auto-detect", style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
                 AppIcon(R.drawable.ic_chevron_down, if (choosing) "Close list" else "Choose provider", tint = Palette.IconMuted, size = 16.dp)
             }
             AnimatedVisibility(visible = choosing) {
@@ -177,7 +198,7 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                         .padding(vertical = 4.dp),
                 ) {
                     item(key = "custom") {
-                        PresetRow("Custom / auto-detect", "Any OpenAI-compatible URL", selected = preset == null) {
+                        PresetRow("Custom / auto-detect", selected = preset == null) {
                             presetId = CustomProviders.CUSTOM_PRESET; choosing = false; result = null
                         }
                     }
@@ -195,6 +216,10 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
             Field("Name", name, "e.g. Groq", onChange = { name = it })
             Field("Base URL", url, "https://api.example.com/v1", onChange = { url = it.trim(); result = null }, mono = true)
             Field("API key", key, if (preset?.local == true) "Optional for local servers" else "Paste key", onChange = { key = it.trim() }, secret = true)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("API", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 4.dp))
+                ApiStyleChoice(api) { api = it }
+            }
 
             // ---- Detection result
             result?.let { d ->
@@ -239,8 +264,88 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * Edit sheet for a saved provider: its name, base URL (the domain the API lives on), wire API
+ * and an optional extra key. Detect re-reads the model list from the new URL; Save keeps
+ * everything else (keys, id, models) unless a new list was detected.
+ */
 @Composable
-private fun PresetRow(title: String, detail: String, selected: Boolean, onClick: () -> Unit) {
+private fun EditProviderSheet(settings: SecureSettings, provider: SecureSettings.CustomProvider, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable { mutableStateOf(provider.name) }
+    var url by rememberSaveable { mutableStateOf(provider.baseUrl) }
+    var api by rememberSaveable { mutableStateOf(provider.api) }
+    var detecting by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<CustomProviders.Detection?>(null) }
+    val key = settings.activeKey(CustomProviders.keyRing(provider.id))
+
+    suspend fun runDetect(): CustomProviders.Detection {
+        detecting = true
+        val d = try { CustomProviders.detect(url, key) } finally { detecting = false }
+        result = d
+        if (d.compatible) url = d.baseUrl
+        return d
+    }
+
+    fun save(d: CustomProviders.Detection?) {
+        val base = (d?.takeIf { it.compatible }?.baseUrl ?: CustomProviders.normalize(url)).ifEmpty { return }
+        settings.saveCustomProvider(
+            provider.copy(
+                name = name.trim().ifEmpty { provider.name },
+                baseUrl = base,
+                api = api,
+                models = d?.models?.takeIf { it.isNotEmpty() } ?: provider.models,
+                modelInfo = d?.meta?.takeIf { it.isNotEmpty() } ?: provider.modelInfo,
+                detected = d?.message ?: provider.detected,
+            ),
+        )
+        onDismiss()
+    }
+
+    AppSheet(onDismiss = onDismiss, title = "Edit ${provider.name}") {
+        Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Field("Name", name, provider.name, onChange = { name = it })
+            Field("Base URL", url, "https://api.example.com/v1", onChange = { url = it.trim(); result = null }, mono = true)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("API", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 4.dp))
+                ApiStyleChoice(api) { api = it }
+            }
+            result?.let { d ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (d.compatible && !d.needsKey) Palette.DiffAdd else Palette.Warning.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AppIcon(
+                        if (d.compatible && !d.needsKey) R.drawable.ic_check else R.drawable.ic_warning, null,
+                        tint = if (d.compatible && !d.needsKey) Palette.DiffAddText else Palette.Warning, size = 16.dp,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(d.message, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                if (detecting) Text("Detecting\u2026", style = MaterialTheme.typography.labelMedium, color = Palette.TextTertiary, modifier = Modifier.weight(1f))
+                PillButton("Detect", onClick = { scope.launch { runDetect() } }, enabled = url.isNotBlank() && !detecting)
+                PillButton(
+                    "Save",
+                    primary = true,
+                    enabled = url.isNotBlank() && !detecting,
+                    onClick = {
+                        val known = result
+                        if (known != null) save(known) else scope.launch { save(runDetect()) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetRow(title: String, detail: String? = null, selected: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -251,7 +356,7 @@ private fun PresetRow(title: String, detail: String, selected: Boolean, onClick:
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary)
-            Text(detail, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!detail.isNullOrBlank()) Text(detail, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.Accent))
     }

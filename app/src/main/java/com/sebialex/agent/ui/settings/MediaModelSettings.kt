@@ -38,11 +38,19 @@ import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
 
+/** One line for the Models page row: the image model generate_image uses and its provider. */
+internal fun imageModelLine(snap: SecureSettings.Snapshot): String {
+    val ref = snap.mediaImage ?: MediaModels.DEFAULT
+    val provider = MediaModels.customProviderId(ref)?.let { id ->
+        snap.customProviders.firstOrNull { it.id == id }?.name ?: "Custom provider"
+    } ?: "OpenRouter"
+    return "$provider \u00b7 ${ref.model}"
+}
+
 /**
- * Settings > Models > Image generation: which provider and model generate_image uses. One row
- * shows the current choice; tapping it opens a provider segmented control and that provider's
- * image models only (OpenRouter's Image API catalog, custom providers' image models). Providers
- * that cannot generate images are named with the reason instead of being offered.
+ * Settings > Models > Image model (its own sub-page): which provider and model generate_image
+ * uses. One row shows the current choice; tapping it opens a provider segmented control and that
+ * provider's image models only (OpenRouter's Image API catalog, custom providers' image models).
  */
 @Composable
 internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, models: OpenRouterModels) {
@@ -70,7 +78,7 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
     val providerName = MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
     val currentName = (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
 
-    SettingsGroup("Image generation", help = "The model the agent's generate_image tool uses. Only models that can make images are listed.") {
+    SettingsGroup("Image generation") {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -127,11 +135,6 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
                 val marks = markable[p.id].orEmpty()
                 if (marks.isNotEmpty()) ManualImageMarks(p, marks, snap.imageOverrides, onToggle = { id, on -> settings.setImageOverride(id, on) })
             }
-            // Honest limits: providers that are connected but cannot generate images here.
-            val limits = snap.customProviders.filter { custom[it.id].isNullOrEmpty() && markable[it.id].isNullOrEmpty() }
-                .map { "${it.name}: its model list names no image models this app can call" } +
-                MediaModels.LIMITATIONS.map { (name, why) -> "$name: $why" }
-            if (limits.isNotEmpty()) Help(limits.joinToString("\n"), label = "Providers without image models")
         }
     }
 }
@@ -157,8 +160,8 @@ private fun ManualImageMarks(
     ) {
         Column(Modifier.weight(1f)) {
             Text("Mark image models by hand", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
-            Text(
-                "Manual override" + if (marked > 0) " \u00b7 $marked marked" else "",
+            if (marked > 0) Text(
+                "$marked marked",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
             )
@@ -188,7 +191,6 @@ private fun ManualImageMarks(
             color = Palette.TextSecondary,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { showAll = true }.padding(vertical = 8.dp),
         )
-        Help("A marked model is called at ${provider.baseUrl.trimEnd('/')}/images/generations. If it is not an image model there, generate_image fails and says so.")
     }
 }
 

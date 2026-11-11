@@ -76,6 +76,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val subagentsOn: Boolean = true,
         /** Models picked for subagents, in order (first = default); empty means the chat model. */
         val subagentModels: List<String> = emptyList(),
+        /** Selected app theme, a [com.sebialex.agent.ui.theme.Themes] id. */
+        val theme: String = DEFAULT_THEME,
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -123,6 +125,12 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun autoTitles(): Boolean = prefs.getBoolean(KEY_AUTO_TITLES, true)
     fun setMemoryForNewChats(value: Boolean) = edit { putBoolean(KEY_MEMORY_NEW_CHATS, value) }
     fun setAutoTitles(value: Boolean) = edit { putBoolean(KEY_AUTO_TITLES, value) }
+
+    // ---- Appearance ----
+
+    /** The selected theme ([com.sebialex.agent.ui.theme.Themes] id); unknown ids fall back to the default. */
+    fun themeId(): String = prefs.getString(KEY_THEME, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_THEME
+    fun setTheme(value: String) = edit { putString(KEY_THEME, value) }
 
     /** The "keep runs alive in the background" offer was shown once (answered either way): never again by itself. */
     fun batteryOfferShown(): Boolean = prefs.getBoolean(KEY_BATTERY_OFFER_SHOWN, false)
@@ -342,6 +350,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val detected: String = "",
         /** Capability metadata from the provider's own model list (image output, reasoning), by model id. */
         val modelInfo: Map<String, com.sebialex.agent.data.llm.ProviderModelMeta> = emptyMap(),
+        /** Wire API of this provider: [com.sebialex.agent.data.llm.CustomProviders.API_RESPONSES] (default) or `API_CHAT`. */
+        val api: String = com.sebialex.agent.data.llm.CustomProviders.API_RESPONSES,
     )
 
     fun customProviders(): List<CustomProvider> =
@@ -503,6 +513,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         localSpeculative = localSpeculative(),
         memoryForNewChats = memoryForNewChats(),
         autoTitles = autoTitles(),
+        theme = themeId(),
         keys = keyViews(),
         customProviders = customProviders(),
         mediaImage = storedMediaImageModel(),
@@ -545,6 +556,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
+        private const val KEY_THEME = "app_theme"
+        const val DEFAULT_THEME = "midnight"
         private const val KEY_BATTERY_OFFER_SHOWN = "battery_offer_shown"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         /** generate_image model: provider id and model id (plain settings, so they are backed up). */

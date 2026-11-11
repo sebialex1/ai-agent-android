@@ -51,7 +51,7 @@ internal fun SectionLabel(text: String, modifier: Modifier = Modifier) {
  * title: it sits behind a small info button next to it (one tap shows it).
  */
 @Composable
-internal fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
+internal fun SwitchRow(title: String, subtitle: String? = null, checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
     var help by rememberSaveable(title) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(

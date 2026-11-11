@@ -101,7 +101,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
             message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }
         }
 
-        SettingsGroup("Runtime", help = "GPU falls back to the CPU automatically. Larger context windows use more memory and are capped by each model. Changes apply at the next load.") {
+        SettingsGroup("Runtime") {
             Text("Accelerator", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
             ChoiceChips(
                 options = listOf(SecureSettings.BACKEND_GPU, SecureSettings.BACKEND_CPU),
@@ -118,7 +118,6 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
             )
             SwitchRow(
                 title = "Faster decoding (MTP)",
-                subtitle = "Gemma 4 on the GPU. Applies at the next load.",
                 checked = snap.localSpeculative,
                 onChange = settings::setLocalSpeculative,
             )

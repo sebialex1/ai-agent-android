@@ -159,7 +159,7 @@ fun ChatScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.Ink)
+            .background(Palette.backgroundBrush())
             .systemBarsPadding()
             .imePadding()
             // A tap anywhere else folds an open action row. Only watched, never consumed, so
