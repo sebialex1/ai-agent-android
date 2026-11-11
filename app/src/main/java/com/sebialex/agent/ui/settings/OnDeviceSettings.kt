@@ -35,6 +35,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.R
+import com.sebialex.agent.data.local.ACTIVATION_TYPES
 import com.sebialex.agent.data.local.EngineState
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModel
@@ -88,18 +89,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
             EngineRow(engineState, snap.model, store, engine)
         }
 
-        // Grouped by the RAM they are recommended for (a recommendation, never a limit).
-        val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
-        groups.forEach { (tier, models) ->
-            SettingsGroup(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM") {
-                models.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
-            }
-        }
-        SettingsGroup("Imported") {
-            imported.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
-            NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
-            message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }
-        }
+        HfGroup(settings, snap, store) { message = it }
 
         SettingsGroup("Runtime") {
             Text("Accelerator", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
@@ -116,13 +106,68 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
                 label = { "${(it + 512) / 1024}K" },
                 onSelect = settings::setLocalContext,
             )
+            Text("Activation", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+            ChoiceChips(
+                options = ACTIVATION_TYPES,
+                selected = ACTIVATION_TYPES.first { it.first == snap.localActivation },
+                label = { it.second },
+                onSelect = { settings.setLocalActivation(it.first) },
+            )
             SwitchRow(
                 title = "Faster decoding (MTP)",
                 checked = snap.localSpeculative,
                 onChange = settings::setLocalSpeculative,
             )
+            ExpandRow(
+                "Sampling",
+                value = if (snap.localSampler != null) "Custom" else "Model default",
+            ) { SamplerEditor(settings, snap.localSampler) }
+        }
+
+        // Grouped by the RAM they are recommended for (a recommendation, never a limit).
+        val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
+        groups.forEach { (tier, models) ->
+            SettingsGroup(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM") {
+                models.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
+            }
+        }
+        SettingsGroup("Imported") {
+            imported.forEach { m -> ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it } }
+            NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
+            message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Temperature, top-K, top-P and seed; Reset returns the model to its runtime defaults. */
+@Composable
+private fun SamplerEditor(settings: SecureSettings, current: com.sebialex.agent.data.local.SamplerSpec?) {
+    val spec = current ?: com.sebialex.agent.data.local.SamplerSpec(temperature = 0.8f, topK = 64, topP = 0.95f, seed = 0)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        SamplerSlider("Temperature", spec.temperature, 0f..2f, 0.05f) { settings.setLocalSampler(spec.copy(temperature = it)) }
+        SamplerSlider("Top-K", spec.topK.toFloat(), 1f..128f, 1f) { settings.setLocalSampler(spec.copy(topK = it.toInt())) }
+        SamplerSlider("Top-P", spec.topP, 0.05f..1f, 0.05f) { settings.setLocalSampler(spec.copy(topP = it)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Seed", style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
+            PlainField("", spec.seed.toString(), "0") { settings.setLocalSampler(spec.copy(seed = it.toIntOrNull() ?: 0)) }
+        }
+        PillButton("Reset", onClick = { settings.setLocalSampler(null) })
+    }
+}
+
+@Composable
+private fun SamplerSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, step: Float, onChange: (Float) -> Unit) {
+    Column {
+        Row(Modifier.fillMaxWidth()) {
+            Text(label, style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
+            Text("%.2f".format(value), style = MaterialTheme.typography.labelLarge, color = Palette.TextPrimary)
+        }
+        androidx.compose.material3.Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = { onChange((it / step).toInt() * step) },
+            valueRange = range,
+        )
     }
 }
 

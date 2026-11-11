@@ -49,7 +49,14 @@ sealed interface ModelStatus {
  * (`Android/data/<app>/files/models`, deleted with the app). Files found in that old folder are
  * moved to Downloads once it becomes usable.
  */
-class ModelStore(private val context: Context, private val scope: CoroutineScope) {
+class ModelStore(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    /** Models added from Hugging Face search, resolved at refresh time. */
+    private val extraModels: () -> List<LocalModel> = { emptyList() },
+    /** The Hugging Face token, sent along on downloads (gated repos need it). */
+    private val hfToken: () -> String = { "" },
+) {
 
     /** The previous (and fallback) location: app-specific external storage. */
     private val legacyDir: File? = context.getExternalFilesDir(DIR)
@@ -112,7 +119,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
         refresh()
     }
 
-    fun models(): List<LocalModel> = LocalModels.catalog + _imported.value
+    fun models(): List<LocalModel> = LocalModels.catalog + _imported.value + extraModels()
 
     /** Resolves a model id to its entry, including imported files that are on disk. */
     fun model(id: String): LocalModel? = LocalModels.resolve(id)
@@ -148,7 +155,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
 
         var active = false
         val out = LinkedHashMap<String, ModelStatus>()
-        for (m in LocalModels.catalog + imports) {
+        for (m in LocalModels.catalog + imports + extraModels()) {
             importing[m.id]?.let { out[m.id] = it; active = true; continue }
             val download = downloadStatus(m)
             if (download != null) {
@@ -196,6 +203,7 @@ class ModelStore(private val context: Context, private val scope: CoroutineScope
                 .setMimeType("application/octet-stream")
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(false)
+                .apply { if (hfToken().isNotBlank()) addRequestHeader("Authorization", "Bearer " + hfToken()) }
             val id = try {
                 manager.enqueue(request)
             } catch (e: Exception) {

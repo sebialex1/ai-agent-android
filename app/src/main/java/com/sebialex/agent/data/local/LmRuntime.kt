@@ -1,5 +1,6 @@
 package com.sebialex.agent.data.local
 
+import com.google.ai.edge.litertlm.ActivationDataType
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -10,6 +11,29 @@ import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.ModelInfo
+
+/**
+ * Sampling overrides for a local model; null fields keep the runtime's own value. Stored as a
+ * plain setting, so it is backed up and applied on the next engine load.
+ */
+@kotlinx.serialization.Serializable
+data class SamplerSpec(
+    val temperature: Float,
+    val topK: Int,
+    val topP: Float,
+    val seed: Int = 0,
+)
+
+/** The activation data types the engine can be asked to run with. */
+val ACTIVATION_TYPES = listOf("" to "Default", "float32" to "Float32", "float16" to "Float16", "int16" to "Int16", "int8" to "Int8")
+
+internal fun activationDataType(id: String): ActivationDataType? = when (id) {
+    "float32" -> ActivationDataType.FLOAT32
+    "float16" -> ActivationDataType.FLOAT16
+    "int16" -> ActivationDataType.INT16
+    "int8" -> ActivationDataType.INT8
+    else -> null
+}
 
 /**
  * The fakeable boundary to LiteRT-LM. Everything that touches the native runtime — opening an
@@ -26,10 +50,19 @@ interface LmRuntime {
 
     /**
      * Opens an engine for the model at [path]. [gpu] selects the OpenCL backend; [speculative]
-     * is multi-token prediction (only requested when the file says it has it). Throws when the
-     * backend cannot start; the caller classifies the failure.
+     * is multi-token prediction (only requested when the file says it has it); [sampler] and
+     * [activation] are the user's runtime overrides (null: the runtime's own defaults). Throws
+     * when the backend cannot start; the caller classifies the failure.
      */
-    fun openEngine(path: String, gpu: Boolean, contextTokens: Int, speculative: Boolean, cacheDir: String): LmEngine
+    fun openEngine(
+        path: String,
+        gpu: Boolean,
+        contextTokens: Int,
+        speculative: Boolean,
+        cacheDir: String,
+        sampler: SamplerSpec? = null,
+        activation: String = "",
+    ): LmEngine
 }
 
 /** A loaded model: creates conversations and frees the model's memory on [close]. */
@@ -70,6 +103,8 @@ object LiteRtLmRuntime : LmRuntime {
         contextTokens: Int,
         speculative: Boolean,
         cacheDir: String,
+        sampler: SamplerSpec?,
+        activation: String,
     ): LmEngine {
         if (!quietLogs) {
             quietLogs = true
@@ -84,6 +119,7 @@ object LiteRtLmRuntime : LmRuntime {
                     backend = if (gpu) Backend.GPU() else Backend.CPU(),
                     maxNumTokens = contextTokens,
                     cacheDir = cacheDir,
+                    activationDataType = activationDataType(activation),
                 ),
             )
             try {

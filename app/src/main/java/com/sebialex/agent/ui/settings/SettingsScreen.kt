@@ -77,7 +77,7 @@ import com.sebialex.agent.ui.theme.softSurface
  */
 enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes val icon: Int, val parent: String? = null) {
     GENERAL("General", R.drawable.ic_shield),
-    APPEARANCE("Appearance", R.drawable.ic_palette),
+    APPEARANCE("Customization", R.drawable.ic_palette),
     MODELS("Models", R.drawable.ic_code),
     /** Sub-pages of Models (not on the home list); the model picker's "Manage" opens On-device directly. */
     ON_DEVICE("On-device models", R.drawable.ic_phone, parent = "MODELS"),

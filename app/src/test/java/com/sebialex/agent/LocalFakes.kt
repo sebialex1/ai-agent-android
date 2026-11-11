@@ -9,6 +9,7 @@ import com.sebialex.agent.data.local.LmConversation
 import com.sebialex.agent.data.local.LmEngine
 import com.sebialex.agent.data.local.LmRuntime
 import com.sebialex.agent.data.local.ModelCapabilities
+import com.sebialex.agent.data.local.SamplerSpec
 import java.util.Collections
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
@@ -74,7 +75,15 @@ class FakeLmRuntime(
         return caps
     }
 
-    override fun openEngine(path: String, gpu: Boolean, contextTokens: Int, speculative: Boolean, cacheDir: String): LmEngine {
+    override fun openEngine(
+        path: String,
+        gpu: Boolean,
+        contextTokens: Int,
+        speculative: Boolean,
+        cacheDir: String,
+        sampler: SamplerSpec?,
+        activation: String,
+    ): LmEngine {
         if (openDelayMs > 0) Thread.sleep(openDelayMs)
         if (gpu) {
             gpuOpens.incrementAndGet()

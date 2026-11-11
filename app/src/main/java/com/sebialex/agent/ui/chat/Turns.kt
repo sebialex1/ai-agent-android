@@ -48,6 +48,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -78,6 +80,8 @@ fun UserMessage(
     turn: Turn,
     /** Resolves an `@path` mention to its workspace file; null when it is not an existing file. */
     resolveFile: (String) -> java.io.File? = { null },
+    /** The user's chosen bubble look; empty id keeps the plain surface. */
+    bubbleStyleId: String = "",
     onOpenFile: (String) -> Unit = {},
     /** A tap on the bubble: shows or hides its action row. Null: the message has no actions. */
     onTap: (() -> Unit)? = null,
@@ -108,6 +112,46 @@ fun UserMessage(
             }
         }
     }
+    val bubble = com.sebialex.agent.ui.theme.BubbleStyles.byId(bubbleStyleId)
+    val bubbleBrush = remember(bubble.id) { com.sebialex.agent.ui.theme.BubbleStyles.brush(bubble) }
+    val bubbleText = remember(bubble.id) { com.sebialex.agent.ui.theme.BubbleStyles.textColor(bubble, Palette.TextPrimary) }
+    val bubbleShape = RoundedCornerShape(22.dp)
+    val bubbleModifier = if (bubbleBrush == null) {
+        Modifier.softSurface(bubbleShape, Palette.SurfaceHigh, elevation = 2.dp)
+    } else {
+        Modifier
+            .shadow(2.dp, bubbleShape)
+            .clip(bubbleShape)
+            .background(bubbleBrush)
+            .then(
+                when (bubble.effect) {
+                    "sheen" -> Modifier.drawWithContent {
+                        drawContent()
+                        drawRect(
+                            Brush.linearGradient(
+                                0f to Color.White.copy(alpha = 0.20f),
+                                0.45f to Color.Transparent,
+                                start = androidx.compose.ui.geometry.Offset.Zero,
+                                end = androidx.compose.ui.geometry.Offset(size.width, size.height),
+                            ),
+                        )
+                    }
+                    "glow" -> Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), bubbleShape)
+                    "glass" -> Modifier
+                        .border(1.dp, Color.White.copy(alpha = 0.25f), bubbleShape)
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                Brush.verticalGradient(
+                                    0f to Color.White.copy(alpha = 0.12f),
+                                    1f to Color.Transparent,
+                                ),
+                            )
+                        }
+                    else -> Modifier
+                },
+            )
+    }
     Column(
         Modifier.fillMaxWidth().padding(start = 56.dp),
         horizontalAlignment = Alignment.End,
@@ -120,10 +164,9 @@ fun UserMessage(
             Text(
                 styledBody,
                 style = MaterialTheme.typography.bodyLarge,
-                color = Palette.TextPrimary,
-                modifier = Modifier
-                    .softSurface(RoundedCornerShape(22.dp), Palette.SurfaceHigh, elevation = 2.dp)
-                    .clip(RoundedCornerShape(22.dp))
+                color = bubbleText,
+                modifier = bubbleModifier
+                    .clip(bubbleShape)
                     .then(
                         // A plain tap only: drags still scroll the list and long-press stays free.
                         if (onTap == null) Modifier

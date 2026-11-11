@@ -55,7 +55,7 @@ class LocalBrainReuseTest {
         private val file: File = File.createTempFile("brain", ".litertlm").apply { writeText("model"); deleteOnExit() }
         private val cacheDir: File = File.createTempFile("braincache", "").let { f -> f.delete(); File(f, "c").apply { mkdirs() }; f }
         val engine: LocalEngine = LocalEngine(
-            runtime, { file }, cacheDir, { "gpu" }, { context }, { false }, CoroutineScope(Dispatchers.Default),
+            runtime, { file }, cacheDir, { "gpu" }, { context }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default),
         )
 
         fun brain(think: () -> Boolean = { false }) = LocalBrain(engine, model.id, { model }, think)

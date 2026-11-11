@@ -78,6 +78,22 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val subagentModels: List<String> = emptyList(),
         /** Selected app theme, a [com.sebialex.agent.ui.theme.Themes] id. */
         val theme: String = DEFAULT_THEME,
+        /** Hugging Face models added from search, as on-device download entries. */
+        val hfModels: List<com.sebialex.agent.data.local.HfModel> = emptyList(),
+        /** Whether a Hugging Face token is stored (never shown). */
+        val hasHfToken: Boolean = false,
+        /** Local sampler overrides; null while the runtime's own defaults apply. */
+        val localSampler: com.sebialex.agent.data.local.SamplerSpec? = null,
+        /** Activation data type for the local engine: "", float32, float16, int16 or int8. */
+        val localActivation: String = "",
+        /** Word suggestions while typing, from the small on-device model. Default off. */
+        val autocompleteOn: Boolean = false,
+        /** A custom chat background image is set (file in the app's own storage). */
+        val customBackground: Boolean = false,
+        /** Dark scrim over the custom background, 0..70 percent. */
+        val backgroundDim: Int = 25,
+        /** User chat bubble style, a [com.sebialex.agent.ui.theme.BubbleStyles] id; empty = default. */
+        val bubbleStyle: String = "",
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -131,6 +147,56 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     /** The selected theme ([com.sebialex.agent.ui.theme.Themes] id); unknown ids fall back to the default. */
     fun themeId(): String = prefs.getString(KEY_THEME, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_THEME
     fun setTheme(value: String) = edit { putString(KEY_THEME, value) }
+
+    /** Hugging Face token for searching and downloading models from gated repos. */
+    fun hfToken(): String = prefs.getString(KEY_HF_TOKEN, null)?.trim().orEmpty()
+    fun setHfToken(value: String?) = edit { putOrRemove(KEY_HF_TOKEN, value) }
+
+    /** On-device models added from Hugging Face search, oldest first. */
+    fun hfModels(): List<com.sebialex.agent.data.local.HfModel> =
+        prefs.getString(KEY_HF_MODELS, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<List<com.sebialex.agent.data.local.HfModel>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    /** Adds or replaces (same id) a Hugging Face model entry. */
+    @Synchronized
+    fun addHfModel(model: com.sebialex.agent.data.local.HfModel) {
+        val list = hfModels().filterNot { it.id == model.id } + model
+        edit { putString(KEY_HF_MODELS, keyJson.encodeToString(list)) }
+    }
+
+    @Synchronized
+    fun removeHfModel(id: String) = edit {
+        val list = hfModels().filterNot { it.id == id }
+        if (list.isEmpty()) remove(KEY_HF_MODELS) else putString(KEY_HF_MODELS, keyJson.encodeToString(list))
+    }
+
+    /** Local sampler overrides; null keeps the runtime's own defaults. */
+    fun localSampler(): com.sebialex.agent.data.local.SamplerSpec? =
+        prefs.getString(KEY_LOCAL_SAMPLER, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<com.sebialex.agent.data.local.SamplerSpec>(raw) }.getOrNull()
+        }
+
+    fun setLocalSampler(value: com.sebialex.agent.data.local.SamplerSpec?) = edit {
+        if (value == null) remove(KEY_LOCAL_SAMPLER) else putString(KEY_LOCAL_SAMPLER, keyJson.encodeToString(value))
+    }
+
+    /** Activation data type of the local engine; empty keeps the runtime's own default. */
+    fun localActivation(): String = prefs.getString(KEY_LOCAL_ACTIVATION, null).orEmpty()
+    fun setLocalActivation(value: String) = edit { putOrRemove(KEY_LOCAL_ACTIVATION, value.takeIf { it.isNotBlank() }) }
+
+    fun autocompleteOn(): Boolean = prefs.getBoolean(KEY_AUTOCOMPLETE, false)
+    fun setAutocompleteOn(value: Boolean) = edit { putBoolean(KEY_AUTOCOMPLETE, value) }
+
+    /** A custom chat background image was copied into the app's own storage. */
+    fun customBackground(): Boolean = prefs.getBoolean(KEY_CUSTOM_BACKGROUND, false)
+    fun setCustomBackground(value: Boolean) = edit { putBoolean(KEY_CUSTOM_BACKGROUND, value) }
+    fun backgroundDim(): Int = prefs.getInt(KEY_BACKGROUND_DIM, 25).coerceIn(0, 70)
+    fun setBackgroundDim(value: Int) = edit { putInt(KEY_BACKGROUND_DIM, value.coerceIn(0, 70)) }
+
+    /** User chat bubble style id; empty keeps the default surface. */
+    fun bubbleStyle(): String = prefs.getString(KEY_BUBBLE, null).orEmpty()
+    fun setBubbleStyle(value: String) = edit { putOrRemove(KEY_BUBBLE, value.takeIf { it.isNotBlank() }) }
 
     /** The "keep runs alive in the background" offer was shown once (answered either way): never again by itself. */
     fun batteryOfferShown(): Boolean = prefs.getBoolean(KEY_BATTERY_OFFER_SHOWN, false)
@@ -514,6 +580,14 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         memoryForNewChats = memoryForNewChats(),
         autoTitles = autoTitles(),
         theme = themeId(),
+        hfModels = hfModels(),
+        hasHfToken = hfToken().isNotEmpty(),
+        localSampler = localSampler(),
+        localActivation = localActivation(),
+        autocompleteOn = autocompleteOn(),
+        customBackground = customBackground(),
+        backgroundDim = backgroundDim(),
+        bubbleStyle = bubbleStyle(),
         keys = keyViews(),
         customProviders = customProviders(),
         mediaImage = storedMediaImageModel(),
@@ -558,6 +632,14 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_AUTO_TITLES = "auto_titles"
         private const val KEY_THEME = "app_theme"
         const val DEFAULT_THEME = "midnight"
+        private const val KEY_HF_TOKEN = "hf_token"
+        private const val KEY_HF_MODELS = "hf_models_v1"
+        private const val KEY_LOCAL_SAMPLER = "local_sampler_v1"
+        private const val KEY_LOCAL_ACTIVATION = "local_activation"
+        private const val KEY_AUTOCOMPLETE = "autocomplete_on"
+        private const val KEY_CUSTOM_BACKGROUND = "custom_background"
+        private const val KEY_BACKGROUND_DIM = "custom_background_dim"
+        private const val KEY_BUBBLE = "bubble_style"
         private const val KEY_BATTERY_OFFER_SHOWN = "battery_offer_shown"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         /** generate_image model: provider id and model id (plain settings, so they are backed up). */

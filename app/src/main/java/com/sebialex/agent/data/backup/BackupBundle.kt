@@ -82,7 +82,7 @@ object BackupBundle {
     // ---- Which preference names are secrets ----------------------------------------------------
 
     private val SECRET_PREFIXES = listOf("api_keys_v2::", "api_key_active::", "backup_passphrase")
-    private val SECRET_NAMES = setOf("tinyfish_api_key", "openrouter_api_key", "ollama_api_key")
+    private val SECRET_NAMES = setOf("tinyfish_api_key", "openrouter_api_key", "ollama_api_key", "hf_token")
 
     /** True for preferences that hold API keys or the backup passphrase: kept out of the plain part. */
     fun isSecretPref(name: String) = name in SECRET_NAMES || SECRET_PREFIXES.any { name.startsWith(it) }

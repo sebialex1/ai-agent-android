@@ -78,11 +78,23 @@ class AppContainer(app: Application) {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** On-device model files (downloads, imports) and the engine that runs them on the GPU. */
-    val modelStore = ModelStore(app, appScope)
+    val modelStore = ModelStore(
+        app,
+        appScope,
+        extraModels = { settings.hfModels().map { it.toLocalModel() } },
+        hfToken = settings::hfToken,
+    )
 
     /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
     val localEngine = LocalEngine(modelStore, settings, appScope)
+
+    /** Typing suggestions from the tiny on-device model; active only when the user turns it on. */
+    val autocomplete = com.sebialex.agent.data.local.Autocomplete(
+        runtime = com.sebialex.agent.data.local.LiteRtLmRuntime,
+        file = { LocalModels.resolve(com.sebialex.agent.data.local.Autocomplete.MODEL_ID)?.let { modelStore.fileFor(it) } },
+        cacheDir = modelStore.cacheDir,
+    )
 
     /**
      * Settings > Updates: check, download and installer handoff, held here (not in a screen) so a
@@ -151,7 +163,7 @@ class AppContainer(app: Application) {
                     label = "on-device model",
                     brain = LocalBrain(localEngine, modelStore, model, thinking = {
                         ReasoningRules.resolve(localReasoning(model), settings.reasoning(model)).on
-                    }),
+                    }, sampler = settings::localSampler),
                 )
                 OllamaCloud.isOllama(model) -> BrainRoute(
                     label = "Ollama Cloud request",

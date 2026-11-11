@@ -49,7 +49,7 @@ class LocalEngineLoadTest {
     ): LocalEngine {
         // One stable file per engine, so the capabilities cache can be exercised.
         val f = file()
-        return LocalEngine(runtime, files ?: { f }, cacheDir, backend, { context }, { false }, CoroutineScope(Dispatchers.Default))
+        return LocalEngine(runtime, files ?: { f }, cacheDir, backend, { context }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default))
     }
 
     // ------------------------------------------------------------------ GPU out of memory

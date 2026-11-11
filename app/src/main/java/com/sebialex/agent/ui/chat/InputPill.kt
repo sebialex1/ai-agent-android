@@ -61,6 +61,9 @@ fun InputPill(
      * surface, same shadow, one shape around both, a hairline between them. Null: the plain pill.
      */
     top: (@Composable () -> Unit)? = null,
+    /** A ghost continuation of what is being typed; tapping it adds it to the input. */
+    suggestion: String? = null,
+    onAcceptSuggestion: () -> Unit = {},
 ) {
     // The input is never blocked: while an answer runs, a typed message is queued (one button:
     // the arrow queues it when there is something to send, otherwise it is the stop button).
@@ -106,21 +109,35 @@ fun InputPill(
                     .padding(horizontal = 4.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Palette.TextPrimary),
-                    cursorBrush = SolidColor(Palette.TextPrimary),
-                    maxLines = 6,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                    decorationBox = { inner ->
-                        if (value.text.isEmpty()) {
-                            Text(if (answering) "Type your answer" else if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
-                        }
-                        inner()
-                    },
-                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = Palette.TextPrimary),
+                        cursorBrush = SolidColor(Palette.TextPrimary),
+                        maxLines = 6,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                        modifier = Modifier.weight(1f, fill = suggestion == null).padding(vertical = 10.dp),
+                        decorationBox = { inner ->
+                            if (value.text.isEmpty()) {
+                                Text(if (answering) "Type your answer" else if (running) "Queue a message" else placeholder, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary)
+                            }
+                            inner()
+                        },
+                    )
+                    suggestion?.let { s ->
+                        Text(
+                            " $s",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Palette.TextPrimary.copy(alpha = 0.35f),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(vertical = 10.dp)
+                                .clickable(onClick = onAcceptSuggestion),
+                        )
+                    }
+                }
             }
             QuietIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
             Box(

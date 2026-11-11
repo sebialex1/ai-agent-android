@@ -199,6 +199,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         io.trySend { container.sessions.delete(id) }
     }
 
+    /** Deletes several conversations at once (the list's selection mode). */
+    fun deleteConversations(ids: Collection<String>) = ids.forEach { deleteConversation(it) }
+
     /** Pins or unpins a conversation. Pinned ones are listed first. */
     fun setPinned(id: String, pinned: Boolean) = updateSession(id) { it.copy(pinned = pinned) }
 

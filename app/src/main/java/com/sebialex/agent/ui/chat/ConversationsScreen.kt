@@ -13,6 +13,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -65,6 +68,7 @@ import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.chatBackground
 import com.sebialex.agent.ui.theme.softSurface
 
 /**
@@ -82,10 +86,18 @@ fun ConversationsScreen(
     settings: com.sebialex.agent.data.secure.SecureSettings,
 ) {
     val state by vm.conversations.collectAsStateWithLifecycle()
+    val snap by settings.state.collectAsStateWithLifecycle()
     var options by remember { mutableStateOf<SessionSummary?>(null) }
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     var input by remember { mutableStateOf(TextFieldValue("")) }
+    // Selection mode: long-press a conversation, drag over more, tap to toggle, trash to delete.
+    var selecting by remember { mutableStateOf(false) }
+    val selected = remember { androidx.compose.runtime.snapshots.SnapshotStateList<String>() }
+    fun exitSelection() {
+        selecting = false
+        selected.clear()
+    }
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let {
             val next = (input.text + " " + it).trim()
@@ -100,19 +112,39 @@ fun ConversationsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundBrush())
+            .chatBackground(snap.customBackground, snap.backgroundDim)
             .systemBarsPadding()
             .imePadding(),
     ) {
-        Row(
-            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircleButton(R.drawable.ic_settings, "Settings", onSettings)
-            Spacer(Modifier.width(10.dp))
-            SearchPill(query, { query = it }, Modifier.weight(1f))
-            Spacer(Modifier.width(10.dp))
-            CircleButton(R.drawable.ic_new_chat, "New conversation", onNew)
+        if (selecting) {
+            Row(
+                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircleButton(R.drawable.ic_close, "Cancel selection") { exitSelection() }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (selected.size == 1) "1 selected" else "${selected.size} selected",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Palette.TextPrimary,
+                    )
+                }
+                CircleButton(R.drawable.ic_trash, "Delete selected") {
+                    vm.deleteConversations(selected.toList())
+                    exitSelection()
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircleButton(R.drawable.ic_settings, "Settings", onSettings)
+                Spacer(Modifier.width(10.dp))
+                SearchPill(query, { query = it }, Modifier.weight(1f))
+                Spacer(Modifier.width(10.dp))
+                CircleButton(R.drawable.ic_new_chat, "New conversation", onNew)
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -140,7 +172,21 @@ fun ConversationsScreen(
                                 item = item,
                                 running = item.id in state.runningIds,
                                 current = item.id == state.currentId,
-                                onClick = { onOpen(item.id) },
+                                selected = selecting && item.id in selected,
+                                selecting = selecting,
+                                listState = listState,
+                                onClick = {
+                                    if (selecting) {
+                                        if (item.id in selected) selected.remove(item.id) else selected.add(item.id)
+                                    } else onOpen(item.id)
+                                },
+                                onLongPress = {
+                                    if (!selecting) {
+                                        selecting = true
+                                        selected.add(item.id)
+                                    }
+                                },
+                                onSelectMore = { id -> if (id.isNotBlank() && id !in selected) selected.add(id) },
                                 onOptions = { options = item },
                             )
                         }
@@ -225,6 +271,15 @@ private fun CircleButton(res: Int, description: String, onClick: () -> Unit) {
     QuietIconButton(res, description, onClick = onClick, size = 44.dp, iconSize = 21.dp, tint = Palette.IconActive)
 }
 
+/** The item id a list key belongs to; empty for headers. */
+private fun idOfKey(key: Any): String = (key as? String)?.let { k ->
+    when {
+        k.startsWith("c:") -> k.removePrefix("c:")
+        k.startsWith("p:") -> k.removePrefix("p:")
+        else -> ""
+    }
+}.orEmpty()
+
 @Composable
 private fun SearchPill(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     Row(
@@ -255,22 +310,49 @@ private fun SearchPill(value: String, onChange: (String) -> Unit, modifier: Modi
 /**
  * One conversation: the title on top, a quiet line below with when it was updated and how many
  * messages it holds. Only pinned chats carry an icon; the open chat gets a soft background.
+ * Long-press enters selection mode; dragging from a long-press selects every row it passes.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     item: SessionSummary,
     running: Boolean,
     current: Boolean,
+    selected: Boolean,
+    selecting: Boolean,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     onClick: () -> Unit,
+    onLongPress: () -> Unit,
+    onSelectMore: (String) -> Unit,
     onOptions: () -> Unit,
 ) {
+    val key = (if (item.pinned) "p:" else "c:") + item.id
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(if (current) Palette.Surface else Color.Transparent)
-            .clickable(onClick = onClick)
+            .background(when {
+                selected -> Palette.SurfaceHigh
+                current -> Palette.Surface
+                else -> Color.Transparent
+            })
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .then(
+                if (!selecting) Modifier
+                else Modifier.pointerInput(item.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { onSelectMore(item.id) },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return@detectDragGesturesAfterLongPress
+                            val absY = info.offset + change.position.y
+                            val target = listState.layoutInfo.visibleItemsInfo.firstOrNull { absY >= it.offset && absY < it.offset + it.size } ?: return@detectDragGesturesAfterLongPress
+                            onSelectMore(idOfKey(target.key))
+                        },
+                    )
+                },
+            )
             .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -298,7 +380,16 @@ private fun ConversationRow(
                 )
             }
         }
-        QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
+        if (selecting) {
+            AppIcon(
+                if (selected) R.drawable.ic_checkbox_checked else R.drawable.ic_checkbox,
+                if (selected) "Selected" else "Not selected",
+                tint = if (selected) Palette.IconActive else Palette.IconMuted,
+                size = 18.dp,
+            )
+        } else {
+            QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
+        }
     }
 }
 

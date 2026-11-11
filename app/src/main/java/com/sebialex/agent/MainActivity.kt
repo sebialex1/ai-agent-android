@@ -25,6 +25,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -61,6 +63,15 @@ class MainActivity : ComponentActivity() {
         val container = (application as AgentApplication).container
         setContent {
             val snap by container.settings.state.collectAsStateWithLifecycle()
+            // Light themes need dark system-bar icons; the style follows the theme's background.
+            val darkInk = remember(snap.theme) {
+                com.sebialex.agent.ui.theme.Themes.byId(snap.theme).ink.luminance() < 0.5f
+            }
+            androidx.compose.runtime.SideEffect {
+                val style = if (darkInk) SystemBarStyle.dark(Color.TRANSPARENT)
+                else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
             AgentTheme(themeId = snap.theme) {
                 AppRoot(container)
             }
@@ -140,6 +151,7 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     store = container.modelStore,
                     engine = container.localEngine,
+                    autocomplete = container.autocomplete,
                     onOpenOnDevice = { push(Screen.Settings(com.sebialex.agent.ui.settings.SettingsSection.ON_DEVICE)) },
                 )
                 is Screen.File -> FileViewerScreen(runtime.workspace, screen.path, screen.baseSnapshot, onBack = ::pop)

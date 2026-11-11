@@ -71,6 +71,8 @@ class LocalEngine(
     private val backend: () -> String,
     private val contextTokens: () -> Int,
     private val speculative: () -> Boolean,
+    private val sampler: () -> SamplerSpec?,
+    private val activation: () -> String,
     private val scope: CoroutineScope,
 ) {
     constructor(store: ModelStore, settings: SecureSettings, scope: CoroutineScope) : this(
@@ -80,6 +82,8 @@ class LocalEngine(
         backend = settings::localBackend,
         contextTokens = settings::localContext,
         speculative = settings::localSpeculative,
+        sampler = settings::localSampler,
+        activation = settings::localActivation,
         scope = scope,
     )
 
@@ -92,7 +96,14 @@ class LocalEngine(
     private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
-    private data class Key(val path: String, val backend: String, val context: Int, val speculative: Boolean)
+    private data class Key(
+        val path: String,
+        val backend: String,
+        val context: Int,
+        val speculative: Boolean,
+        val sampler: SamplerSpec?,
+        val activation: String,
+    )
 
     /** The engine's live conversation: what it was opened for and which engine generation owns it. */
     private class Slot(val conversation: LmConversation, val key: String, val state: Any?, val generation: Long)
@@ -248,6 +259,8 @@ class LocalEngine(
             backend = if (wantGpu) SecureSettings.BACKEND_GPU else SecureSettings.BACKEND_CPU,
             context = minOf(contextTokens(), model.maxContext),
             speculative = speculative(),
+            sampler = sampler(),
+            activation = activation(),
         )
         val current = loaded
         if (engine != null && key == requested && current != null && current.modelId == model.id) return current
@@ -276,14 +289,14 @@ class LocalEngine(
         val speculative = requested.speculative && info?.speculativeDecoding == true
         var fallback: String? = null
         val (created, backendName) = when {
-            !wantGpu -> openCpu(requested.path, context) to "CPU"
+            !wantGpu -> openCpu(requested.path, context, requested) to "CPU"
             gpuBroken -> {
                 fallback = "the GPU stays off for this app run: it failed to start before"
-                openCpu(requested.path, context) to "CPU"
+                openCpu(requested.path, context, requested) to "CPU"
             }
             else -> {
                 try {
-                    runtime.openEngine(requested.path, gpu = true, context, speculative, cacheDir.absolutePath) to "GPU"
+                    runtime.openEngine(requested.path, gpu = true, context, speculative, cacheDir.absolutePath, requested.sampler, requested.activation) to "GPU"
                 } catch (t: Throwable) {
                     when (classifyGpuFailure(t)) {
                         GpuFailure.MEMORY ->
@@ -294,13 +307,13 @@ class LocalEngine(
                             // The GPU environment is clearly missing: fall back and stop trying.
                             gpuBroken = true
                             fallback = describe(t)
-                            openCpu(requested.path, context) to "CPU"
+                            openCpu(requested.path, context, requested) to "CPU"
                         }
                         GpuFailure.TRANSIENT -> {
                             // Unsupported operation, kernel compilation, anything unclear: fall
                             // back for this load only; the next load tries the GPU again.
                             fallback = describe(t)
-                            openCpu(requested.path, context) to "CPU"
+                            openCpu(requested.path, context, requested) to "CPU"
                         }
                     }
                 }
@@ -325,7 +338,8 @@ class LocalEngine(
         return result
     }
 
-    private fun openCpu(path: String, context: Int): LmEngine = runtime.openEngine(path, gpu = false, context, speculative = false, cacheDir.absolutePath)
+    private fun openCpu(path: String, context: Int, key: Key): LmEngine =
+        runtime.openEngine(path, gpu = false, context, speculative = false, cacheDir.absolutePath, key.sampler, key.activation)
 
     /**
      * Closes the live conversation (first) and the engine (second). Both always run, even when

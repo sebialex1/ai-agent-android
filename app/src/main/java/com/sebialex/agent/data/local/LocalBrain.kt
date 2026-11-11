@@ -6,6 +6,7 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.OpenApiTool
+import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.ToolProvider
 import com.google.ai.edge.litertlm.tool
 import com.sebialex.agent.data.llm.OpenRouterBrain
@@ -58,10 +59,12 @@ class LocalBrain(
     private val resolve: () -> LocalModel?,
     /** Whether the user turned thinking on for this model (Settings or the + sheet). */
     private val thinking: () -> Boolean,
+    /** The user's sampling overrides; null keeps the runtime's own defaults. */
+    private val sampler: () -> SamplerSpec? = { null },
 ) : AgentBrain {
 
-    constructor(engine: LocalEngine, store: ModelStore, modelId: String, thinking: () -> Boolean) :
-        this(engine, modelId, { store.model(modelId) }, thinking)
+    constructor(engine: LocalEngine, store: ModelStore, modelId: String, thinking: () -> Boolean, sampler: () -> SamplerSpec? = { null }) :
+        this(engine, modelId, { store.model(modelId) }, thinking, sampler)
 
     override suspend fun next(ctx: BrainContext, onReasoning: (String) -> Unit): BrainDecision {
         val model = resolve() ?: throw IOException("Unknown on-device model \"$modelId\".")
@@ -122,6 +125,7 @@ class LocalBrain(
                 tools = if (loaded.toolCalling) toolProviders(ctx.memoryTool) else emptyList(),
                 // The app executes tools itself, after the permission policy.
                 automaticToolCalling = false,
+                samplerConfig = sampler()?.let { SamplerConfig(it.topK, it.temperature.toDouble(), it.topP.toDouble(), it.seed) },
             )
             conversation = session.open(
                 key,

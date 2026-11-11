@@ -137,7 +137,7 @@ class EndTurnTest {
         val model = LocalModel("local/test", "Test Model", "", "m.litertlm", maxContext = 8192)
         val file = File.createTempFile("endturn", ".litertlm").apply { writeText("model"); deleteOnExit() }
         val cacheDir = File.createTempFile("endturn", "").let { f -> f.delete(); File(f, "c").apply { mkdirs() }; f }
-        val engine = LocalEngine(runtime, { file }, cacheDir, { "gpu" }, { 4096 }, { false }, CoroutineScope(Dispatchers.Default))
+        val engine = LocalEngine(runtime, { file }, cacheDir, { "gpu" }, { 4096 }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default))
         val local = LocalBrain(engine, model.id, { model }, { false })
         var selected = "local/test"
         val cloud = RecordingBrain()
@@ -171,7 +171,7 @@ class EndTurnTest {
         val model = LocalModel("local/test", "Test Model", "", "m.litertlm", maxContext = 8192)
         val file = File.createTempFile("endturn", ".litertlm").apply { writeText("model"); deleteOnExit() }
         val cacheDir = File.createTempFile("endturn", "").let { f -> f.delete(); File(f, "c").apply { mkdirs() }; f }
-        val engine = LocalEngine(runtime, { file }, cacheDir, { "gpu" }, { 4096 }, { false }, CoroutineScope(Dispatchers.Default))
+        val engine = LocalEngine(runtime, { file }, cacheDir, { "gpu" }, { 4096 }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default))
         val local = LocalBrain(engine, model.id, { model }, { false })
         var selected = "local/test"
         val cloud = RecordingBrain()

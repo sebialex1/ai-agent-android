@@ -43,6 +43,7 @@ import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.SourceRef
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.chatBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,9 +59,11 @@ fun ChatScreen(
     ollama: com.sebialex.agent.data.llm.OllamaCloud,
     store: com.sebialex.agent.data.local.ModelStore,
     engine: com.sebialex.agent.data.local.LocalEngine,
+    autocomplete: com.sebialex.agent.data.local.Autocomplete,
     onOpenOnDevice: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val snap by settings.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // The draft belongs to its conversation: restored from the view model when the chat screen
@@ -107,6 +110,18 @@ fun ChatScreen(
 
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { insert(it) }
+    }
+    // Ghost word suggestions while typing: the tiny on-device model continues the text.
+    var suggestion by remember { mutableStateOf<String?>(null) }
+    val suggestionsOn = snap.autocompleteOn && !state.running && editingId == null
+    androidx.compose.runtime.LaunchedEffect(input, suggestionsOn) {
+        val text = input.text
+        val atEnd = input.selection.end == text.length
+        suggestion = null
+        if (!suggestionsOn || !atEnd || text.length < 3 || text.length > 400) return@LaunchedEffect
+        if (!text.last().isLetterOrDigit() && !text.last().isWhitespace()) return@LaunchedEffect
+        kotlinx.coroutines.delay(600)
+        suggestion = autocomplete.suggest(text)
     }
     /** Copies a picked document, photo or video into the workspace and adds it to the message. */
     fun importUri(uri: Uri, fallbackName: String) {
@@ -159,7 +174,7 @@ fun ChatScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundBrush())
+            .chatBackground(snap.customBackground, snap.backgroundDim)
             .systemBarsPadding()
             .imePadding()
             // A tap anywhere else folds an open action row. Only watched, never consumed, so
@@ -217,6 +232,7 @@ fun ChatScreen(
                     UserMessage(
                         turn,
                         resolveFile = vm::workspaceFile,
+                        bubbleStyleId = snap.bubbleStyle,
                         onOpenFile = { onOpenFile(it, null) },
                         onTap = { actionsFor = if (actionsFor == turn.id) null else turn.id },
                         actionsOpen = actionsFor == turn.id,
@@ -315,7 +331,17 @@ fun ChatScreen(
                     vm.send(input.text)
                 }
                 updateInput(TextFieldValue(""))
+                suggestion = null
                 scope.launch { listState.animateScrollToItem(0) }
+            },
+            suggestion = suggestion,
+            onAcceptSuggestion = {
+                suggestion?.let { s ->
+                    val sep = if (input.text.endsWith(" ")) "" else " "
+                    val next = input.text + sep + s
+                    updateInput(TextFieldValue(next, TextRange(next.length)))
+                }
+                suggestion = null
             },
             onStop = vm::stop,
             onAttach = { attachMenu = true },
