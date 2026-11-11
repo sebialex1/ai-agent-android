@@ -41,7 +41,7 @@ internal fun BackgroundSetting() {
         exempt = BatteryExemption.isIgnoring(context)
         onPauseOrDispose { }
     }
-    SettingsGroup("Background", help = BACKGROUND_HELP) {
+    SettingsGroup("Background") {
         NavRow(
             title = "Unrestricted battery use",
             value = if (exempt) "On: runs keep going with the screen off" else "Off: Android may pause a run in the background",

@@ -111,7 +111,7 @@ fun SandboxSetting(termux: TermuxBridge) {
     // The setup step passed when Termux answered, every tool was found and the shared folder is writable.
     val checkOk: Boolean? = check?.takeIf { it.ran }?.ok
 
-    SettingsGroup("Termux sandbox", help = "Commands the agent runs (apt, pkg, pip, python) go through Termux. Each step shows a check when it is done.") {
+    SettingsGroup("Termux sandbox") {
         // One list, one rhythm: status mark, label, and a plain text action only when something is missing.
         StatusRow(
             label = "Termux installed",

@@ -35,11 +35,7 @@ internal fun SubagentGroup(
     engine: LocalEngine,
 ) {
     var picking by remember { mutableStateOf(false) }
-    SettingsGroup(
-        "Subagents",
-        help = "The agent can hand bounded pieces of work to subagents that run in parallel and report back. Each shows as a small " +
-            "card under the answer. Pick the models they may use; with none picked they use the chat model. On-device models are not offered.",
-    ) {
+    SettingsGroup("Subagents") {
         SwitchRow(title = "Allow subagents", subtitle = null, checked = snap.subagentsOn, onChange = settings::setSubagentsOn)
         if (snap.subagentsOn) NavRow(
             title = "Subagent models",
@@ -48,7 +44,7 @@ internal fun SubagentGroup(
             onClick = { picking = true },
         )
     }
-    if (picking) AppSheet(onDismiss = { picking = false }, title = "Subagent models", subtitle = "Tap to add or remove. The first one is the default.") {
+    if (picking) AppSheet(onDismiss = { picking = false }, title = "Subagent models") {
         ModelList(
             settings, models, ollama, store, engine,
             onPicked = {},

@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.ui.chat.ChatScreen
 import com.sebialex.agent.ui.chat.ChatViewModel
 import com.sebialex.agent.ui.chat.ConversationsScreen
@@ -59,7 +60,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as AgentApplication).container
         setContent {
-            AgentTheme {
+            val snap by container.settings.state.collectAsStateWithLifecycle()
+            AgentTheme(themeId = snap.theme) {
                 AppRoot(container)
             }
         }
@@ -112,7 +114,7 @@ fun AppRoot(container: AppContainer) {
     // it is disabled, so the system default (finish the activity) applies only there.
     BackHandler(enabled = stack.size > 1) { pop() }
 
-    Box(Modifier.fillMaxSize().background(Palette.Ink)) {
+    Box(Modifier.fillMaxSize().background(Palette.backgroundBrush())) {
         com.sebialex.agent.ui.settings.RestoreOffer(container.backup, onRestored = vm::reloadConversations)
         com.sebialex.agent.ui.settings.BatteryOffer(container.runKeeper, container.settings)
         AnimatedContent(

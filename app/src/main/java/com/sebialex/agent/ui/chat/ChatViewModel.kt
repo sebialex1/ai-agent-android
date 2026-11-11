@@ -365,7 +365,13 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val run = Run(assistant.id)
         run.job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
-                container.newOrchestrator(sessionId).run(modelTask, history, gate, chatTools, run.subagents).collect { event ->
+                // A message sent while this turn runs takes over right after the step that is
+                // executing when it arrives: the orchestrator ends the turn at that boundary and
+                // the queue below starts the new prompt immediately.
+                container.newOrchestrator(sessionId).run(
+                    modelTask, history, gate, chatTools, run.subagents,
+                    newTaskWaiting = { queues[sessionId]?.isNotEmpty() == true },
+                ).collect { event ->
                     // After Stop nothing more of this run reaches the chat, even an event already in flight.
                     if (runs[sessionId] === run) handle(sessionId, assistant.id, event)
                 }

@@ -44,6 +44,12 @@ object CustomProviders {
 
     fun chatEndpoint(baseUrl: String) = baseUrl.trimEnd('/') + "/chat/completions"
 
+    /** Wire API of a custom provider: OpenAI's Responses API (tried first) or chat completions. */
+    const val API_RESPONSES = "responses"
+    const val API_CHAT = "chat"
+
+    fun responsesEndpoint(baseUrl: String) = baseUrl.trimEnd('/') + "/responses"
+
     /** A well-known provider: its name, API root and where keys are made. */
     data class Preset(val id: String, val name: String, val baseUrl: String, val keysUrl: String? = null, val local: Boolean = false)
 
@@ -102,7 +108,7 @@ object CustomProviders {
         var u = raw.trim().trimEnd('/')
         if (u.isEmpty()) return u
         if (!u.contains("://")) u = (if (isLocalAddress("http://$u")) "http://" else "https://") + u
-        for (suffix in listOf("/chat/completions", "/completions", "/models")) {
+        for (suffix in listOf("/chat/completions", "/completions", "/responses", "/models")) {
             if (u.endsWith(suffix, ignoreCase = true)) u = u.dropLast(suffix.length)
         }
         return u.trimEnd('/')

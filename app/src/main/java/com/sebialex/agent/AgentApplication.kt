@@ -18,6 +18,7 @@ import com.sebialex.agent.data.persistence.SessionStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.data.shell.SandboxShell
 import com.sebialex.agent.data.shell.TermuxBridge
+import kotlinx.serialization.json.JsonObject
 import com.sebialex.agent.data.shell.WorkspaceMirror
 import com.sebialex.agent.data.web.RoutingWebGateway
 import com.sebialex.agent.data.workspace.Workspace
@@ -172,24 +173,40 @@ class AppContainer(app: Application) {
 
     /**
      * A model of a user-added OpenAI-compatible provider: the shared OpenAI-style brain pointed at
-     * the provider's /chat/completions (no OpenRouter-only fields), with its own key ring. Local
-     * servers that need no key (LM Studio, Ollama, llama.cpp) run without one.
+     * the provider's API (no OpenRouter-only fields), with its own key ring. Local servers that
+     * need no key (LM Studio, Ollama, llama.cpp) run without one. Providers saved with the
+     * Responses API are tried on `<root>/responses` first and fall back to chat completions when
+     * the endpoint does not exist; chat-completions providers go straight there.
      */
     private fun customRoute(model: String): BrainRoute {
         val (providerId, wireModel) = CustomProviders.parse(model)
             ?: return BrainRoute("custom provider request", null, notice = "This model id is not valid. Pick a model again in the + sheet.")
         val provider = settings.customProvider(providerId)
             ?: return BrainRoute("custom provider request", null, notice = "That provider was removed in Settings. Pick another model in the + sheet. Nothing was executed.")
-        fun brain(key: String) = OpenRouterBrain(
-            apiKey = key,
-            model = wireModel,
-            endpoint = CustomProviders.chatEndpoint(provider.baseUrl),
-            provider = provider.name,
-            openRouterExtras = false,
-            replayReasoning = false,
+        val reasoning: suspend () -> JsonObject = {
             // Per-provider reasoning fields (reasoning_effort, Anthropic thinking); empty when unknown/unsupported.
-            reasoningFields = { ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model)) },
-        )
+            ReasoningRules.requestFields(models.reasoning(model), settings.reasoning(model))
+        }
+        fun brain(key: String): com.sebialex.agent.domain.agent.AgentBrain {
+            val chat = OpenRouterBrain(
+                apiKey = key,
+                model = wireModel,
+                endpoint = CustomProviders.chatEndpoint(provider.baseUrl),
+                provider = provider.name,
+                openRouterExtras = false,
+                replayReasoning = false,
+                reasoningFields = reasoning,
+            )
+            if (provider.api == CustomProviders.API_CHAT) return chat
+            return com.sebialex.agent.data.llm.ResponsesBrain(
+                apiKey = key,
+                model = wireModel,
+                endpoint = CustomProviders.responsesEndpoint(provider.baseUrl),
+                provider = provider.name,
+                reasoningFields = reasoning,
+                fallback = chat,
+            )
+        }
         val ring = CustomProviders.keyRing(providerId)
         if (settings.keyCount(ring) == 0) {
             val local = CustomProviders.isLocalAddress(provider.baseUrl)

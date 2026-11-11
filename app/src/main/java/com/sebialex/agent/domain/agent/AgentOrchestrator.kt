@@ -88,6 +88,12 @@ class AgentOrchestrator(
         chat: ChatTools = ChatTools.None,
         control: SubagentControl = SubagentControl(),
         parent: ParentLink? = null,
+        /**
+         * True when the user sent a follow-up message while this turn runs. Checked after every
+         * executed batch of tool calls: the turn then ends at once (closed as interrupted) and
+         * the caller starts the next prompt, instead of the old task running on for many steps.
+         */
+        newTaskWaiting: () -> Boolean = { false },
     ): Flow<AgentEvent> = channelFlow {
         // One identity per run: two identical runs never share or close each other's
         // on-device conversation, and the brain that served this run can be found at its end.
@@ -340,6 +346,9 @@ class AgentOrchestrator(
                             observations += Observation(call, result, batch)
                         }
                         for ((call, report) in children) observations += Observation(call, report.await(), batch)
+                        // The user sent a follow-up while this batch ran: hand over to it now,
+                        // at this step boundary, instead of finishing the whole old task first.
+                        if (newTaskWaiting()) return@channelFlow
                     }
                 }
             }
