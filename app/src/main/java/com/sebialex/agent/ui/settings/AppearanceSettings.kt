@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -170,7 +166,7 @@ private fun BubbleGroup(settings: SecureSettings, snap: SecureSettings.Snapshot)
 @Composable
 private fun BubbleRow(style: BubbleStyle, selected: Boolean, onClick: () -> Unit) {
     val brush = remember(style.id) { BubbleStyles.brush(style) }
-    val text = remember(style.id) { BubbleStyles.textColor(style, Palette.TextPrimary) }
+    val text = remember(style.id) { BubbleStyles.textColor(style, Palette.TextPrimary, Palette.Surface) }
     val shape = RoundedCornerShape(20.dp)
     Row(
         Modifier
@@ -192,34 +188,7 @@ private fun BubbleRow(style: BubbleStyle, selected: Boolean, onClick: () -> Unit
                             .shadow(2.dp, shape)
                             .clip(shape)
                             .background(brush)
-                            .then(
-                                when (style.effect) {
-                                    "sheen" -> Modifier.drawWithContent {
-                                        drawContent()
-                                        drawRect(
-                                            Brush.linearGradient(
-                                                0f to Color.White.copy(alpha = 0.20f),
-                                                0.45f to Color.Transparent,
-                                                start = Offset.Zero,
-                                                end = Offset(size.width, size.height),
-                                            ),
-                                        )
-                                    }
-                                    "glow" -> Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), shape)
-                                    "glass" -> Modifier
-                                        .border(1.dp, Color.White.copy(alpha = 0.25f), shape)
-                                        .drawWithContent {
-                                            drawContent()
-                                            drawRect(
-                                                Brush.verticalGradient(
-                                                    0f to Color.White.copy(alpha = 0.12f),
-                                                    1f to Color.Transparent,
-                                                ),
-                                            )
-                                        }
-                                    else -> Modifier
-                                },
-                            )
+                            .then(BubbleStyles.effectModifier(style, shape))
                     },
                 ),
             contentAlignment = Alignment.Center,

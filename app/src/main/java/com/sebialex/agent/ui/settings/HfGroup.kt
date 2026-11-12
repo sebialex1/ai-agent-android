@@ -50,7 +50,7 @@ internal fun HfGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, st
     SettingsGroup("Hugging Face") {
         ExpandRow(
             title = if (snap.hasHfToken) "Token saved" else "Add token",
-            value = if (snap.hasHfToken) "\\u2022\\u2022\\u2022\\u2022" else "",
+            value = if (snap.hasHfToken) "\u2022\u2022\u2022\u2022" else "",
         ) {
             TokenField(settings)
         }
@@ -72,14 +72,13 @@ internal fun HfGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, st
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 modifier = Modifier.weight(1f).padding(vertical = 14.dp),
                 decorationBox = { inner ->
-                    if (query.isEmpty()) Text("Search models", style = MonoSmall, color = Palette.TextTertiary)
+                    if (query.isEmpty()) Text("Search Hugging Face", style = MonoSmall, color = Palette.TextTertiary)
                     inner()
                 },
             )
             PillButton(
-                if (searching) "\\u2026" else "Search",
+                if (searching) "\u2026" else if (query.isBlank()) "Top" else "Search",
                 onClick = {
-                    if (query.isBlank()) return@PillButton
                     searching = true
                     error = null
                     scope.launch {
@@ -146,16 +145,21 @@ private fun TokenField(settings: SecureSettings) {
 @Composable
 private fun HfRow(hit: HfHit, added: Boolean, onAdd: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(hit.file.removeSuffix(".litertlm"), style = MaterialTheme.typography.bodyLarge, color = Palette.TextPrimary)
+            Text(hit.file.removeSuffix(".litertlm"), style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary, maxLines = 1)
             Text(
-                listOfNotNull(hit.repo, if (hit.sizeBytes > 0) LocalModels.formatSize(hit.sizeBytes) else null, if (hit.gated) "Gated" else null)
-                    .joinToString(" \\u00b7 "),
+                listOfNotNull(
+                    hit.repo,
+                    if (hit.sizeBytes > 0) LocalModels.formatSize(hit.sizeBytes) else null,
+                    if (hit.downloads > 0) LocalModels.formatSize(hit.downloads) + " downloads" else null,
+                    if (hit.gated) "Gated" else null,
+                ).joinToString(" \u00b7 "),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
+                maxLines = 1,
             )
         }
         when {

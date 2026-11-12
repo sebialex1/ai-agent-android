@@ -79,7 +79,7 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SettingsGroup("This phone") {
             NavRow(
                 title = if (ramGb > 0) "$ramGb GB RAM" else "RAM unknown",
@@ -305,7 +305,7 @@ private fun ModelRow(
     onDelete: () -> Unit,
     onOpenPage: (String) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val page = model.pageUrl
             Row(
@@ -328,7 +328,6 @@ private fun ModelRow(
                 tint = Palette.IconMuted, size = 34.dp, iconSize = 16.dp,
             )
         }
-        Text(model.tagline, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
         val size = (status as? ModelStatus.Ready)?.bytes ?: model.sizeBytes
         val facts = buildList {
             if (size > 0) add(LocalModels.formatSize(size))
@@ -342,7 +341,7 @@ private fun ModelRow(
         // Non-blocking: the model can still be downloaded and used.
         if (model.minRamGb > 0 && ramGb in 1 until model.minRamGb) {
             Text(
-                "Recommended for ${model.minRamGb} GB or more; this phone has $ramGb GB, so it may load slowly or fail. You can still use it.",
+                "Needs ${model.minRamGb}+ GB RAM (this phone has $ramGb GB)",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.Warning,
             )

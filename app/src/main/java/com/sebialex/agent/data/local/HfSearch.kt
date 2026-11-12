@@ -40,49 +40,65 @@ data class HfModel(
     )
 }
 
-/** One search hit: a repo and the `.litertlm` file in it that this phone could run. */
-data class HfHit(val repo: String, val file: String, val sizeBytes: Long, val gated: Boolean) {
+/** One hit: a repo and the `.litertlm` file in it that this phone could run. */
+data class HfHit(val repo: String, val file: String, val sizeBytes: Long, val gated: Boolean, val downloads: Long = 0) {
     val model: HfModel get() = HfModel(repo, file, sizeBytes, System.currentTimeMillis())
 }
 
 /**
- * Searches Hugging Face for models this phone can run: repos that ship a `.litertlm` file (the
- * LiteRT-LM format). Uses the public Hub API; a token is only needed for gated repos.
+ * Finds models this phone can run on Hugging Face: repos that ship a `.litertlm` file (the
+ * LiteRT-LM format). An empty query lists the most downloaded ones; otherwise the query is
+ * ANDed with the LiteRT-LM filter, so a search only ever returns runnable repos. A token is
+ * only needed for gated repos.
  */
 object HfSearch {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Repos whose hits are fetched last (and shown first) so the list stays useful. */
-    private val resultsPerPage = 30
+    private const val resultsPerPage = 30
+    private const val maxPerRepo = 4
+    private const val maxHits = 24
 
     suspend fun search(query: String, token: String): List<HfHit> = withContext(Dispatchers.IO) {
-        val q = URLEncoder.encode(query.trim(), "UTF-8")
-        val body = get("https://huggingface.co/api/models?search=$q&limit=$resultsPerPage&full=true", token)
-            ?: throw IOException("Hugging Face did not answer.")
+        val url = if (query.isBlank()) {
+            "https://huggingface.co/api/models?filter=litertlm&sort=downloads&direction=-1&limit=$resultsPerPage&full=true"
+        } else {
+            val q = URLEncoder.encode(query.trim(), "UTF-8")
+            "https://huggingface.co/api/models?search=$q&filter=litertlm&limit=$resultsPerPage&full=true"
+        }
+        val body = get(url, token) ?: throw IOException("Hugging Face did not answer.")
         val repos = json.parseToJsonElement(body).jsonArray
             .map { it.jsonObject }
             .filter { repo -> repo["siblings"]?.jsonArray?.any { it.jsonObject["rfilename"]?.jsonPrimitive?.content?.endsWith(".litertlm") == true } == true }
-            .map { it["id"]?.jsonPrimitive?.content to (it["gated"]?.jsonPrimitive?.content ?: "false") }
+            .map { repo ->
+                Triple(
+                    repo["id"]?.jsonPrimitive?.content,
+                    repo["gated"]?.jsonPrimitive?.content ?: "false",
+                    repo["downloads"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                )
+            }
             .take(12)
         val hits = ArrayList<HfHit>()
-        for ((repo, gated) in repos) {
+        for ((repo, gated, downloads) in repos) {
             if (repo == null) continue
             val tree = runCatching { get("https://huggingface.co/api/models/$repo/tree/main", token) }.getOrNull() ?: continue
             runCatching {
                 json.parseToJsonElement(tree).jsonArray
                     .map { it.jsonObject }
                     .filter { it["path"]?.jsonPrimitive?.content?.endsWith(".litertlm") == true }
+                    .take(maxPerRepo)
                     .forEach { entry ->
                         hits += HfHit(
                             repo = repo,
                             file = entry["path"]!!.jsonPrimitive.content,
                             sizeBytes = entry["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
                             gated = gated != "false",
+                            downloads = downloads,
                         )
                     }
             }
+            if (hits.size >= maxHits) return@withContext hits.take(maxHits)
         }
-        hits.sortedBy { it.sizeBytes }
+        if (query.isBlank()) hits else hits.sortedBy { it.sizeBytes }
     }
 
     private fun get(url: String, token: String): String? {

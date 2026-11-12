@@ -114,7 +114,7 @@ fun UserMessage(
     }
     val bubble = com.sebialex.agent.ui.theme.BubbleStyles.byId(bubbleStyleId)
     val bubbleBrush = remember(bubble.id) { com.sebialex.agent.ui.theme.BubbleStyles.brush(bubble) }
-    val bubbleText = remember(bubble.id) { com.sebialex.agent.ui.theme.BubbleStyles.textColor(bubble, Palette.TextPrimary) }
+    val bubbleText = remember(bubble.id) { com.sebialex.agent.ui.theme.BubbleStyles.textColor(bubble, Palette.TextPrimary, Palette.Surface) }
     val bubbleShape = RoundedCornerShape(22.dp)
     val bubbleModifier = if (bubbleBrush == null) {
         Modifier.softSurface(bubbleShape, Palette.SurfaceHigh, elevation = 2.dp)
@@ -123,34 +123,7 @@ fun UserMessage(
             .shadow(2.dp, bubbleShape)
             .clip(bubbleShape)
             .background(bubbleBrush)
-            .then(
-                when (bubble.effect) {
-                    "sheen" -> Modifier.drawWithContent {
-                        drawContent()
-                        drawRect(
-                            Brush.linearGradient(
-                                0f to Color.White.copy(alpha = 0.20f),
-                                0.45f to Color.Transparent,
-                                start = androidx.compose.ui.geometry.Offset.Zero,
-                                end = androidx.compose.ui.geometry.Offset(size.width, size.height),
-                            ),
-                        )
-                    }
-                    "glow" -> Modifier.border(1.dp, Color.White.copy(alpha = 0.35f), bubbleShape)
-                    "glass" -> Modifier
-                        .border(1.dp, Color.White.copy(alpha = 0.25f), bubbleShape)
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                Brush.verticalGradient(
-                                    0f to Color.White.copy(alpha = 0.12f),
-                                    1f to Color.Transparent,
-                                ),
-                            )
-                        }
-                    else -> Modifier
-                },
-            )
+            .then(com.sebialex.agent.ui.theme.BubbleStyles.effectModifier(bubble, bubbleShape))
     }
     Column(
         Modifier.fillMaxWidth().padding(start = 56.dp),
