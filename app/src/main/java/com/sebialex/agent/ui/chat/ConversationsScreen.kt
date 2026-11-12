@@ -12,6 +12,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -333,7 +334,7 @@ private fun ConversationRow(
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(when {
-                selected -> Palette.SurfaceHigh
+                selected -> Palette.Accent.copy(alpha = 0.16f)
                 current -> Palette.Surface
                 else -> Color.Transparent
             })
@@ -381,12 +382,19 @@ private fun ConversationRow(
             }
         }
         if (selecting) {
-            AppIcon(
-                if (selected) R.drawable.ic_checkbox_checked else R.drawable.ic_checkbox,
-                if (selected) "Selected" else "Not selected",
-                tint = if (selected) Palette.IconActive else Palette.IconMuted,
-                size = 18.dp,
-            )
+            Box(
+                Modifier
+                    .padding(end = 12.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .then(
+                        if (selected) Modifier.background(Palette.Accent, CircleShape)
+                        else Modifier.border(1.5.dp, Palette.IconMuted.copy(alpha = 0.55f), CircleShape)
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) AppIcon(R.drawable.ic_check, "Selected", tint = Color.White, size = 13.dp)
+            }
         } else {
             QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
         }

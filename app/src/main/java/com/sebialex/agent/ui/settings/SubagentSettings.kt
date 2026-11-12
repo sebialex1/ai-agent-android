@@ -35,15 +35,13 @@ internal fun SubagentGroup(
     engine: LocalEngine,
 ) {
     var picking by remember { mutableStateOf(false) }
-    SettingsGroup("Subagents") {
-        SwitchRow(title = "Allow subagents", subtitle = null, checked = snap.subagentsOn, onChange = settings::setSubagentsOn)
-        if (snap.subagentsOn) NavRow(
-            title = "Subagent models",
-            value = subagentModelsLine(snap.subagentModels),
-            icon = R.drawable.ic_code,
-            onClick = { picking = true },
-        )
-    }
+    SwitchRow(title = "Allow subagents", subtitle = null, checked = snap.subagentsOn, onChange = settings::setSubagentsOn)
+    if (snap.subagentsOn) NavRow(
+        title = "Subagent models",
+        value = subagentModelsLine(snap.subagentModels),
+        icon = R.drawable.ic_code,
+        onClick = { picking = true },
+    )
     if (picking) AppSheet(onDismiss = { picking = false }, title = "Subagent models") {
         ModelList(
             settings, models, ollama, store, engine,

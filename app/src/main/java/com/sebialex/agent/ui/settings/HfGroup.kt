@@ -1,12 +1,20 @@
 package com.sebialex.agent.ui.settings
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,68 +47,99 @@ import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 import kotlinx.coroutines.launch
 
-/** Settings > On-device > Hugging Face: token, search, and adding any `.litertlm` model. */
+/**
+ * Settings > On-device, top of the page: the Hugging Face search bar (empty query lists the top
+ * downloaded models), the token behind a key button, and the results as one tight list.
+ */
 @Composable
-internal fun HfGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, store: ModelStore, onMessage: (String?) -> Unit) {
+internal fun HfSection(settings: SecureSettings, snap: SecureSettings.Snapshot, store: ModelStore, onMessage: (String?) -> Unit) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
     var hits by remember { mutableStateOf<List<HfHit>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var tokenOpen by rememberSaveable { mutableStateOf(false) }
 
-    SettingsGroup("Hugging Face") {
-        ExpandRow(
-            title = if (snap.hasHfToken) "Token saved" else "Add token",
-            value = if (snap.hasHfToken) "\u2022\u2022\u2022\u2022" else "",
-        ) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier
+                    .weight(1f)
+                    .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 3.dp)
+                    .padding(start = 16.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(R.drawable.ic_search, null, tint = Palette.IconMuted, size = 16.dp)
+                Spacer(Modifier.width(10.dp))
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = MonoSmall.copy(color = Palette.TextPrimary),
+                    cursorBrush = SolidColor(Palette.TextPrimary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+                    decorationBox = { inner ->
+                        if (query.isEmpty()) Text("Search Hugging Face", style = MonoSmall, color = Palette.TextTertiary)
+                        inner()
+                    },
+                )
+                PillButton(
+                    if (searching) "\u2026" else if (query.isBlank()) "Top" else "Search",
+                    onClick = {
+                        searching = true
+                        error = null
+                        scope.launch {
+                            hits = runCatching { HfSearch.search(query, settings.hfToken()) }
+                                .onFailure { error = it.message ?: "Search failed" }
+                                .getOrNull()
+                            searching = false
+                        }
+                    },
+                    enabled = !searching,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 3.dp)
+                    .clickable { tokenOpen = !tokenOpen },
+                contentAlignment = Alignment.Center,
+            ) {
+                AppIcon(
+                    R.drawable.ic_key, if (tokenOpen) "Hide token" else "Hugging Face token",
+                    tint = if (snap.hasHfToken) Palette.IconActive else Palette.IconMuted,
+                    size = 17.dp,
+                )
+            }
+        }
+        AnimatedVisibility(visible = tokenOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             TokenField(settings)
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
-                .padding(start = 16.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AppIcon(R.drawable.ic_search, null, tint = Palette.IconMuted, size = 16.dp)
-            Spacer(Modifier.width(10.dp))
-            BasicTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                textStyle = MonoSmall.copy(color = Palette.TextPrimary),
-                cursorBrush = SolidColor(Palette.TextPrimary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                modifier = Modifier.weight(1f).padding(vertical = 14.dp),
-                decorationBox = { inner ->
-                    if (query.isEmpty()) Text("Search Hugging Face", style = MonoSmall, color = Palette.TextTertiary)
-                    inner()
-                },
-            )
-            PillButton(
-                if (searching) "\u2026" else if (query.isBlank()) "Top" else "Search",
-                onClick = {
-                    searching = true
-                    error = null
-                    scope.launch {
-                        hits = runCatching { HfSearch.search(query, settings.hfToken()) }
-                            .onFailure { error = it.message ?: "Search failed" }
-                            .getOrNull()
-                        searching = false
-                    }
-                },
-                enabled = !searching,
-            )
-        }
-        error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Danger) }
+        error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Danger, modifier = Modifier.padding(top = 6.dp, start = 4.dp)) }
         hits?.let { list ->
-            if (list.isEmpty()) Text("No .litertlm models found", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-            list.forEach { hit ->
-                val added = snap.hfModels.any { it.repo == hit.repo && it.file == hit.file }
-                HfRow(hit, added, onAdd = {
-                    settings.addHfModel(hit.model)
-                    onMessage(null)
-                })
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
+            ) {
+                if (list.isEmpty()) Text(
+                    "No .litertlm models found",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                list.forEachIndexed { i, hit ->
+                    if (i > 0) RowDivider()
+                    val added = snap.hfModels.any { it.repo == hit.repo && it.file == hit.file }
+                    HfRow(hit, added, onAdd = {
+                        settings.addHfModel(hit.model)
+                        onMessage(null)
+                    })
+                }
             }
         }
     }
@@ -109,36 +149,35 @@ internal fun HfGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, st
 private fun TokenField(settings: SecureSettings) {
     val snap by settings.state.collectAsState()
     var draft by remember { mutableStateOf("") }
-    Column {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
-                .padding(start = 16.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicTextField(
-                value = draft,
-                onValueChange = { draft = it.trim() },
-                singleLine = true,
-                textStyle = MonoSmall.copy(color = Palette.TextPrimary),
-                cursorBrush = SolidColor(Palette.TextPrimary),
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, autoCorrectEnabled = false),
-                modifier = Modifier.weight(1f).padding(vertical = 14.dp),
-                decorationBox = { inner ->
-                    if (draft.isEmpty() && !snap.hasHfToken) Text("hf_...", style = MonoSmall, color = Palette.TextTertiary)
-                    inner()
-                },
-            )
-            if (draft.isNotEmpty()) {
-                PillButton("Save", onClick = {
-                    settings.setHfToken(draft)
-                    draft = ""
-                })
-            }
-            if (snap.hasHfToken) PillButton("Remove", onClick = { settings.setHfToken(null) })
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
+            .padding(start = 16.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = draft,
+            onValueChange = { draft = it.trim() },
+            singleLine = true,
+            textStyle = MonoSmall.copy(color = Palette.TextPrimary),
+            cursorBrush = SolidColor(Palette.TextPrimary),
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, autoCorrectEnabled = false),
+            modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+            decorationBox = { inner ->
+                if (draft.isEmpty() && !snap.hasHfToken) Text("hf_\u2026", style = MonoSmall, color = Palette.TextTertiary)
+                inner()
+            },
+        )
+        if (draft.isNotEmpty()) {
+            PillButton("Save", onClick = {
+                settings.setHfToken(draft)
+                draft = ""
+            })
         }
+        if (snap.hasHfToken) PillButton("Remove", onClick = { settings.setHfToken(null) })
     }
 }
 

@@ -220,22 +220,26 @@ fun SettingsScreen(
                             RowDivider()
                             CustomProvidersGroup(settings, snap)
                         }
-                        // generate_image's model and the thinking control: their own sub-pages,
-                        // like On-device models, so this page stays short.
-                        NavRow(
-                            title = "Image model",
-                            value = imageModelLine(snap),
-                            icon = R.drawable.ic_image,
-                            onClick = { section = SettingsSection.IMAGE },
-                        )
-                        NavRow(
-                            title = "Thinking",
-                            value = modelName(snap.model),
-                            icon = R.drawable.ic_lightbulb,
-                            onClick = { section = SettingsSection.THINKING },
-                        )
-                        // Which models subagents (spawn_subagent) may run on: the same picker, multi-select.
-                        SubagentGroup(settings, snap, models, ollama, modelStore, localEngine)
+                        // generate_image's model, the thinking control and subagents: one card,
+                        // so this page stays short and every row sits on the same surface.
+                        SettingsGroup("Answering") {
+                            NavRow(
+                                title = "Image model",
+                                value = imageModelLine(snap),
+                                icon = R.drawable.ic_image,
+                                onClick = { section = SettingsSection.IMAGE },
+                            )
+                            RowDivider()
+                            NavRow(
+                                title = "Thinking",
+                                value = modelName(snap.model),
+                                icon = R.drawable.ic_lightbulb,
+                                onClick = { section = SettingsSection.THINKING },
+                            )
+                            RowDivider()
+                            // Which models subagents (spawn_subagent) may run on: the same picker, multi-select.
+                            SubagentGroup(settings, snap, models, ollama, modelStore, localEngine)
+                        }
                         if (picking) ModelPickerSheet(
                             settings, models, ollama, modelStore, localEngine,
                             onOpenOnDevice = { section = SettingsSection.ON_DEVICE },
