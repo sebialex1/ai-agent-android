@@ -11,9 +11,9 @@ data class ActiveEmoji(val start: Int, val end: Int, val query: String)
 
 /**
  * The emoji code under the cursor, or null. A code starts with `:` at the beginning of the text
- * or after whitespace (so "http://" never opens the popup), runs to the cursor without
- * whitespace, may only hold shortcode characters, and stays under [MAX_QUERY] long. Only a
- * collapsed cursor counts.
+ * or after whitespace (so "http://" never opens the popup) and runs to the cursor without
+ * whitespace; a bare `:` opens the popup with the popular codes. The query may only hold
+ * shortcode characters and stays under [MAX_QUERY] long. Only a collapsed cursor counts.
  */
 fun activeEmoji(value: TextFieldValue): ActiveEmoji? {
     val sel = value.selection
@@ -25,8 +25,8 @@ fun activeEmoji(value: TextFieldValue): ActiveEmoji? {
     if (i < 0 || text[i] != ':') return null
     if (i > 0 && !text[i - 1].isWhitespace()) return null
     val query = text.substring(i + 1, cursor)
-    if (query.isEmpty() || query.length > MAX_QUERY) return null
-    if (!query.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '+' }) return null
+    if (query.length > MAX_QUERY) return null
+    if (query.isNotEmpty() && !query.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '+' }) return null
     return ActiveEmoji(i, cursor, query.lowercase())
 }
 

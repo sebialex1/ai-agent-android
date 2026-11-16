@@ -37,7 +37,15 @@ class EmojiTest {
         assertNull(activeEmoji(value("a :hello world")))
         assertNull(activeEmoji(value(":${"a".repeat(33)}")))
         assertNull(activeEmoji(value(":he llo")))
-        assertNull(activeEmoji(value(":")))
+    }
+
+    @Test
+    fun `a bare colon opens the popup with the popular codes`() {
+        val a = activeEmoji(value("hi :"))
+        assertEquals("", a!!.query)
+        assertTrue(suggestEmoji(a.query).isNotEmpty())
+        val bare = activeEmoji(value(":"))
+        assertEquals("", bare!!.query)
     }
 
     @Test

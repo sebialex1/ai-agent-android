@@ -32,7 +32,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.ui.components.AppIcon
-import com.sebialex.agent.ui.components.SurfaceIconButton
+import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
@@ -99,7 +99,7 @@ fun InputPill(
             verticalAlignment = Alignment.Bottom,
         ) {
             if (onAttach != null) {
-                SurfaceIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
+                QuietIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
             } else {
                 Spacer(Modifier.width(10.dp))
             }
@@ -140,7 +140,7 @@ fun InputPill(
                     }
                 }
             }
-            SurfaceIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
+            QuietIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
             Box(
                 Modifier
                     .padding(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)

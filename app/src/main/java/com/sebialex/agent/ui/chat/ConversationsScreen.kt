@@ -140,9 +140,8 @@ fun ConversationsScreen(
                 Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircleButton(R.drawable.ic_settings, "Settings", onSettings)
-                Spacer(Modifier.width(10.dp))
                 Spacer(Modifier.weight(1f))
+                CircleButton(R.drawable.ic_settings, "Settings", onSettings)
                 Spacer(Modifier.width(10.dp))
                 CircleButton(R.drawable.ic_new_chat, "New conversation", onNew)
             }
