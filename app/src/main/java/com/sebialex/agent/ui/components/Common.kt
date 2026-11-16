@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.softSurfaceCircle
 
 @Composable
 fun AppIcon(
@@ -104,4 +105,35 @@ fun FadingText(
         onTextLayout = { overflow = it.hasVisualOverflow },
         modifier = if (overflow) modifier.fadeRightEdge() else modifier,
     )
+}
+
+/**
+ * Icon button on a circular surface: the iOS-like quiet circle the chat controls sit on.
+ * Same footprint as [QuietIconButton], but always visibly surfaced.
+ */
+@Composable
+fun SurfaceIconButton(
+    @DrawableRes res: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = Palette.IconActive,
+    enabled: Boolean = true,
+    size: Dp = 40.dp,
+    iconSize: Dp = 20.dp,
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .softSurfaceCircle()
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = Palette.TextPrimary),
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(res, contentDescription, tint = if (enabled) tint else Palette.TextTertiary, size = iconSize)
+    }
 }

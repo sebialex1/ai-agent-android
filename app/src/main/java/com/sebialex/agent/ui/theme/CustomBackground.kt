@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -50,16 +49,16 @@ object CustomBackground {
 
 /**
  * The chat screens' background: the custom image (cover-cropped, with a dark scrim at [dim]
- * percent for readability) when one is set, otherwise the theme's gradient.
+ * percent for readability) when one is set, otherwise the theme's decorated backdrop.
  */
 @Composable
 fun Modifier.chatBackground(enabled: Boolean, dim: Int): Modifier {
-    if (!enabled) return this.background(Palette.backgroundBrush())
+    if (!enabled) return this.themeBackdrop()
     val context = LocalContext.current
     val bitmap = remember(enabled) {
         val f = CustomBackground.file(context)
         if (f.isFile) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-    } ?: return this.background(Palette.backgroundBrush())
+    } ?: return this.themeBackdrop()
     return this.drawBehind {
         val scale = maxOf(size.width / bitmap.width, size.height / bitmap.height)
         val w = (bitmap.width * scale).toInt()

@@ -39,6 +39,7 @@ import com.sebialex.agent.ui.theme.BubbleStyle
 import com.sebialex.agent.ui.theme.BubbleStyles
 import com.sebialex.agent.ui.theme.CustomBackground
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.themeBackdrop
 import com.sebialex.agent.ui.theme.ThemePreset
 import com.sebialex.agent.ui.theme.Themes
 import com.sebialex.agent.ui.theme.softSurface
@@ -110,7 +111,7 @@ private fun BackgroundGroup(settings: SecureSettings, snap: SecureSettings.Snaps
                     .width(72.dp)
                     .height(44.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Palette.backgroundBrush()),
+                    .themeBackdrop(),
                 contentAlignment = Alignment.Center,
             ) {
                 if (snap.customBackground && file.isFile) {

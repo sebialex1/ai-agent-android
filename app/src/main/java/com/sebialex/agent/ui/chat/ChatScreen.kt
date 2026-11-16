@@ -36,11 +36,13 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sebialex.agent.R
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.domain.model.FileAttachment
 import com.sebialex.agent.domain.model.Role
 import com.sebialex.agent.domain.model.SourceRef
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.chatBackground
@@ -75,8 +77,9 @@ fun ChatScreen(
         mutableStateOf(vm.draft(sessionId).let { TextFieldValue(it, TextRange(it.length)) })
     }
     fun updateInput(value: TextFieldValue) {
-        input = value
-        vm.setDraft(sessionId, value.text)
+        val parsed = withParsedEmojis(value)
+        input = parsed
+        vm.setDraft(sessionId, parsed.text)
     }
     var openStepId by rememberSaveable { mutableStateOf<String?>(null) }
     // Own message whose action row is open (tapped) and the message being edited, per conversation.
@@ -281,6 +284,20 @@ fun ChatScreen(
                 }
             }
         }
+        // Jump back to the newest message when the user scrolled up reading history.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = listState.canScrollForward,
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)) +
+                androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(160)),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100)),
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 10.dp),
+        ) {
+            SurfaceIconButton(R.drawable.ic_arrow_down, "Scroll to latest", onClick = {
+                scope.launch { listState.animateScrollToItem(0) }
+            })
+        }
         MentionOverlay(visible = mention != null, modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
             val m = mention ?: ActiveMention(0, 0, "")
             val all = candidates.orEmpty()
@@ -303,6 +320,14 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
             )
         }
+        // Discord-style `:code` suggestions: a tall one-line bubble above the input while a
+        // code is being typed; picking one inserts the emoji, a closed `:code:` parses itself.
+        val emoji = activeEmoji(input)
+        EmojiPopup(
+            entries = emoji?.let { suggestEmoji(it.query) }.orEmpty(),
+            onPick = { e -> emoji?.let { updateInput(applyEmoji(input, it, e.emoji)) } },
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+        )
         editingId?.let { id ->
             val preview = remember(id, state.session.turns) { vm.copyText(id).orEmpty() }
             EditingBanner(
@@ -326,9 +351,9 @@ fun ChatScreen(
                 val editing = editingId
                 if (editing != null) {
                     editingId = null
-                    vm.resendEdited(editing, input.text)
+                    vm.resendEdited(editing, parseEmojiCodes(input.text))
                 } else {
-                    vm.send(input.text)
+                    vm.send(parseEmojiCodes(input.text))
                 }
                 updateInput(TextFieldValue(""))
                 suggestion = null

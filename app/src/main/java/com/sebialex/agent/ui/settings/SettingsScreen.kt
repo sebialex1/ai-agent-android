@@ -69,6 +69,7 @@ import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.themeBackdrop
 import com.sebialex.agent.ui.theme.softSurface
 
 /**
@@ -126,7 +127,7 @@ fun SettingsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundBrush())
+            .themeBackdrop()
             .systemBarsPadding()
             .imePadding(),
     ) {

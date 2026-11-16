@@ -20,6 +20,11 @@ data class ThemePreset(
     val accent: Color,
     /** Background gradient, top to bottom; [ink] must be part of it so edges blend. */
     val gradient: List<Color>,
+    /**
+     * Optional backdrop decoration drawn over the gradient ("stars", "braille", "liquid"),
+     * rendered by [Backdrops]; empty for plain gradient themes.
+     */
+    val decor: String = "",
 )
 
 /** Text colors derived for one theme; [Palette.apply] writes them into the live palette. */
@@ -129,8 +134,36 @@ object Themes {
         gradient = listOf(Color(0xFF170F22), Color(0xFF221539), Color(0xFF170F22)),
     )
 
+    /** Night sky: near-black navy with a scatter of fixed stars over the gradient. */
+    val STARS = ThemePreset(
+        id = "stars", label = "Stars",
+        ink = Color(0xFF060913), surface = Color(0xFF101527), surfaceHigh = Color(0xFF161C33),
+        surfaceHighest = Color(0xFF1F2742), accent = Color(0xFF9DB8FF),
+        gradient = listOf(Color(0xFF060913), Color(0xFF0C1226), Color(0xFF111A33), Color(0xFF060913)),
+        decor = "stars",
+    )
+
+    /** Raised-dot paper: a faint braille cell grid over warm charcoal. */
+    val BRAILLE = ThemePreset(
+        id = "braille", label = "Braille",
+        ink = Color(0xFF121110), surface = Color(0xFF1C1A18), surfaceHigh = Color(0xFF242220),
+        surfaceHighest = Color(0xFF2F2C29), accent = Color(0xFFD8B26A),
+        gradient = listOf(Color(0xFF121110), Color(0xFF191715), Color(0xFF121110)),
+        decor = "braille",
+    )
+
+    /** Frosted translucent surfaces over drifting color blobs; the glass carries the theme. */
+    val LIQUID_GLASS = ThemePreset(
+        id = "liquid-glass", label = "Liquid glass",
+        ink = Color(0xFF0A1220), surface = Color(0xCC16233B), surfaceHigh = Color(0xB31E304E),
+        surfaceHighest = Color(0x992A4066), accent = Color(0xFF7DD3FC),
+        gradient = listOf(Color(0xFF0A1220), Color(0xFF0E1B30), Color(0xFF0A1220)),
+        decor = "liquid",
+    )
+
     val ALL = listOf(
         MIDNIGHT, BLURPLE, VIOLET, OCEAN, NORDIC, EMBER, FOREST, GRAPE,
+        STARS, BRAILLE, LIQUID_GLASS,
         WHITE_CARAMEL, SNOW, MATCHA, ROSEWATER,
     )
     val DEFAULT = MIDNIGHT

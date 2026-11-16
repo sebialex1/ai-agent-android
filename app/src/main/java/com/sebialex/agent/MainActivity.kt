@@ -40,6 +40,7 @@ import com.sebialex.agent.ui.settings.SettingsScreen
 import com.sebialex.agent.ui.terminal.WorkspaceScreen
 import com.sebialex.agent.ui.theme.AgentTheme
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.themeBackdrop
 
 sealed interface Screen {
     data object Chat : Screen
@@ -125,7 +126,7 @@ fun AppRoot(container: AppContainer) {
     // it is disabled, so the system default (finish the activity) applies only there.
     BackHandler(enabled = stack.size > 1) { pop() }
 
-    Box(Modifier.fillMaxSize().background(Palette.backgroundBrush())) {
+    Box(Modifier.fillMaxSize().themeBackdrop()) {
         com.sebialex.agent.ui.settings.RestoreOffer(container.backup, onRestored = vm::reloadConversations)
         com.sebialex.agent.ui.settings.BatteryOffer(container.runKeeper, container.settings)
         AnimatedContent(

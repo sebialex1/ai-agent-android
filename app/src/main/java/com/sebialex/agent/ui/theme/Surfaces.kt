@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -39,3 +40,7 @@ fun Modifier.softSurface(
     }
     return m
 }
+
+/** [softSurface] as a circle: the quiet raised disc behind icon buttons. */
+fun Modifier.softSurfaceCircle(color: Color = Palette.SurfaceHigh, elevation: Dp = 4.dp): Modifier =
+    softSurface(CircleShape, color, elevation)

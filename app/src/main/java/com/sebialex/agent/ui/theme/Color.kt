@@ -34,6 +34,9 @@ object Palette {
     /** The background gradient of the current theme, top to bottom. */
     var Gradient: List<Color> = listOf(Ink)
 
+    /** The current theme's backdrop decoration ("", "stars", "braille", "liquid"). */
+    var Decor: String = ""
+
     /** Applies [t] to every live color, deriving the text colors from its surfaces. */
     fun apply(t: ThemePreset) {
         Ink = t.ink
@@ -42,6 +45,7 @@ object Palette {
         SurfaceHighest = t.surfaceHighest
         Accent = t.accent
         Gradient = t.gradient
+        Decor = t.decor
         val text = Themes.textColorsFor(t)
         TextPrimary = text.primary
         TextSecondary = text.secondary

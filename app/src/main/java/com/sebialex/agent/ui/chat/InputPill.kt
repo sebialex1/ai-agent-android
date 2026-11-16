@@ -32,7 +32,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.ui.components.AppIcon
-import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
@@ -67,6 +67,7 @@ fun InputPill(
 ) {
     // The input is never blocked: while an answer runs, a typed message is queued (one button:
     // the arrow queues it when there is something to send, otherwise it is the stop button).
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val hasContent = value.text.isNotBlank() || hasAttachments
     val canSend = hasContent
     val stoppable = running || revealing
@@ -98,7 +99,7 @@ fun InputPill(
             verticalAlignment = Alignment.Bottom,
         ) {
             if (onAttach != null) {
-                QuietIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
+                SurfaceIconButton(R.drawable.ic_plus, "Add photos, files and options", onClick = onAttach, tint = Palette.IconMuted)
             } else {
                 Spacer(Modifier.width(10.dp))
             }
@@ -139,14 +140,17 @@ fun InputPill(
                     }
                 }
             }
-            QuietIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
+            SurfaceIconButton(R.drawable.ic_mic, "Voice input", onClick = onMic, tint = Palette.IconMuted)
             Box(
                 Modifier
                     .padding(start = 2.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(fill)
-                    .clickable(enabled = canSend || stoppable) { if (showStop) onStop() else onSend() },
+                    .clickable(enabled = canSend || stoppable) {
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        if (showStop) onStop() else onSend()
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 AppIcon(

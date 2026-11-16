@@ -35,7 +35,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,7 +53,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +65,7 @@ import com.sebialex.agent.domain.model.SessionSummary
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.chatBackground
@@ -90,7 +89,6 @@ fun ConversationsScreen(
     val snap by settings.state.collectAsStateWithLifecycle()
     var options by remember { mutableStateOf<SessionSummary?>(null) }
     val context = LocalContext.current
-    var query by rememberSaveable { mutableStateOf("") }
     var input by remember { mutableStateOf(TextFieldValue("")) }
     // Selection mode: long-press a conversation, drag over more, tap to toggle, trash to delete.
     var selecting by remember { mutableStateOf(false) }
@@ -105,10 +103,12 @@ fun ConversationsScreen(
             input = TextFieldValue(next, TextRange(next.length))
         }
     }
-    val filtered = remember(state.items, query) {
-        val q = query.trim()
+    val filtered = remember(state.items, input.text) {
+        val q = input.text.trim()
         if (q.isEmpty()) state.items else state.items.filter { it.title.contains(q, ignoreCase = true) }
     }
+    // The input doubles as the conversation search: the list filters while typing, and the
+    // arrow starts a new conversation with whatever is written (the dedicated bar is gone).
 
     Column(
         Modifier
@@ -142,7 +142,7 @@ fun ConversationsScreen(
             ) {
                 CircleButton(R.drawable.ic_settings, "Settings", onSettings)
                 Spacer(Modifier.width(10.dp))
-                SearchPill(query, { query = it }, Modifier.weight(1f))
+                Spacer(Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
                 CircleButton(R.drawable.ic_new_chat, "New conversation", onNew)
             }
@@ -151,7 +151,7 @@ fun ConversationsScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (filtered.isEmpty()) {
                 Text(
-                    if (query.isBlank()) "No conversations yet" else "No matches",
+                    if (input.text.isBlank()) "No conversations yet" else "No matches",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Palette.TextTertiary,
                     modifier = Modifier.align(Alignment.Center),
@@ -196,12 +196,18 @@ fun ConversationsScreen(
             }
         }
 
+        val emoji = activeEmoji(input)
+        EmojiPopup(
+            entries = emoji?.let { suggestEmoji(it.query) }.orEmpty(),
+            onPick = { e -> emoji?.let { input = applyEmoji(input, it, e.emoji) } },
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+        )
         InputPill(
             value = input,
-            onValueChange = { input = it },
+            onValueChange = { input = withParsedEmojis(it) },
             running = false,
             onSend = {
-                val text = input.text.trim()
+                val text = parseEmojiCodes(input.text.trim())
                 if (text.isNotEmpty()) {
                     input = TextFieldValue("")
                     onStartWith(text)
@@ -217,7 +223,7 @@ fun ConversationsScreen(
                 } catch (_: ActivityNotFoundException) {
                 }
             },
-            placeholder = "Start a new conversation",
+            placeholder = "Search or start a conversation",
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 4.dp),
         )
     }
@@ -269,7 +275,7 @@ private fun ListHeader(text: String) {
 
 @Composable
 private fun CircleButton(res: Int, description: String, onClick: () -> Unit) {
-    QuietIconButton(res, description, onClick = onClick, size = 44.dp, iconSize = 21.dp, tint = Palette.IconActive)
+    SurfaceIconButton(res, description, onClick = onClick, tint = Palette.IconActive)
 }
 
 /** The item id a list key belongs to; empty for headers. */
@@ -280,33 +286,6 @@ private fun idOfKey(key: Any): String = (key as? String)?.let { k ->
         else -> ""
     }
 }.orEmpty()
-
-@Composable
-private fun SearchPill(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier
-            .height(44.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Palette.Surface)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AppIcon(R.drawable.ic_search, null, tint = Palette.IconMuted, size = 18.dp)
-        Spacer(Modifier.width(10.dp))
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.TextPrimary),
-            cursorBrush = SolidColor(Palette.TextPrimary),
-            modifier = Modifier.weight(1f),
-            decorationBox = { inner ->
-                if (value.isEmpty()) Text("Search conversations", style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary, maxLines = 1)
-                inner()
-            },
-        )
-    }
-}
 
 /**
  * One conversation: the title on top, a quiet line below with when it was updated and how many

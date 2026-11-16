@@ -14,7 +14,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
-import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.theme.Palette
 
 /**
@@ -35,7 +35,7 @@ fun ChatTopBar(
             .height(56.dp)
             .padding(horizontal = 6.dp),
     ) {
-        QuietIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
+        SurfaceIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,
@@ -46,8 +46,8 @@ fun ChatTopBar(
             modifier = Modifier.align(Alignment.Center).padding(horizontal = 104.dp),
         )
         Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
-            QuietIconButton(R.drawable.ic_new_chat, "New conversation", onClick = onNew)
-            QuietIconButton(R.drawable.ic_folder, "Workspace", onClick = onWorkspace)
+            SurfaceIconButton(R.drawable.ic_new_chat, "New conversation", onClick = onNew)
+            SurfaceIconButton(R.drawable.ic_folder, "Workspace", onClick = onWorkspace)
         }
     }
 }

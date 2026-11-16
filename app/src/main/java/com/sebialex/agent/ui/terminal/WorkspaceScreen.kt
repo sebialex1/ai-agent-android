@@ -66,6 +66,7 @@ import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
+import com.sebialex.agent.ui.theme.themeBackdrop
 import com.sebialex.agent.ui.theme.softSurface
 
 /** Sections of the workspace, shown as icon tabs in the top bar (terminal, sources, files). */
@@ -120,7 +121,7 @@ fun WorkspaceScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Palette.backgroundBrush())
+            .themeBackdrop()
             .systemBarsPadding()
             .imePadding(),
     ) {

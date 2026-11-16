@@ -42,6 +42,7 @@ import com.sebialex.agent.data.local.LocalModels
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
@@ -100,19 +101,12 @@ internal fun HfSection(settings: SecureSettings, snap: SecureSettings.Snapshot, 
                 )
             }
             Spacer(Modifier.width(8.dp))
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 3.dp)
-                    .clickable { tokenOpen = !tokenOpen },
-                contentAlignment = Alignment.Center,
-            ) {
-                AppIcon(
-                    R.drawable.ic_key, if (tokenOpen) "Hide token" else "Hugging Face token",
-                    tint = if (snap.hasHfToken) Palette.IconActive else Palette.IconMuted,
-                    size = 17.dp,
-                )
-            }
+            SurfaceIconButton(
+                R.drawable.ic_key, if (tokenOpen) "Hide token" else "Hugging Face token",
+                onClick = { tokenOpen = !tokenOpen },
+                tint = if (snap.hasHfToken) Palette.IconActive else Palette.IconMuted,
+                iconSize = 17.dp,
+            )
         }
         AnimatedVisibility(visible = tokenOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             TokenField(settings)
