@@ -30,17 +30,33 @@ fun activeEmoji(value: TextFieldValue): ActiveEmoji? {
     return ActiveEmoji(i, cursor, query.lowercase())
 }
 
-/** Shortcodes that start with [query] (best/popular first); the most popular ones for "". */
-fun suggestEmoji(query: String, limit: Int = MAX_SHOWN): List<EmojiEntry> {
+/**
+ * Shortcodes that start with [query] (dataset order: popular codes first). For an empty query
+ * the popup shows the user's [recent] codes first, then the most popular ones to fill the row.
+ */
+fun suggestEmoji(query: String, recent: List<String> = emptyList(), limit: Int = MAX_SHOWN): List<EmojiEntry> {
     val q = query.lowercase()
     val out = ArrayList<EmojiEntry>(limit)
+    if (q.isEmpty()) {
+        val byCode = EMOJI_BY_CODE
+        for (code in recent) {
+            byCode[code]?.let {
+                out += EmojiEntry(code, it)
+                if (out.size >= limit) return out
+            }
+        }
+    }
     for ((code, emoji) in EMOJI_CODES) {
         if (q.isNotEmpty() && !code.startsWith(q)) continue
+        if (out.any { it.code == code }) continue
         out += EmojiEntry(code, emoji)
         if (out.size >= limit) break
     }
     return out
 }
+
+/** Lookup for [EMOJI_CODES]; built once, used to resolve the recents. */
+private val EMOJI_BY_CODE: Map<String, String> by lazy { EMOJI_CODES.toMap() }
 
 /** Replaces every complete `:code:` in [text] with its emoji; unknown codes stay as typed. */
 fun parseEmojiCodes(text: String): String {

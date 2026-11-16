@@ -94,6 +94,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val backgroundDim: Int = 25,
         /** User chat bubble style, a [com.sebialex.agent.ui.theme.BubbleStyles] id; empty = default. */
         val bubbleStyle: String = "",
+        /** Recently used emoji shortcodes, most recent first (the emoji picker's recents). */
+        val emojiRecent: List<String> = emptyList(),
     )
 
     /** One stored key as the UI may show it: never the key itself, only its last characters. */
@@ -197,6 +199,19 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     /** User chat bubble style id; empty keeps the default surface. */
     fun bubbleStyle(): String = prefs.getString(KEY_BUBBLE, null).orEmpty()
     fun setBubbleStyle(value: String) = edit { putOrRemove(KEY_BUBBLE, value.takeIf { it.isNotBlank() }) }
+
+    /** Recently used emoji shortcodes, most recent first; unknown codes are ignored. */
+    fun emojiRecent(): List<String> =
+        prefs.getString(KEY_EMOJI_RECENT, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<List<String>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    /** Moves [code] to the front of the recents (deduplicated, at most [EMOJI_RECENT_MAX] kept). */
+    fun recordEmojiUse(code: String) {
+        if (code.isBlank()) return
+        val next = (listOf(code) + emojiRecent()).distinct().take(EMOJI_RECENT_MAX)
+        edit { putString(KEY_EMOJI_RECENT, keyJson.encodeToString(next)) }
+    }
 
     /** The "keep runs alive in the background" offer was shown once (answered either way): never again by itself. */
     fun batteryOfferShown(): Boolean = prefs.getBoolean(KEY_BATTERY_OFFER_SHOWN, false)
@@ -588,6 +603,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         customBackground = customBackground(),
         backgroundDim = backgroundDim(),
         bubbleStyle = bubbleStyle(),
+        emojiRecent = emojiRecent(),
         keys = keyViews(),
         customProviders = customProviders(),
         mediaImage = storedMediaImageModel(),
@@ -640,6 +656,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_CUSTOM_BACKGROUND = "custom_background"
         private const val KEY_BACKGROUND_DIM = "custom_background_dim"
         private const val KEY_BUBBLE = "bubble_style"
+        private const val KEY_EMOJI_RECENT = "emoji_recent_v1"
+        private const val EMOJI_RECENT_MAX = 16
         private const val KEY_BATTERY_OFFER_SHOWN = "battery_offer_shown"
         private const val KEY_BACKUP_PASSPHRASE = "backup_passphrase"
         /** generate_image model: provider id and model id (plain settings, so they are backed up). */

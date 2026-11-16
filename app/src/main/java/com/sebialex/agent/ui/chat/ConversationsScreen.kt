@@ -196,8 +196,13 @@ fun ConversationsScreen(
 
         val emoji = activeEmoji(input)
         EmojiPopup(
-            entries = emoji?.let { suggestEmoji(it.query) }.orEmpty(),
-            onPick = { e -> emoji?.let { input = applyEmoji(input, it, e.emoji) } },
+            entries = emoji?.let { suggestEmoji(it.query, snap.emojiRecent) }.orEmpty(),
+            onPick = { e ->
+                emoji?.let {
+                    settings.recordEmojiUse(e.code)
+                    input = applyEmoji(input, it, e.emoji)
+                }
+            },
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
         )
         InputPill(

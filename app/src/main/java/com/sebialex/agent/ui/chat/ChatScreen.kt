@@ -325,8 +325,13 @@ fun ChatScreen(
         // code is being typed; picking one inserts the emoji, a closed `:code:` parses itself.
         val emoji = activeEmoji(input)
         EmojiPopup(
-            entries = emoji?.let { suggestEmoji(it.query) }.orEmpty(),
-            onPick = { e -> emoji?.let { updateInput(applyEmoji(input, it, e.emoji)) } },
+            entries = emoji?.let { suggestEmoji(it.query, snap.emojiRecent) }.orEmpty(),
+            onPick = { e ->
+                emoji?.let {
+                    settings.recordEmojiUse(e.code)
+                    updateInput(applyEmoji(input, it, e.emoji))
+                }
+            },
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
         )
         editingId?.let { id ->

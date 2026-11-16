@@ -65,6 +65,24 @@ class EmojiTest {
     }
 
     @Test
+    fun `an empty query puts recents first, then popular fill`() {
+        val all = suggestEmoji("").map { it.code }
+        val mixed = suggestEmoji("", recent = listOf("fire", "not_a_code", "joy"))
+        assertEquals(listOf("fire", "joy"), mixed.take(2).map { it.code })
+        assertTrue(mixed.size == 14)
+        assertTrue(mixed.drop(2).all { it.code in all })
+        // Recents never duplicate the popular fill.
+        assertEquals(mixed.size, mixed.map { it.code }.toSet().size)
+    }
+
+    @Test
+    fun `a typed query indexes by prefix regardless of recents`() {
+        val hits = suggestEmoji("sk", recent = listOf("joy"))
+        assertTrue(hits.isNotEmpty())
+        assertTrue(hits.all { it.code.startsWith("sk") })
+    }
+
+    @Test
     fun `parse replaces complete known codes only`() {
         assertEquals("\ud83e\udd23", parseEmojiCodes(":rofl:"))
         assertEquals("hey \ud83e\udd23 lol", parseEmojiCodes("hey :rofl: lol"))

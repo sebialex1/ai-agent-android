@@ -85,18 +85,25 @@ fun EmojiPopup(
     }
 }
 
-/** Fades both horizontal edges of the content with destination-in gradient masks. */
+/**
+ * Fades both horizontal edges of the content with one destination-in mask: transparent at the
+ * very edges, fully opaque across the middle. (Two separate edge gradients would multiply to
+ * zero in the middle and hide the whole row.)
+ */
 private fun Modifier.fadeEdges(width: Dp = 24.dp): Modifier = this
     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
     .drawWithContent {
         drawContent()
-        val w = width.toPx().coerceAtMost(size.width / 2f)
+        val f = (width.toPx() / size.width).coerceIn(0f, 0.5f)
         drawRect(
-            brush = Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = 0f, endX = w),
-            blendMode = BlendMode.DstIn,
-        )
-        drawRect(
-            brush = Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = size.width - w, endX = size.width),
+            brush = Brush.horizontalGradient(
+                colorStops = arrayOf(
+                    0f to Color.Transparent,
+                    f to Color.Black,
+                    1f - f to Color.Black,
+                    1f to Color.Transparent,
+                ),
+            ),
             blendMode = BlendMode.DstIn,
         )
     }
