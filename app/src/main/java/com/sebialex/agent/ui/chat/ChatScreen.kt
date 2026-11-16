@@ -284,9 +284,10 @@ fun ChatScreen(
                 }
             }
         }
-        // Jump back to the newest message when the user scrolled up reading history.
+        // Jump back to the newest message when the user scrolled up reading history. The list is
+        // reverse-laid out (newest at the bottom), so content toward the newest is "backward".
         androidx.compose.animation.AnimatedVisibility(
-            visible = listState.canScrollForward,
+            visible = listState.canScrollBackward,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)) +
                 androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(160)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100)),
