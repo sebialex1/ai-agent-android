@@ -40,7 +40,7 @@ fun ChatTopBar(
         Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = 14.dp),
     ) {
         SurfaceIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
         Text(

@@ -119,7 +119,7 @@ fun ConversationsScreen(
     ) {
         if (selecting) {
             Row(
-                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CircleButton(R.drawable.ic_close, "Cancel selection") { exitSelection() }
@@ -137,7 +137,7 @@ fun ConversationsScreen(
             }
         } else {
             Row(
-                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
+                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CircleButton(R.drawable.ic_settings, "Settings", onSettings)
