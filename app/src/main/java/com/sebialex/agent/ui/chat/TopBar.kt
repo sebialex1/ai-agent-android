@@ -16,12 +16,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.ui.components.AppIcon
-import com.sebialex.agent.ui.components.QuietIconButton
+import com.sebialex.agent.ui.components.SurfaceIconButton
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.softSurface
 
@@ -43,15 +42,16 @@ fun ChatTopBar(
             .height(56.dp)
             .padding(horizontal = 6.dp),
     ) {
-        QuietIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
+        SurfaceIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
         Text(
             text = title,
             style = MaterialTheme.typography.titleSmall,
             color = Palette.TextSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 104.dp),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 50.dp, end = 110.dp),
         )
         // New chat and the workspace live in one stretched pill: two segments, one surface.
         Row(
