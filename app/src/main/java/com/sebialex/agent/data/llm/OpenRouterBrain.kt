@@ -93,7 +93,7 @@ class OpenRouterBrain(
             // Streamed so reasoning can be shown live; the full message is reassembled below.
             put("stream", true)
         }.toString()
-        val choice = postStreaming(body, onReasoning)
+        val choice = postStreaming(body, onReasoning, ctx.onContent)
         val message = choice["message"] as? JsonObject ?: throw IOException("$provider returned no message")
 
         val calls = (message["tool_calls"] as? JsonArray).orEmpty().mapIndexedNotNull { i, el ->
@@ -262,13 +262,13 @@ class OpenRouterBrain(
      * parsing above is shared. Reasoning deltas are forwarded to [onReasoning] as they arrive.
      * A plain JSON body (some errors, or providers that ignore `stream`) is handled too.
      */
-    private suspend fun postStreaming(body: String, onReasoning: (String) -> Unit): JsonObject {
+    private suspend fun postStreaming(body: String, onReasoning: (String) -> Unit, onContent: (String) -> Unit): JsonObject {
         val conn = connection(accept = "text/event-stream")
         // Stop disconnects the stream at once instead of reading it to the end.
-        return com.sebialex.agent.data.web.cancellableIo(close = { conn.disconnect() }) { readStream(conn, body, onReasoning) }
+        return com.sebialex.agent.data.web.cancellableIo(close = { conn.disconnect() }) { readStream(conn, body, onReasoning, onContent) }
     }
 
-    private fun readStream(conn: HttpURLConnection, body: String, onReasoning: (String) -> Unit): JsonObject {
+    private fun readStream(conn: HttpURLConnection, body: String, onReasoning: (String) -> Unit, onContent: (String) -> Unit): JsonObject {
         conn.outputStream.use { it.write(body.toByteArray()) }
         try {
             val code = conn.responseCode
@@ -291,7 +291,7 @@ class OpenRouterBrain(
                     (chunk["error"] as? JsonObject)?.let { err ->
                         throw IOException((err["message"] as? JsonPrimitive)?.content ?: "$provider error")
                     }
-                    acc.add(chunk, onReasoning)
+                    acc.add(chunk, onReasoning, onContent)
                 }
             }
             return acc.choice()
@@ -340,7 +340,7 @@ class OpenRouterBrain(
         /** reasoning_details parts, merged per (index or position, type). */
         private val details = linkedMapOf<String, MutableMap<String, JsonElement>>()
 
-        fun add(chunk: JsonObject, onReasoning: (String) -> Unit) {
+        fun add(chunk: JsonObject, onReasoning: (String) -> Unit, onContent: (String) -> Unit) {
             events++
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return
             (choice["finish_reason"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { finishReason = it }
@@ -350,6 +350,8 @@ class OpenRouterBrain(
             val (text, partThinking) = ReasoningText.split(delta["content"])
             val piece = inline.feed(text)
             content.append(piece.content)
+            // The answer streams to the chat as it arrives; reasoning is held back by the splitter.
+            if (piece.content.isNotEmpty()) runCatching { onContent(piece.content) }
             if (piece.reasoning.isNotEmpty()) inlineReasoning.append(piece.reasoning)
             val plain = ReasoningText.plain(delta) ?: (partThinking + piece.reasoning).takeIf { it.isNotEmpty() }
             var detailText = ""

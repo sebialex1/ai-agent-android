@@ -61,6 +61,12 @@ data class BrainContext(
     /** Tool calls already executed in this turn, and the turn's budget; 0 budget means unknown. */
     val stepsUsed: Int = 0,
     val stepBudget: Int = 0,
+    /**
+     * Answer text as it streams in, delta by delta, so the chat can show it live instead of
+     * typing out a finished answer. Carried on the context (not the `next` signature) so every
+     * brain and fake keeps compiling; a brain that cannot stream simply never calls it.
+     */
+    val onContent: (String) -> Unit = {},
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }

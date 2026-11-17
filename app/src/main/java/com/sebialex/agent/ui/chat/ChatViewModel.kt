@@ -87,6 +87,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private var currentId: String = newId()
     private var expanded: Set<String> = emptySet()
     private var revealing: Set<String> = emptySet()
+    /** Turns whose answer streamed in live, so they are never typewritten afterwards. */
+    private val streamed = HashSet<String>()
 
     private val _state = MutableStateFlow(ChatUiState(Session(currentId, "", emptyList(), 0)))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -424,6 +426,11 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 if (durable) persist(sessionId)
             }
+            is AgentEvent.ContentDelta -> {
+                // The answer is arriving live: show it as it comes, and do not typewriter it later.
+                streamed += turnId
+                mutateTurn(sessionId, turnId) { it.copy(text = event.text) }
+            }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, artifacts = event.artifacts, sources = event.sources, complete = true) }
@@ -435,7 +442,8 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Only an answer that arrives while its conversation is on screen gets the typewriter, once. */
     private fun onAnswerReceived(sessionId: String, turnId: String) {
-        if (sessionId == currentId) revealing = revealing + turnId
+        // An answer that already streamed in is shown as it arrived; only a non-streamed one types out.
+        if (sessionId == currentId && turnId !in streamed) revealing = revealing + turnId
     }
 
     /** Called when the reveal finishes or its row leaves the screen. It never replays. */

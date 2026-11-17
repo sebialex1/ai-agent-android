@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
 sealed interface AgentEvent {
     data class StepAdded(val step: Step) : AgentEvent
     data class StepUpdated(val step: Step) : AgentEvent
+    /** The answer so far, as it streams from the model (the whole text, not a fragment). */
+    data class ContentDelta(val text: String) : AgentEvent
     data class Finished(
         val text: String,
         val attachments: List<FileAttachment>,
@@ -134,6 +136,12 @@ class AgentOrchestrator(
 
             while (executed < maxSteps) {
                 val memory = memoryEnabled()
+                // Live answer text: streamed deltas replace the turn's text as they arrive, so the
+                // chat shows the answer in real time. Throttled like reasoning; the Finished event
+                // always carries the whole text, so a dropped intermediate delta is harmless.
+                val answer = StringBuilder()
+                var lastContent = 0L
+                var contentSent = false
                 val ctx = BrainContext(
                     modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
                     todos = chat.todos(),
@@ -142,6 +150,17 @@ class AgentOrchestrator(
                     runId = runId,
                     stepsUsed = executed,
                     stepBudget = maxSteps,
+                    onContent = { delta ->
+                        synchronized(answer) {
+                            answer.append(delta)
+                            val t = now()
+                            if (!contentSent || t - lastContent >= LIVE_THROTTLE_MS) {
+                                contentSent = true
+                                lastContent = t
+                                trySend(AgentEvent.ContentDelta(answer.toString()))
+                            }
+                        }
+                    },
                 )
                 served = ctx
                 val requestedAt = now()
