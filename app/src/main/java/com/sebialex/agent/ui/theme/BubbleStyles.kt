@@ -44,10 +44,17 @@ object BubbleStyles {
     private val DOT_MATRIX = BubbleStyle("dot-matrix", "Dot matrix", listOf(Color(0xFF2A2A31), Color(0xFF3C3C46)), effect = "dots")
     private val ICE = BubbleStyle("ice", "Ice", listOf(Color(0xFFDDEBF7), Color(0xFFC3DCF0)), effect = "glass")
     private val GOLD = BubbleStyle("gold", "Gold", listOf(Color(0xFF7A5A17), Color(0xFFB8860B), Color(0xFFD9A93A)), effect = "glow")
+    private val ROSE_GOLD = BubbleStyle("rose-gold", "Rose gold", listOf(Color(0xFF6E3B3B), Color(0xFFB76E79), Color(0xFFE0BFB8)), effect = "sheen")
+    private val DEEP_SEA = BubbleStyle("deep-sea", "Deep sea", listOf(Color(0xFF0B2740), Color(0xFF12496B), Color(0xFF1E7A8C)), effect = "glass")
+    private val LAVENDER = BubbleStyle("lavender", "Lavender", listOf(Color(0xFF4A3B6B), Color(0xFF7A6BA8), Color(0xFFB9A7D9)), effect = "sheen")
+    private val MIDNIGHT_GLASS = BubbleStyle("midnight-glass", "Midnight glass", listOf(Color(0x66262421), Color(0x660B0A09)), effect = "glass")
+    private val MONO = BubbleStyle("mono", "Mono", listOf(Color(0xFF2B2B2E), Color(0xFF4A4A50)))
+    private val SUNRISE = BubbleStyle("sunrise", "Sunrise", listOf(Color(0xFF5A2A4A), Color(0xFFC25E6A), Color(0xFFF2A65A)), effect = "glow")
 
     val ALL = listOf(
         NONE, AURORA, SUNSET, BLURPLE, OCEAN_GLASS, CANDY, EMBER, FOREST, CARAMEL, SLATE, GRAPE,
         NEON_PINK, NEON_MINT, CYBER, DOT_MATRIX, ICE, GOLD,
+        ROSE_GOLD, DEEP_SEA, LAVENDER, MIDNIGHT_GLASS, MONO, SUNRISE,
     )
 
     fun byId(id: String): BubbleStyle = ALL.firstOrNull { it.id == id } ?: NONE

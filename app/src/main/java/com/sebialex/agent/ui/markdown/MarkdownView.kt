@@ -73,6 +73,8 @@ fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
                         TextLinkStyles(style = SpanStyle(color = Palette.Link, textDecoration = TextDecoration.Underline)),
                     ),
                 ) { emit(n.children) }
+                // The model's own colour for a word or a letter; see MdInline.Color.
+                is MdInline.Color -> withStyle(SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF000000L or n.hex.toLong(16)))) { emit(n.children) }
                 // Inline math (and $$…$$ written mid-sentence) flows with the words; see MathView.
                 is MdInline.Math -> appendMath(n.tex)
             }

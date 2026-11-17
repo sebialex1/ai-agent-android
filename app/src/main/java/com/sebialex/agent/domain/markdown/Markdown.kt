@@ -209,6 +209,12 @@ sealed interface MdInline {
 
     /** A formula inside text: `$…$`, `\(…\)`, or [display] `$$…$$` / `\[…\]` written mid-paragraph. */
     data class Math(val tex: String, val display: Boolean = false) : MdInline
+
+    /**
+     * Text the model coloured itself, written `{#RRGGBB|text}`. [hex] is six hex digits without
+     * the `#`; anything else is left as literal text, so a stray brace never changes a reply.
+     */
+    data class Color(val hex: String, val children: List<MdInline>) : MdInline
 }
 
 object InlineParser {
@@ -239,6 +245,17 @@ object InlineParser {
                 c == '`' -> {
                     val end = text.indexOf('`', i + 1)
                     if (end > i) { flush(); out += MdInline.Code(text.substring(i + 1, end)); i = end + 1; continue }
+                }
+                // The model's own colour: {#RRGGBB|text}. An invalid colour is literal text.
+                c == '{' && text.startsWith("{#", i) -> {
+                    val close = findClose(text, i, '{', '}')
+                    val bar = if (close > 0) text.indexOf('|', i + 2) else -1
+                    if (close > 0 && bar in (i + 2) until close && bar + 1 < close) {
+                        val hex = text.substring(i + 2, bar)
+                        if (hex.length == 6 && hex.all { it in "0123456789abcdefABCDEF" }) {
+                            flush(); out += MdInline.Color(hex, parse(text.substring(bar + 1, close))); i = close + 1; continue
+                        }
+                    }
                 }
                 c == '[' -> {
                     val close = findClose(text, i, '[', ']')

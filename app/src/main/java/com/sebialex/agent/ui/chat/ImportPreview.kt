@@ -127,12 +127,13 @@ internal fun ImportCard(path: String, file: File, onClick: () -> Unit) {
     val thumb by produceState<Thumb?>(thumbs.get(thumbKey(file)), file.path, file.lastModified()) {
         if (value == null) value = loadThumb(file, kind)
     }
-    // Landscape fills the width, portrait is capped by height; extreme shapes are cropped a little.
-    val ratio = (thumb?.ratio ?: 4f / 3f).coerceIn(0.56f, 2.1f)
-    val maxW = 248.dp
-    val maxH = 300.dp
+    // A bounded near-square squircle: the container is capped so a tall or wide picture never
+    // fills the chat. The picture itself is cropped to fit, never stretched.
+    val ratio = (thumb?.ratio ?: 1f).coerceIn(0.8f, 1.6f)
+    val maxW = 196.dp
+    val maxH = 196.dp
     val cardWidth: Dp = if (maxW / ratio > maxH) maxH * ratio else maxW
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(26.dp)
     Box(
         Modifier
             .width(cardWidth)

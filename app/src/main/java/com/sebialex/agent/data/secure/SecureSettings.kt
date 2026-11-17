@@ -90,10 +90,14 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val autocompleteOn: Boolean = false,
         /** A custom chat background image is set (file in the app's own storage). */
         val customBackground: Boolean = false,
+        /** Changes whenever the background image is replaced or cleared. */
+        val backgroundVersion: Int = 0,
         /** Dark scrim over the custom background, 0..70 percent. */
         val backgroundDim: Int = 25,
         /** User chat bubble style, a [com.sebialex.agent.ui.theme.BubbleStyles] id; empty = default. */
         val bubbleStyle: String = "",
+        /** Messages rise into place when sent or received. */
+        val bubbleMotion: Boolean = true,
         /** Recently used emoji shortcodes, most recent first (the emoji picker's recents). */
         val emojiRecent: List<String> = emptyList(),
     )
@@ -183,6 +187,28 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         if (value == null) remove(KEY_LOCAL_SAMPLER) else putString(KEY_LOCAL_SAMPLER, keyJson.encodeToString(value))
     }
 
+    /**
+     * Sampling for one model, edited from its own card. Null keeps the app-wide [localSampler],
+     * so a model without an override behaves exactly as before.
+     */
+    fun modelSampler(modelId: String): com.sebialex.agent.data.local.SamplerSpec? =
+        prefs.getString(KEY_MODEL_SAMPLER_PREFIX + modelId, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<com.sebialex.agent.data.local.SamplerSpec>(raw) }.getOrNull()
+        } ?: localSampler()
+
+    fun setModelSampler(modelId: String, value: com.sebialex.agent.data.local.SamplerSpec?) = edit {
+        if (value == null) remove(KEY_MODEL_SAMPLER_PREFIX + modelId)
+        else putString(KEY_MODEL_SAMPLER_PREFIX + modelId, keyJson.encodeToString(value))
+    }
+
+    /** Context window for one model; 0 (unset) keeps the app-wide [localContext]. */
+    fun modelContext(modelId: String): Int =
+        prefs.getInt(KEY_MODEL_CONTEXT_PREFIX + modelId, 0).takeIf { it in LOCAL_CONTEXTS } ?: localContext()
+
+    fun setModelContext(modelId: String, value: Int?) = edit {
+        if (value == null) remove(KEY_MODEL_CONTEXT_PREFIX + modelId) else putInt(KEY_MODEL_CONTEXT_PREFIX + modelId, value)
+    }
+
     /** Activation data type of the local engine; empty keeps the runtime's own default. */
     fun localActivation(): String = prefs.getString(KEY_LOCAL_ACTIVATION, null).orEmpty()
     fun setLocalActivation(value: String) = edit { putOrRemove(KEY_LOCAL_ACTIVATION, value.takeIf { it.isNotBlank() }) }
@@ -192,13 +218,22 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
 
     /** A custom chat background image was copied into the app's own storage. */
     fun customBackground(): Boolean = prefs.getBoolean(KEY_CUSTOM_BACKGROUND, false)
-    fun setCustomBackground(value: Boolean) = edit { putBoolean(KEY_CUSTOM_BACKGROUND, value) }
+    /** Bumped on every background change, so a re-picked image is re-read instead of cached. */
+    fun backgroundVersion(): Int = prefs.getInt(KEY_BACKGROUND_VERSION, 0)
+    fun setCustomBackground(value: Boolean) = edit {
+        putBoolean(KEY_CUSTOM_BACKGROUND, value)
+        putInt(KEY_BACKGROUND_VERSION, backgroundVersion() + 1)
+    }
     fun backgroundDim(): Int = prefs.getInt(KEY_BACKGROUND_DIM, 25).coerceIn(0, 70)
     fun setBackgroundDim(value: Int) = edit { putInt(KEY_BACKGROUND_DIM, value.coerceIn(0, 70)) }
 
     /** User chat bubble style id; empty keeps the default surface. */
     fun bubbleStyle(): String = prefs.getString(KEY_BUBBLE, null).orEmpty()
     fun setBubbleStyle(value: String) = edit { putOrRemove(KEY_BUBBLE, value.takeIf { it.isNotBlank() }) }
+
+    /** Messages rise into place when sent or received; the user can turn the motion off. */
+    fun bubbleMotion(): Boolean = prefs.getBoolean(KEY_BUBBLE_MOTION, true)
+    fun setBubbleMotion(value: Boolean) = edit { putBoolean(KEY_BUBBLE_MOTION, value) }
 
     /** Recently used emoji shortcodes, most recent first; unknown codes are ignored. */
     fun emojiRecent(): List<String> =
@@ -601,8 +636,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         localActivation = localActivation(),
         autocompleteOn = autocompleteOn(),
         customBackground = customBackground(),
+        backgroundVersion = backgroundVersion(),
         backgroundDim = backgroundDim(),
         bubbleStyle = bubbleStyle(),
+        bubbleMotion = bubbleMotion(),
         emojiRecent = emojiRecent(),
         keys = keyViews(),
         customProviders = customProviders(),
@@ -651,11 +688,16 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_HF_TOKEN = "hf_token"
         private const val KEY_HF_MODELS = "hf_models_v1"
         private const val KEY_LOCAL_SAMPLER = "local_sampler_v1"
+        /** Per-model runtime overrides, edited from the model's own card. */
+        private const val KEY_MODEL_SAMPLER_PREFIX = "model_sampler::"
+        private const val KEY_MODEL_CONTEXT_PREFIX = "model_context::"
         private const val KEY_LOCAL_ACTIVATION = "local_activation"
         private const val KEY_AUTOCOMPLETE = "autocomplete_on"
         private const val KEY_CUSTOM_BACKGROUND = "custom_background"
+        private const val KEY_BACKGROUND_VERSION = "custom_background_version"
         private const val KEY_BACKGROUND_DIM = "custom_background_dim"
         private const val KEY_BUBBLE = "bubble_style"
+        private const val KEY_BUBBLE_MOTION = "bubble_motion"
         private const val KEY_EMOJI_RECENT = "emoji_recent_v1"
         private const val EMOJI_RECENT_MAX = 16
         private const val KEY_BATTERY_OFFER_SHOWN = "battery_offer_shown"

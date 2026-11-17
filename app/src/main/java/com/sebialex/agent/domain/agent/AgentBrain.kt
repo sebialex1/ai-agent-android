@@ -58,6 +58,9 @@ data class BrainContext(
      * positional call sites that predate it keep compiling unchanged.
      */
     val runId: String = "",
+    /** Tool calls already executed in this turn, and the turn's budget; 0 budget means unknown. */
+    val stepsUsed: Int = 0,
+    val stepBudget: Int = 0,
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }

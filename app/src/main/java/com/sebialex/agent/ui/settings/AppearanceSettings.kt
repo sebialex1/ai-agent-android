@@ -156,6 +156,13 @@ private fun BackgroundGroup(settings: SecureSettings, snap: SecureSettings.Snaps
 
 @Composable
 private fun BubbleGroup(settings: SecureSettings, snap: SecureSettings.Snapshot) {
+    SettingsGroup("Motion") {
+        SwitchRow(
+            title = "Messages rise into place",
+            checked = snap.bubbleMotion,
+            onChange = settings::setBubbleMotion,
+        )
+    }
     SettingsGroup("User bubble") {
         BubbleStyles.ALL.forEach { s ->
             BubbleRow(s, selected = snap.bubbleStyle == s.id, onClick = { settings.setBubbleStyle(s.id) })

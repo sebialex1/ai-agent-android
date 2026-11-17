@@ -31,26 +31,31 @@ fun activeEmoji(value: TextFieldValue): ActiveEmoji? {
 }
 
 /**
- * Shortcodes that start with [query] (dataset order: popular codes first). For an empty query
- * the popup shows the user's [recent] codes first, then the most popular ones to fill the row.
+ * Shortcodes matching [query], best first: codes that start with it, then codes with a word
+ * starting with it, then any code containing it — so the whole bundled library is reachable,
+ * not only the codes that begin with what was typed. For an empty query the user's [recent]
+ * codes come first, then the most popular ones to fill the row.
  */
 fun suggestEmoji(query: String, recent: List<String> = emptyList(), limit: Int = MAX_SHOWN): List<EmojiEntry> {
     val q = query.lowercase()
     val out = ArrayList<EmojiEntry>(limit)
+    val seen = HashSet<String>()
+    fun add(code: String, emoji: String): Boolean {
+        if (!seen.add(code)) return out.size >= limit
+        out += EmojiEntry(code, emoji)
+        return out.size >= limit
+    }
     if (q.isEmpty()) {
         val byCode = EMOJI_BY_CODE
         for (code in recent) {
-            byCode[code]?.let {
-                out += EmojiEntry(code, it)
-                if (out.size >= limit) return out
-            }
+            val emoji = byCode[code] ?: continue
+            if (add(code, emoji)) return out
         }
     }
-    for ((code, emoji) in EMOJI_CODES) {
-        if (q.isNotEmpty() && !code.startsWith(q)) continue
-        if (out.any { it.code == code }) continue
-        out += EmojiEntry(code, emoji)
-        if (out.size >= limit) break
+    for ((code, emoji) in EMOJI_CODES) if (code.startsWith(q) && add(code, emoji)) return out
+    if (q.isNotEmpty()) {
+        for ((code, emoji) in EMOJI_CODES) if (code.contains("_$q") && add(code, emoji)) return out
+        for ((code, emoji) in EMOJI_CODES) if (code.contains(q) && add(code, emoji)) return out
     }
     return out
 }
@@ -90,11 +95,7 @@ fun parseEmojiCodes(text: String): String {
 }
 
 /** The emoji for a shortcode, or null when unknown. */
-fun emojiFor(code: String): String? {
-    val c = code.lowercase()
-    // Linear scan is fine at 2k entries and keeps the dataset a plain list.
-    return EMOJI_CODES.firstOrNull { it.first == c }?.second
-}
+fun emojiFor(code: String): String? = EMOJI_BY_CODE[code.lowercase()]
 
 /** Replaces the typed `:query` with [emoji] itself. */
 fun applyEmoji(value: TextFieldValue, active: ActiveEmoji, emoji: String): TextFieldValue {
@@ -116,4 +117,4 @@ fun withParsedEmojis(value: TextFieldValue): TextFieldValue {
 }
 
 private const val MAX_QUERY = 32
-private const val MAX_SHOWN = 14
+private const val MAX_SHOWN = 24

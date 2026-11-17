@@ -63,6 +63,26 @@ fun Modifier.fadeTopEdge(state: androidx.compose.foundation.ScrollState, height:
     }
 
 /**
+ * A message rising into place: fades in and slides up a little, once. [enabled] is false for
+ * messages that already existed, so scrolling back through a chat never replays the animation.
+ */
+@androidx.compose.runtime.Composable
+fun Modifier.bubbleEnter(enabled: Boolean): Modifier {
+    val progress = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(if (enabled) 0f else 1f) }
+    androidx.compose.runtime.LaunchedEffect(enabled) {
+        if (enabled) {
+            progress.animateTo(1f, androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        } else {
+            progress.snapTo(1f)
+        }
+    }
+    return this.graphicsLayer {
+        alpha = progress.value
+        translationY = (1f - progress.value) * 26.dp.toPx()
+    }
+}
+
+/**
  * The "busy" gradient: the content's own glyphs are recolored (SrcIn on an offscreen layer) with
  * a gray band that drifts left to right, so a running step or a generating conversation reads as
  * in motion without a spinner. Shared by the conversation list and the step rows so both move

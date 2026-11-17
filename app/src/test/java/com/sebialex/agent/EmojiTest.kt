@@ -60,7 +60,7 @@ class EmojiTest {
         assertTrue(suggestEmoji("ROF").first().code == "rofl")
         assertTrue(suggestEmoji("zzzznonsense").isEmpty())
         val all = suggestEmoji("")
-        assertEquals(14, all.size)
+        assertEquals(24, all.size)
         assertTrue(all.all { it.emoji.isNotEmpty() })
     }
 
@@ -69,17 +69,22 @@ class EmojiTest {
         val all = suggestEmoji("").map { it.code }
         val mixed = suggestEmoji("", recent = listOf("fire", "not_a_code", "joy"))
         assertEquals(listOf("fire", "joy"), mixed.take(2).map { it.code })
-        assertTrue(mixed.size == 14)
+        assertTrue(mixed.size == 24)
         assertTrue(mixed.drop(2).all { it.code in all })
         // Recents never duplicate the popular fill.
         assertEquals(mixed.size, mixed.map { it.code }.toSet().size)
     }
 
     @Test
-    fun `a typed query indexes by prefix regardless of recents`() {
+    fun `a typed query ranks prefix matches first, then the rest of the library`() {
         val hits = suggestEmoji("sk", recent = listOf("joy"))
         assertTrue(hits.isNotEmpty())
-        assertTrue(hits.all { it.code.startsWith("sk") })
+        // Prefix matches lead; wider matches may follow so the whole library stays reachable.
+        assertTrue(hits.first().code.startsWith("sk"))
+        assertTrue(hits.takeWhile { it.code.startsWith("sk") }.isNotEmpty())
+        assertEquals(hits.size, hits.map { it.code }.toSet().size)
+        // A query that is only a word inside a code still finds it.
+        assertTrue(suggestEmoji("crossbones").any { it.code.contains("crossbones") })
     }
 
     @Test

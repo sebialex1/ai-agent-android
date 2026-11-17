@@ -73,6 +73,7 @@ import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.Favicon
 import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.busyShimmer
+import com.sebialex.agent.ui.components.bubbleEnter
 import com.sebialex.agent.ui.markdown.MarkdownContent
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
@@ -95,6 +96,8 @@ fun UserMessage(
     onCopy: () -> Unit = {},
     onEdit: () -> Unit = {},
     onDelete: () -> Unit = {},
+    /** The user's send-motion setting; only a just-sent message animates. */
+    motion: Boolean = true,
 ) {
     val tap = rememberUpdatedState(onTap)
     // Imports become previews and their @path text is not repeated. Files @-mentioned while
@@ -128,8 +131,9 @@ fun UserMessage(
             .background(bubbleBrush)
             .then(com.sebialex.agent.ui.theme.BubbleStyles.effectModifier(bubble, bubbleShape))
     }
+    val fresh = remember(turn.id) { System.currentTimeMillis() - turn.createdAt < 2000 }
     Column(
-        Modifier.fillMaxWidth().padding(start = 56.dp),
+        Modifier.fillMaxWidth().padding(start = 56.dp).bubbleEnter(motion && fresh),
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -137,6 +141,7 @@ fun UserMessage(
         // The bubble and its action row as one block, so the row unfolds right from the bubble's
         // bottom edge (no gap of the outer spacing while it is folded away).
         if (body.isNotBlank()) Column(horizontalAlignment = Alignment.End) {
+            androidx.compose.foundation.text.selection.SelectionContainer {
             Text(
                 styledBody,
                 style = MaterialTheme.typography.bodyLarge,
@@ -150,6 +155,7 @@ fun UserMessage(
                     )
                     .padding(horizontal = 16.dp, vertical = 11.dp),
             )
+            }
             if (onTap != null) MessageActionRow(actionsOpen, canModify, onCopy, onEdit, onDelete)
         }
         mentioned.forEach { (path, file) -> MentionChip(file, onClick = { onOpenFile(path) }) }
@@ -257,22 +263,27 @@ fun AssistantTurn(
     onOpenPreview: (com.sebialex.agent.domain.model.WebPreview) -> Unit = {},
     /** The stop button on one of this answer's subagent cards. */
     onStopSubagent: (String) -> Unit = {},
+    /** The user's send-motion setting; only a just-received answer animates. */
+    motion: Boolean = true,
 ) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val fresh = remember(turn.id) { System.currentTimeMillis() - turn.createdAt < 2000 }
+    Column(Modifier.fillMaxWidth().bubbleEnter(motion && fresh), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
         // real order it happened. Only the step still in flight stays visible below the group so
         // live thinking / a running tool remains seen; it joins the group once it finishes.
         val ordered = remember(turn.steps) { stepSegments(turn.steps).flatten() }
         val live = ordered.lastOrNull()?.takeIf { it.status == StepStatus.RUNNING || it.status == StepStatus.AWAITING_APPROVAL }
         val grouped = if (live != null) ordered.dropLast(1) else ordered
-        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource)
-        if (live != null) StepRow(live, onOpenSource)
+        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
+        if (live != null) StepRow(live, onOpenSource, resolveFile)
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
         }
         turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
         if (turn.text.isNotBlank()) {
-            if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+            }
         }
         // Subagents of this answer: compact live cards under the message, their steps apart.
         SubagentCards(turn.subagents, onOpenStep, onStopSubagent)
@@ -377,7 +388,7 @@ private fun TypewriterMarkdown(text: String, onDone: () -> Unit) {
 }
 
 @Composable
-private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenSource: (SourceRef) -> Unit) {
+private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File?) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, animationSpec = tween(180), label = "chevron")
     Column {
         Row(
@@ -401,7 +412,7 @@ private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, o
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
             Column(Modifier.padding(top = 2.dp)) {
-                steps.forEach { StepRow(it, onOpenSource) }
+                steps.forEach { StepRow(it, onOpenSource, resolveFile) }
             }
         }
     }
@@ -413,7 +424,7 @@ private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, o
  * A running step carries the same moving gradient as a generating conversation title.
  */
 @Composable
-private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit) {
+private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File? = { null }) {
     if (step.kind == StepKind.REASONING) {
         ThinkingSection(step)
         return
@@ -487,7 +498,7 @@ private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit) {
             enter = expandVertically(tween(200)) + fadeIn(tween(160)),
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
-            StepDetail(step, onOpenSource)
+            StepDetail(step, onOpenSource, resolveFile)
         }
     }
 }
@@ -535,8 +546,16 @@ internal fun stepLabel(step: Step): String {
  * input/output, scrollable, with the exit code when there is one.
  */
 @Composable
-private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit) {
+private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File?) {
     Column(Modifier.padding(start = 32.dp, end = 8.dp, top = 2.dp, bottom = 8.dp)) {
+        // A generated picture shows as a small squircle preview, like the search and thinking rows.
+        val made = if (step.tool == "generate_image") step.path?.let { resolveFile(it) } else null
+        if (made != null) {
+            Box(
+                Modifier.size(84.dp).clip(RoundedCornerShape(20.dp)).background(Palette.SurfaceHigh),
+                contentAlignment = Alignment.Center,
+            ) { MediaThumb(made, 84.dp) }
+        }
         if (step.kind == StepKind.SEARCH && step.hits.isNotEmpty()) {
             step.hits.forEach { hit ->
                 val host = com.sebialex.agent.data.web.hostOf(hit.url)

@@ -118,7 +118,7 @@ fun ConversationsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .chatBackground(snap.customBackground, snap.backgroundDim)
+            .chatBackground(snap.customBackground, snap.backgroundDim, snap.backgroundVersion)
             .systemBarsPadding()
             .imePadding(),
     ) {

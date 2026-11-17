@@ -241,13 +241,17 @@ class OpenRouterBrain(
         val todos = if (ctx.todos.isEmpty() || !withTools) "" else
             "\nThis conversation's todo list (todo tool):\n" + com.sebialex.agent.domain.agent.Todos.render(ctx.todos) + "\n"
         val record = com.sebialex.agent.domain.agent.TurnRecord.context(replayed(ctx))
+        // The model converges better when it knows how much room is left.
+        val budget = if (withTools && ctx.stepBudget > 0) {
+            "\nStep budget: ${ctx.stepsUsed} of ${ctx.stepBudget} tool calls used this turn.\n"
+        } else ""
         val role = when {
             !withTools -> ""
             ctx.mode == com.sebialex.agent.domain.agent.AgentMode.SUBAGENT -> "\n" + SUBAGENT_ROLE_PROMPT
             ctx.subagentModels.isNotEmpty() -> "\n" + subagentsPrompt(ctx.subagentModels)
             else -> ""
         }
-        return SYSTEM_PROMPT + noTools + role + memory + todos + record + "\nToday is $date.\n" +
+        return SYSTEM_PROMPT + noTools + role + memory + todos + record + budget + "\nToday is $date.\n" +
             if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
     }
 
@@ -697,8 +701,16 @@ class OpenRouterBrain(
               files exist, read command output. Never invent facts, sources, files, URLs or command output.
             - If a step fails, read the error, fix the cause and retry a different way (another flag, another
               source, install what is missing). Give up only after a real attempt, and then say exactly what failed.
+            - Never repeat a call that already failed with the same arguments. Change something first: the command,
+              the path, the source, or install what was missing. Repeating it wastes a step and cannot succeed.
+            - Do not re-read a file or re-list a folder you already saw this turn unless a tool changed it.
             - Ask the user only when the request is truly ambiguous or an action is risky and not clearly wanted.
-            - Prefer several independent tool calls in one step when they do not depend on each other.
+            - Prefer several independent tool calls in one step when they do not depend on each other; keep dependent
+              calls in separate steps so you can read each result before choosing the next.
+            - Work in small verifiable increments: do one thing, read its real output, then decide the next. A long
+              chain of unverified guesses is worse than two checked steps.
+            - Know when to stop. Once the goal is met and verified, answer; do not keep exploring, polishing or
+              re-checking. If the step budget below is nearly used, finish with what you have and say what is left.
 
             # Tools
             Web
@@ -785,6 +797,9 @@ class OpenRouterBrain(
               the app shows every step. Use Markdown only when it helps (lists, tables, short code the user asked for).
             - Math renders: write formulas as LaTeX, inline with $...$ and on their own line with $$...$$ (no code
               block around them). Plain prices like $5 stay text.
+            - You may colour a word or a letter when it genuinely helps (a warning, a key term, a playful reply):
+              write {#RRGGBB|text} with six hex digits. Use it sparingly — a few words at most, never a whole
+              paragraph, and never inside code or a formula.
         """.trimIndent()
 
         /**

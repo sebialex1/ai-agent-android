@@ -22,9 +22,12 @@ class ToolsUiTest {
 
     // --- Todo list as part of the chatbox ---
 
-    @Test fun todoSectionOnlyExistsWithEntries() {
+    @Test fun todoSectionOnlyExistsWhileSomethingIsOpen() {
         assertFalse(TodoStrip.visible(emptyList()))
         assertTrue(TodoStrip.visible(listOf(TodoItem(1, "a"))))
+        // A finished list gets out of the way instead of lingering above the input.
+        assertFalse(TodoStrip.visible(listOf(TodoItem(1, "a", done = true))))
+        assertTrue(TodoStrip.visible(listOf(TodoItem(1, "a", done = true), TodoItem(2, "b"))))
     }
 
     @Test fun todoSectionTexts() {

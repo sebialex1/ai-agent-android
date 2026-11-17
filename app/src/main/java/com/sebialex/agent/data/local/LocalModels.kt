@@ -1,5 +1,8 @@
 package com.sebialex.agent.data.local
 
+/** What a model produces. The on-device runtime (LiteRT-LM) runs text models only. */
+enum class Modality { TEXT, IMAGE, VIDEO }
+
 /**
  * A model that runs on this phone with LiteRT-LM. Catalog entries are pinned to an exact
  * Hugging Face commit so the downloaded file never changes underneath the app; imported files
@@ -38,6 +41,8 @@ data class LocalModel(
     val imported: Boolean = false,
     /** Model card for the user, opened from the On-device tab. */
     val pageUrl: String? = null,
+    /** Which tab of the on-device page this model belongs to. */
+    val modality: Modality = Modality.TEXT,
 )
 
 object LocalModels {
@@ -163,6 +168,9 @@ object LocalModels {
 
     /** Models recommended for [tierGb], in catalogue order. A model may appear in several tiers. */
     fun forTier(tierGb: Int): List<LocalModel> = catalog.filter { tierGb in it.ramTiersGb }
+
+    /** Catalogue entries of one modality, in catalogue order. */
+    fun forModality(modality: Modality): List<LocalModel> = catalog.filter { it.modality == modality }
 
     fun isLocal(model: String): Boolean = model.startsWith(PREFIX)
 

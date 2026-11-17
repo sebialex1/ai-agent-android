@@ -140,6 +140,8 @@ class AgentOrchestrator(
                     mode = if (isChild) AgentMode.SUBAGENT else AgentMode.MAIN,
                     subagentModels = if (isChild) emptyList() else subagents?.models().orEmpty(),
                     runId = runId,
+                    stepsUsed = executed,
+                    stepBudget = maxSteps,
                 )
                 served = ctx
                 val requestedAt = now()

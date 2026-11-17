@@ -78,7 +78,7 @@ fun StepDetailSheet(
                     else AppIcon(iconFor(step.kind), null, tint = Palette.IconActive, size = 20.dp)
                     Spacer(Modifier.width(12.dp))
                 }
-                Text(step.tool, style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                Text(stepLabel(step), style = MaterialTheme.typography.titleSmall, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
                 QuietIconButton(R.drawable.ic_copy, "Copy", onClick = {
                     clipboard.setText(AnnotatedString(if (reasoning) step.output else step.input + "\n\n" + step.output))
                 }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)
@@ -99,8 +99,9 @@ fun StepDetailSheet(
                 step.url?.let { url ->
                     LinkRow(R.drawable.ic_open_external, url) { onOpenUrl(url) }
                 }
-                if (step.url == null) step.path?.let { path ->
-                    LinkRow(R.drawable.ic_file, path) { onOpenPath(path) }
+                // A command the agent ran is not a file to edit: only file steps offer their path.
+                if (step.url == null && (step.kind == StepKind.FILE_READ || step.kind == StepKind.FILE_WRITE)) {
+                    step.path?.let { path -> LinkRow(R.drawable.ic_file, path) { onOpenPath(path) } }
                 }
                 RawBlock("input", step.input)
                 if (step.output.isNotEmpty()) RawBlock("output", step.output)

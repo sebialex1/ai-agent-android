@@ -128,8 +128,8 @@ fun TodoPanel(
 
 /** What the todo section of the chatbox shows, kept out of Compose so it is unit-tested. */
 object TodoStrip {
-    /** The section exists only while the list has entries; otherwise the input is the plain pill. */
-    fun visible(items: List<TodoItem>): Boolean = items.isNotEmpty()
+    /** The section exists only while something is still open; a finished list gets out of the way. */
+    fun visible(items: List<TodoItem>): Boolean = items.any { !it.done }
 
     fun allDone(items: List<TodoItem>): Boolean = items.isNotEmpty() && items.all { it.done }
 

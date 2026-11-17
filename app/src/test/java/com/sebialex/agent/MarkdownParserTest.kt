@@ -50,4 +50,29 @@ class MarkdownParserTest {
         assertEquals(1, d.count { it.type == DiffType.REMOVED })
         assertEquals(1, d.count { it.type == DiffType.ADDED })
     }
+
+    @Test fun colourSpanParsesHexAndChildren() {
+        val nodes = com.sebialex.agent.domain.markdown.InlineParser.parse("say {#FF8800|hi} now")
+        val colour = nodes.filterIsInstance<com.sebialex.agent.domain.markdown.MdInline.Color>().single()
+        assertEquals("FF8800", colour.hex)
+        assertEquals("hi", colour.children.filterIsInstance<com.sebialex.agent.domain.markdown.MdInline.Text>().joinToString("") { it.text })
+        // The words around it stay plain text.
+        assertEquals("say ", nodes.first().let { (it as com.sebialex.agent.domain.markdown.MdInline.Text).text })
+    }
+
+    @Test fun invalidColourStaysLiteralText() {
+        // Wrong length, non-hex, or no separator: never a colour node, never lost text.
+        listOf("{#FFF|hi}", "{#GGGGGG|hi}", "{#FF8800 hi}", "{#FF8800|}").forEach { src ->
+            val nodes = com.sebialex.agent.domain.markdown.InlineParser.parse(src)
+            assertTrue(nodes.none { it is com.sebialex.agent.domain.markdown.MdInline.Color })
+        }
+        val text = com.sebialex.agent.domain.markdown.InlineParser.parse("{#FFF|hi}")
+            .filterIsInstance<com.sebialex.agent.domain.markdown.MdInline.Text>().joinToString("") { it.text }
+        assertEquals("{#FFF|hi}", text)
+    }
+
+    @Test fun colourInsideCodeIsNotParsed() {
+        val nodes = com.sebialex.agent.domain.markdown.InlineParser.parse("`{#FF8800|hi}`")
+        assertTrue(nodes.single() is com.sebialex.agent.domain.markdown.MdInline.Code)
+    }
 }

@@ -52,10 +52,11 @@ object CustomBackground {
  * percent for readability) when one is set, otherwise the theme's decorated backdrop.
  */
 @Composable
-fun Modifier.chatBackground(enabled: Boolean, dim: Int): Modifier {
+fun Modifier.chatBackground(enabled: Boolean, dim: Int, version: Int = 0): Modifier {
     if (!enabled) return this.themeBackdrop()
     val context = LocalContext.current
-    val bitmap = remember(enabled) {
+    // Keyed on the version too: replacing the image while one is already set must re-read it.
+    val bitmap = remember(enabled, version) {
         val f = CustomBackground.file(context)
         if (f.isFile) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
     } ?: return this.themeBackdrop()

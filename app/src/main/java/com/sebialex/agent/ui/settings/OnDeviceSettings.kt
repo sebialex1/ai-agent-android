@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +42,7 @@ import com.sebialex.agent.data.local.EngineState
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModel
 import com.sebialex.agent.data.local.LocalModels
+import com.sebialex.agent.data.local.Modality
 import com.sebialex.agent.data.local.ModelStatus
 import com.sebialex.agent.data.local.ModelStore
 import com.sebialex.agent.data.secure.SecureSettings
@@ -80,81 +82,133 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
         }
     }
 
+    var tab by rememberSaveable { mutableStateOf(Modality.TEXT) }
+    var detail by remember { mutableStateOf<LocalModel?>(null) }
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         HfSection(settings, snap, store) { message = it }
 
+        // What is loaded, plus one collapsed row for the device-level knobs. Per-model context
+        // and sampling live on the model's own card, not here.
         SettingsGroup("Runtime") {
-            NavRow(
-                title = if (ramGb > 0) "$ramGb GB RAM" else "RAM unknown",
-                value = "${LocalModels.formatSize(freeBytes)} free",
-            )
             EngineRow(engineState, snap.model, store, engine)
-            RowDivider()
-            Text("Accelerator", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
-            ChoiceChips(
-                options = listOf(SecureSettings.BACKEND_GPU, SecureSettings.BACKEND_CPU),
-                selected = snap.localBackend,
-                label = { if (it == SecureSettings.BACKEND_GPU) "GPU" else "CPU" },
-                onSelect = settings::setLocalBackend,
-            )
-            Text("Context window", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
-            ChoiceChips(
-                options = SecureSettings.LOCAL_CONTEXTS,
-                selected = snap.localContext,
-                label = { "${(it + 512) / 1024}K" },
-                onSelect = settings::setLocalContext,
-            )
-            Text("Activation", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
-            ChoiceChips(
-                options = ACTIVATION_TYPES,
-                selected = ACTIVATION_TYPES.first { it.first == snap.localActivation },
-                label = { it.second },
-                onSelect = { settings.setLocalActivation(it.first) },
-            )
-            SwitchRow(
-                title = "Faster decoding (MTP)",
-                checked = snap.localSpeculative,
-                onChange = settings::setLocalSpeculative,
-            )
             ExpandRow(
-                "Sampling",
-                value = if (snap.localSampler != null) "Custom" else "Model default",
-            ) { SamplerEditor(settings, snap.localSampler) }
-            RowDivider()
-            StorageNote(store, shared, onPermission = { storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) })
+                "Advanced",
+                value = (if (snap.localBackend == SecureSettings.BACKEND_GPU) "GPU" else "CPU") +
+                    " \u00b7 ${(snap.localContext + 512) / 1024}K" +
+                    (if (snap.localSampler != null) " \u00b7 custom sampling" else ""),
+            ) {
+                Text("Accelerator", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 6.dp))
+                ChoiceChips(
+                    options = listOf(SecureSettings.BACKEND_GPU, SecureSettings.BACKEND_CPU),
+                    selected = snap.localBackend,
+                    label = { if (it == SecureSettings.BACKEND_GPU) "GPU" else "CPU" },
+                    onSelect = settings::setLocalBackend,
+                )
+                Text("Context window", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+                ChoiceChips(
+                    options = SecureSettings.LOCAL_CONTEXTS,
+                    selected = snap.localContext,
+                    label = { "${(it + 512) / 1024}K" },
+                    onSelect = settings::setLocalContext,
+                )
+                Text("Activation", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+                ChoiceChips(
+                    options = ACTIVATION_TYPES,
+                    selected = ACTIVATION_TYPES.first { it.first == snap.localActivation },
+                    label = { it.second },
+                    onSelect = { settings.setLocalActivation(it.first) },
+                )
+                SwitchRow(
+                    title = "Faster decoding (MTP)",
+                    checked = snap.localSpeculative,
+                    onChange = settings::setLocalSpeculative,
+                )
+                RowDivider()
+                StorageNote(store, shared, onPermission = { storagePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) })
+            }
         }
 
         SettingsGroup("Models") {
-            // Grouped by the RAM they are recommended for (a recommendation, never a limit).
-            val groups = LocalModels.catalog.groupBy { it.minRamGb }.toSortedMap()
-            groups.forEach { (tier, models) ->
-                MiniLabel(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM")
-                models.forEachIndexed { i, m ->
-                    if (i > 0) RowDivider()
-                    ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it }
+            ChoiceChips(
+                options = Modality.entries.toList(),
+                selected = tab,
+                label = { when (it) { Modality.TEXT -> "Text"; Modality.IMAGE -> "Image"; Modality.VIDEO -> "Video" } },
+                onSelect = { tab = it },
+            )
+            when (tab) {
+                Modality.TEXT -> {
+                    // Grouped by the RAM they are recommended for (a recommendation, never a limit).
+                    val groups = LocalModels.forModality(Modality.TEXT).groupBy { it.minRamGb }.toSortedMap()
+                    groups.forEach { (tier, models) ->
+                        MiniLabel(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM")
+                        models.forEachIndexed { i, m ->
+                            if (i > 0) RowDivider()
+                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context, onDetail = { detail = m }) { message = it }
+                        }
+                    }
+                    if (snap.hfModels.isNotEmpty()) {
+                        MiniLabel("From Hugging Face")
+                        snap.hfModels.forEachIndexed { i, hf ->
+                            if (i > 0) RowDivider()
+                            ModelItem(
+                                hf.toLocalModel(), statuses, snap.model, ramGb, store, engine, settings, scope, context,
+                                removable = true,
+                                afterDelete = { settings.removeHfModel(hf.id) },
+                                onDetail = { detail = hf.toLocalModel() },
+                            ) { message = it }
+                        }
+                    }
+                    if (imported.isNotEmpty()) {
+                        MiniLabel("Imported")
+                        imported.forEachIndexed { i, m ->
+                            if (i > 0) RowDivider()
+                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context, onDetail = { detail = m }) { message = it }
+                        }
+                    }
+                    RowDivider()
+                    NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
                 }
+                Modality.IMAGE -> ModalityNote(
+                    "No on-device image models",
+                    "The on-device runtime runs text models only. Pictures are made by the image model in Settings > Models > Image generation.",
+                )
+                Modality.VIDEO -> ModalityNote(
+                    "No on-device video models",
+                    "Video generation does not run on a phone. The agent can download or convert video with its tools instead.",
+                )
             }
-            if (snap.hfModels.isNotEmpty()) {
-                MiniLabel("From Hugging Face")
-                snap.hfModels.forEachIndexed { i, hf ->
-                    if (i > 0) RowDivider()
-                    ModelItem(
-                        hf.toLocalModel(), statuses, snap.model, ramGb, store, engine, settings, scope, context,
-                        removable = true,
-                        afterDelete = { settings.removeHfModel(hf.id) },
-                    ) { message = it }
-                }
-            }
-            MiniLabel("Imported")
-            imported.forEachIndexed { i, m ->
-                if (i > 0) RowDivider()
-                ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context) { message = it }
-            }
-            RowDivider()
-            NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
             message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }
         }
         Spacer(Modifier.height(8.dp))
+    }
+
+    // One model's own settings: its context window and sampling, nothing else.
+    detail?.let { m ->
+        com.sebialex.agent.ui.components.AppSheet(
+            onDismiss = { detail = null },
+            title = m.name,
+            subtitle = m.tagline,
+        ) {
+            Text("Context window", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 10.dp, top = 4.dp))
+            ChoiceChips(
+                options = SecureSettings.LOCAL_CONTEXTS,
+                selected = settings.modelContext(m.id).coerceAtMost(m.maxContext),
+                label = { "${(it + 512) / 1024}K" },
+                onSelect = { settings.setModelContext(m.id, it) },
+            )
+            Text("Sampling", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 10.dp, top = 10.dp))
+            SamplerEditor(settings.modelSampler(m.id)) { settings.setModelSampler(m.id, it) }
+        }
+    }
+}
+
+/** What a modality tab shows when the runtime cannot run it: the reason, not an empty list. */
+@Composable
+private fun ModalityNote(title: String, body: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
+        Text(body, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
     }
 }
 
@@ -171,17 +225,17 @@ private fun MiniLabel(title: String) {
 
 /** Temperature, top-K, top-P and seed; Reset returns the model to its runtime defaults. */
 @Composable
-private fun SamplerEditor(settings: SecureSettings, current: com.sebialex.agent.data.local.SamplerSpec?) {
+private fun SamplerEditor(current: com.sebialex.agent.data.local.SamplerSpec?, onChange: (com.sebialex.agent.data.local.SamplerSpec?) -> Unit) {
     val spec = current ?: com.sebialex.agent.data.local.SamplerSpec(temperature = 0.8f, topK = 64, topP = 0.95f, seed = 0)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        SamplerSlider("Temperature", spec.temperature, 0f..2f, 0.05f) { settings.setLocalSampler(spec.copy(temperature = it)) }
-        SamplerSlider("Top-K", spec.topK.toFloat(), 1f..128f, 1f) { settings.setLocalSampler(spec.copy(topK = it.toInt())) }
-        SamplerSlider("Top-P", spec.topP, 0.05f..1f, 0.05f) { settings.setLocalSampler(spec.copy(topP = it)) }
+        SamplerSlider("Temperature", spec.temperature, 0f..2f, 0.05f) { onChange(spec.copy(temperature = it)) }
+        SamplerSlider("Top-K", spec.topK.toFloat(), 1f..128f, 1f) { onChange(spec.copy(topK = it.toInt())) }
+        SamplerSlider("Top-P", spec.topP, 0.05f..1f, 0.05f) { onChange(spec.copy(topP = it)) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Seed", style = MaterialTheme.typography.labelLarge, color = Palette.TextSecondary, modifier = Modifier.weight(1f))
-            PlainField("", spec.seed.toString(), "0") { settings.setLocalSampler(spec.copy(seed = it.toIntOrNull() ?: 0)) }
+            PlainField("", spec.seed.toString(), "0") { onChange(spec.copy(seed = it.toIntOrNull() ?: 0)) }
         }
-        PillButton("Reset", onClick = { settings.setLocalSampler(null) })
+        PillButton("Reset", onClick = { onChange(null) })
     }
 }
 
@@ -288,6 +342,7 @@ private fun ModelItem(
     context: Context,
     removable: Boolean = false,
     afterDelete: () -> Unit = {},
+    onDetail: (() -> Unit)? = null,
     onMessage: (String?) -> Unit,
 ) {
     ModelRow(
@@ -296,6 +351,7 @@ private fun ModelItem(
         selected = selectedId == m.id,
         ramGb = ramGb,
         removable = removable,
+        onDetail = onDetail,
         onDownload = { onMessage(store.download(m)) },
         onCancel = { store.cancel(m) },
         onUse = {
@@ -334,6 +390,7 @@ private fun ModelRow(
     selected: Boolean,
     ramGb: Int,
     removable: Boolean,
+    onDetail: (() -> Unit)? = null,
     onDownload: () -> Unit,
     onCancel: () -> Unit,
     onUse: () -> Unit,
@@ -372,6 +429,10 @@ private fun ModelRow(
                 }
             }
             if (selected) AppIcon(R.drawable.ic_check, "In use", tint = Palette.IconActive, size = 15.dp)
+            if (onDetail != null && status is ModelStatus.Ready) QuietIconButton(
+                R.drawable.ic_settings, "Settings for ${model.name}", onClick = onDetail,
+                tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,
+            )
             if (status is ModelStatus.Ready || removable) QuietIconButton(
                 R.drawable.ic_trash, "Delete ${model.name}", onClick = onDelete,
                 tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,

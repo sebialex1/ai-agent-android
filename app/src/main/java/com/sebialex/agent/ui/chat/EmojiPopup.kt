@@ -31,8 +31,8 @@ import com.sebialex.agent.ui.theme.softSurface
 
 /**
  * The emoji suggestions that open above the input while a `:code` is being typed: one tall
- * rounded row, Discord style — the emoji and its name side by side, no separation, scrolling
- * horizontally with faded edges when the matches overflow.
+ * rounded row of glyphs only, scrolling horizontally with faded edges when the matches
+ * overflow. The code is what the user is already typing, so it is not repeated here.
  */
 @Composable
 fun EmojiPopup(
@@ -62,23 +62,17 @@ fun EmojiPopup(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             entries.forEach { e ->
-                Row(
+                Box(
                     Modifier
                         .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onPick(e)
                         }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 2.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Text(e.emoji, style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        e.code,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Palette.TextSecondary,
-                        maxLines = 1,
-                    )
                 }
             }
         }

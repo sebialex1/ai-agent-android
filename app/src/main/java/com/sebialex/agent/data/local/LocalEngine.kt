@@ -80,9 +80,11 @@ class LocalEngine(
         files = { store.fileFor(it) },
         cacheDir = store.cacheDir,
         backend = settings::localBackend,
-        contextTokens = settings::localContext,
+        // The engine only ever loads the selected model, so its own overrides apply; a model
+        // without one falls back to the app-wide setting (see SecureSettings.modelContext).
+        contextTokens = { settings.modelContext(settings.model()) },
         speculative = settings::localSpeculative,
-        sampler = settings::localSampler,
+        sampler = { settings.modelSampler(settings.model()) },
         activation = settings::localActivation,
         scope = scope,
     )

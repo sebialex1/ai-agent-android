@@ -177,7 +177,7 @@ fun ChatScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .chatBackground(snap.customBackground, snap.backgroundDim)
+            .chatBackground(snap.customBackground, snap.backgroundDim, snap.backgroundVersion)
             .systemBarsPadding()
             .imePadding()
             // A tap anywhere else folds an open action row. Only watched, never consumed, so
@@ -236,6 +236,7 @@ fun ChatScreen(
                         turn,
                         resolveFile = vm::workspaceFile,
                         bubbleStyleId = snap.bubbleStyle,
+                        motion = snap.bubbleMotion,
                         onOpenFile = { onOpenFile(it, null) },
                         onTap = { actionsFor = if (actionsFor == turn.id) null else turn.id },
                         actionsOpen = actionsFor == turn.id,
@@ -265,6 +266,7 @@ fun ChatScreen(
                         pendingApproval = state.pendingApproval,
                         onToggle = { vm.toggleSteps(turn.id) },
                         onOpenStep = { openStepId = it.id },
+                        motion = snap.bubbleMotion,
                         onOpenFile = { f: FileAttachment -> onOpenFile(f.path, f.baseSnapshot) },
                         onOpenSource = { previewSource = it },
                         onMoreSources = { moreSources = it },
