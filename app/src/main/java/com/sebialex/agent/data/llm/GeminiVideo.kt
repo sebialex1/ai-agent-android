@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -100,7 +101,6 @@ object GeminiVideoProtocol {
  */
 class GeminiOmniVideo(
     private val apiKey: () -> String?,
-    private val model: String = GeminiVideoProtocol.MODEL,
 ) : VideoGenerator {
 
     override suspend fun generate(prompt: String, aspectRatio: String?, seconds: Int?, resolution: String?): GeneratedVideo =
@@ -137,7 +137,7 @@ class GeminiOmniVideo(
         runCatching { kotlinx.serialization.json.Json.parseToJsonElement(body).jsonObject["status"] as? JsonPrimitive }
             .getOrNull()?.takeIf { it.isString }?.content
 
-    private fun post(url: String, body: String): String {
+    private suspend fun post(url: String, body: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         return cancellableIo(close = { conn.disconnect() }) {
             try {
@@ -154,7 +154,7 @@ class GeminiOmniVideo(
         }
     }
 
-    private fun get(url: String): String {
+    private suspend fun get(url: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         return cancellableIo(close = { conn.disconnect() }) {
             try {
@@ -177,7 +177,7 @@ class GeminiOmniVideo(
         return text
     }
 
-    private fun download(url: String): ByteArray {
+    private suspend fun download(url: String): ByteArray {
         val conn = URL(url).openConnection() as HttpURLConnection
         return cancellableIo(close = { conn.disconnect() }) {
             try {
