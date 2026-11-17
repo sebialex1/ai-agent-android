@@ -526,6 +526,7 @@ internal fun stepLabel(step: Step): String {
         "zip_files" -> t("Zipping files", "Zipped files")
         "unzip_file" -> t("Unzipping", "Unzipped")
         "generate_image" -> t("Generating image", "Generated image")
+        "generate_video" -> t("Generating video", "Generated video")
         "check_tools" -> t("Checking tools", "Checked tools")
         "device_info" -> t("Reading device info", "Read device info")
         "attach_files" -> t("Attaching files", "Attached files")
@@ -549,7 +550,7 @@ internal fun stepLabel(step: Step): String {
 private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File?) {
     Column(Modifier.padding(start = 32.dp, end = 8.dp, top = 2.dp, bottom = 8.dp)) {
         // A generated picture shows as a small squircle preview, like the search and thinking rows.
-        val made = if (step.tool == "generate_image") step.path?.let { resolveFile(it) } else null
+        val made = if (step.tool == "generate_image" || step.tool == "generate_video") step.path?.let { resolveFile(it) } else null
         if (made != null) {
             Box(
                 Modifier.size(84.dp).clip(RoundedCornerShape(20.dp)).background(Palette.SurfaceHigh),

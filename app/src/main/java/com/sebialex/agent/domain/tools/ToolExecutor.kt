@@ -28,6 +28,8 @@ class ToolExecutor(
     private val memory: ConversationMemory? = null,
     /** Image model for generate_image; null when none is set up. */
     private val images: ImageGenerator? = null,
+    /** Video model for generate_video; null when none is set up. */
+    private val videos: com.sebialex.agent.data.llm.VideoGenerator? = null,
 ) {
     suspend fun execute(call: ToolCall): ToolResult = withContext(Dispatchers.IO) {
         try {
@@ -66,6 +68,7 @@ class ToolExecutor(
                 is ToolCall.ZipFiles -> ExtraTools.zip(workspace, call)
                 is ToolCall.UnzipFile -> ExtraTools.unzip(workspace, call)
                 is ToolCall.GenerateImage -> ExtraTools.image(workspace, images, call)
+                is ToolCall.GenerateVideo -> ExtraTools.video(workspace, videos, call)
                 is ToolCall.CheckTools -> {
                     val names = call.tools.map { it.trim() }.filter { it.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) }.distinct()
                     if (names.isEmpty()) ToolResult(call.callId, false, "No valid program names given.")

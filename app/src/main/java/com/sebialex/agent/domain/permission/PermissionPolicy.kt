@@ -83,6 +83,9 @@ class PermissionPolicy(
         // Uses the network (and OpenRouter credit): follows the web setting.
         is ToolCall.GenerateImage -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, "generate image: ${call.prompt.take(80)}")
         else PermissionDecision.Allow
+        // Uses the network and paid credit, and takes minutes: follows the web setting like images.
+        is ToolCall.GenerateVideo -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, "generate video: ${call.prompt.take(80)}")
+        else PermissionDecision.Allow
         // Attaching only references (and may rename) files inside the workspace.
         is ToolCall.AttachFiles -> call.files.firstOrNull { isOutside(it.path) }?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it.path) }
             ?: PermissionDecision.Allow

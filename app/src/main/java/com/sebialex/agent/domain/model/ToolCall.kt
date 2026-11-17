@@ -81,6 +81,19 @@ sealed interface ToolCall {
     /** Deletes a workspace file or folder (asks first). */
     data class DeleteFile(override val callId: String, val path: String) : ToolCall
 
+    /**
+     * Makes a short video (with audio) from [prompt] and saves it in the workspace. [seconds] is
+     * 3..15, [aspectRatio] "16:9" or "9:16", [resolution] "360p".."4k"; null keeps the defaults.
+     */
+    data class GenerateVideo(
+        override val callId: String,
+        val prompt: String,
+        val filename: String? = null,
+        val aspectRatio: String? = null,
+        val seconds: Int? = null,
+        val resolution: String? = null,
+    ) : ToolCall
+
     /** Downloads a URL's bytes into the workspace (any file type). */
     data class DownloadFile(override val callId: String, val url: String, val path: String? = null) : ToolCall
 

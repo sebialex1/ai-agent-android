@@ -475,6 +475,7 @@ class OpenRouterBrain(
             is ToolCall.ZipFiles -> "zip_files"
             is ToolCall.UnzipFile -> "unzip_file"
             is ToolCall.GenerateImage -> "generate_image"
+            is ToolCall.GenerateVideo -> "generate_video"
             is ToolCall.ViewImage -> "view_image"
             is ToolCall.AskUser -> "ask_user"
             is ToolCall.Todo -> "todo"
@@ -525,6 +526,13 @@ class OpenRouterBrain(
                 put("prompt", c.prompt)
                 c.filename?.let { put("filename", it) }
                 c.aspectRatio?.let { put("aspect_ratio", it) }
+            }.toString()
+            is ToolCall.GenerateVideo -> buildJsonObject {
+                put("prompt", c.prompt)
+                c.filename?.let { put("filename", it) }
+                c.aspectRatio?.let { put("aspect_ratio", it) }
+                c.seconds?.let { put("seconds", it) }
+                c.resolution?.let { put("resolution", it) }
             }.toString()
             is ToolCall.AttachFiles -> buildJsonObject {
                 putJsonArray("files") {
@@ -636,6 +644,16 @@ class OpenRouterBrain(
                 "generate_image" -> arg("prompt")?.takeIf { it.isNotBlank() }?.let {
                     ToolCall.GenerateImage(id, it, arg("filename")?.takeIf { f -> f.isNotBlank() }, arg("aspect_ratio")?.takeIf { a -> a.isNotBlank() })
                 } ?: missing("prompt")
+                "generate_video" -> arg("prompt")?.takeIf { it.isNotBlank() }?.let {
+                    ToolCall.GenerateVideo(
+                        id, it,
+                        arg("filename")?.takeIf { f -> f.isNotBlank() },
+                        arg("aspect_ratio")?.takeIf { a -> a.isNotBlank() },
+                        // A number or a numeric string; out-of-range values fall back to the default.
+                        arg("seconds")?.trim()?.toDoubleOrNull()?.toInt()?.takeIf { s -> s in 3..15 },
+                        arg("resolution")?.takeIf { r -> r.isNotBlank() },
+                    )
+                } ?: missing("prompt")
                 "attach_files", "attach_file" -> {
                     // files: [{path, name?}] or plain path strings; a single `path` (+ `name`) works too.
                     val specs = when (val f = args["files"] ?: args["paths"]) {
@@ -744,6 +762,9 @@ class OpenRouterBrain(
             - attach_files: attach the files you produced to your answer (see Artifacts).
             - generate_image: create a picture from a description; it is saved in the workspace. When the user asked
               for the picture, attach it with attach_files (a short, human-readable name).
+            - generate_video: create a short video with sound from a description (3-15 seconds). It takes a few minutes,
+              so use it only when the user asked for a video, and attach it with attach_files once it is saved. It needs
+              a Google Gemini provider with an API key; without one, say so instead of pretending it worked.
             - device_info: current date, time, time zone, locale and Android version.
             - preview_webapp: after building a web app (HTML/CSS/JS in a workspace folder with index.html), offer it to
               the user as a live preview card. It is served locally, so use relative paths and no build server; after
@@ -871,11 +892,11 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, view_image, ask_user, todo, preview_webapp, spawn_subagent"
+            "device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, spawn_subagent"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
-            "http_request, device_info, check_tools, attach_files, generate_image, view_image, ask_user, todo, preview_webapp, " +
+            "http_request, device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, " +
             "spawn_subagent (parallel subagents) when subagent models are set, and conversation_memory when memory of past chats is on."
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
@@ -1176,6 +1197,16 @@ class OpenRouterBrain(
                     Param("prompt", "string", "Detailed description of the picture: subject, style, composition, lighting"),
                     Param("filename", "string", "Optional human-readable path, e.g. images/Red panda astronaut.png", required = false),
                     Param("aspect_ratio", "string", "Optional, e.g. 1:1, 16:9, 9:16, 4:3", required = false),
+                ),
+                typedFn(
+                    "generate_video", "Create a short video with sound from a text description. It takes a few minutes, so " +
+                        "use it only when the user asked for a video. The video is saved in the workspace (not attached): " +
+                        "call attach_files with it afterwards.",
+                    Param("prompt", "string", "The scene, camera movement, lighting and mood; put anything to avoid in words"),
+                    Param("filename", "string", "Optional human-readable path, e.g. videos/Sunset over the sea.mp4", required = false),
+                    Param("aspect_ratio", "string", "16:9 (default) or 9:16", required = false),
+                    Param("seconds", "integer", "Length in whole seconds, 3 to 15 (default 10)", required = false),
+                    Param("resolution", "string", "360p, 720p (default), 1080p or 4k", required = false),
                 ),
                 arrayFn(
                     "check_tools",

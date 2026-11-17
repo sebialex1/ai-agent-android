@@ -182,7 +182,7 @@ internal fun OnDeviceSettings(
                 )
                 Modality.VIDEO -> ModalityNote(
                     "No on-device video models",
-                    "Video generation does not run on a phone. The agent can download or convert video with its tools instead.",
+                    "Video generation is too heavy for a phone. The agent makes videos through a Google Gemini provider instead: add one in Settings > Models, then ask it for a video.",
                 )
             }
             message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary, modifier = Modifier.padding(bottom = 6.dp)) }

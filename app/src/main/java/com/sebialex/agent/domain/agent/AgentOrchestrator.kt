@@ -613,6 +613,7 @@ class AgentOrchestrator(
         is ToolCall.ZipFiles -> Step(nextId(), StepKind.FILE_WRITE, "zip \u2192 ${call.output.substringAfterLast('/')}", "zip_files", args(call), path = call.output, startedAt = now())
         is ToolCall.UnzipFile -> Step(nextId(), StepKind.FILE_WRITE, "unzip ${call.path.substringAfterLast('/')}", "unzip_file", args(call), path = call.path, startedAt = now())
         is ToolCall.GenerateImage -> Step(nextId(), StepKind.FILE_WRITE, "image: ${call.prompt.take(80)}", "generate_image", args(call), path = call.filename, startedAt = now())
+        is ToolCall.GenerateVideo -> Step(nextId(), StepKind.FILE_WRITE, "video: ${call.prompt.take(80)}", "generate_video", args(call), path = call.filename, startedAt = now())
         is ToolCall.CheckTools -> Step(nextId(), StepKind.SHELL, "check " + call.tools.joinToString(", "), "check_tools", args(call), startedAt = now())
         is ToolCall.DeviceInfo -> Step(nextId(), StepKind.SHELL, "device info", "device_info", "{}", startedAt = now())
         is ToolCall.ViewImage -> Step(nextId(), StepKind.FILE_READ, "look at ${call.path.substringAfterLast('/')}", "view_image", args(call), path = call.path, startedAt = now())

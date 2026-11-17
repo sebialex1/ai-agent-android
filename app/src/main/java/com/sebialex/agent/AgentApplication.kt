@@ -43,6 +43,7 @@ class SessionRuntime(
     termux: TermuxBridge,
     sessions: SessionStore,
     images: com.sebialex.agent.domain.tools.ImageGenerator? = null,
+    videos: com.sebialex.agent.data.llm.VideoGenerator? = null,
 ) {
     val workspace = Workspace(dir)
     val mirror = WorkspaceMirror(
@@ -56,7 +57,7 @@ class SessionRuntime(
     val memory = ConversationMemoryReader(sessions, sessionId)
     /** One terminal for the agent and the user: same shell, working directory and history. */
     val terminal = com.sebialex.agent.data.shell.SharedTerminal(shell)
-    val tools = ToolExecutor(workspace, shell, terminal, web, memory, images)
+    val tools = ToolExecutor(workspace, shell, terminal, web, memory, images, videos)
 }
 
 /** Manual dependency container. */
@@ -239,13 +240,16 @@ class AppContainer(app: Application) {
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
-        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images) }
+        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images, videos) }
 
     /**
      * generate_image: the provider and model picked in Settings > Models > Image generation
      * (OpenRouter's Image API or a custom provider's /images/generations), never a silent fallback.
      */
     private val images = com.sebialex.agent.data.llm.RoutedImageGenerator(settings)
+
+    /** generate_video: the Google Gemini provider the user added, with its own key. Never a silent fallback. */
+    private val videos = com.sebialex.agent.data.llm.RoutedVideoGenerator(settings)
 
     @Synchronized
     fun forget(sessionId: String) {

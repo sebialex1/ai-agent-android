@@ -151,6 +151,32 @@ internal object ExtraTools {
         )
     }
 
+    /** Asks the video model for a clip and saves it in the workspace; attach_files shows it to the user. */
+    suspend fun video(ws: Workspace, generator: com.sebialex.agent.data.llm.VideoGenerator?, call: ToolCall.GenerateVideo): ToolResult {
+        val gen = generator ?: return ToolResult(
+            call.callId, false,
+            "Video generation is not available: add a Google Gemini provider with an API key in Settings > Models > Add provider.",
+        )
+        val clip = gen.generate(call.prompt, call.aspectRatio, call.seconds, call.resolution)
+        val wanted = call.filename?.trim()?.takeIf { it.isNotEmpty() }?.let { if ('.' in it.substringAfterLast('/')) it else "$it.mp4" }
+            ?: ("videos/" + call.prompt.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim().split(' ').take(6).joinToString(" ")
+                .replaceFirstChar { it.uppercase() }.ifEmpty { "Video" } + ".mp4")
+        val stem = wanted.substringBeforeLast('.')
+        val suffix = wanted.substringAfterLast('.')
+        var path = wanted
+        var n = 2
+        // Never overwrite an earlier clip: "Name (2).mp4", "Name (3).mp4", ...
+        while (ws.exists(path)) path = "$stem (${n++}).$suffix"
+        val saved = ws.writeBytes(path, clip.bytes)
+        val f = ws.resolve(saved)
+        val a = FileAttachment(path = ws.virtualOf(f), name = f.name, updatedAt = System.currentTimeMillis())
+        return ToolResult(
+            call.callId, true,
+            "saved the generated video to ${a.path} (${human(f.length())}). It is not attached yet: if the user asked for this " +
+                "video, call the attach_files tool with this path (and a short name) so it appears under your answer.",
+        )
+    }
+
     private val IMAGES = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif")
     private val MEDIA = setOf("mp4", "webm", "mkv", "mov", "m4v", "3gp", "mp3", "m4a", "ogg", "wav", "flac", "aac", "opus")
 
