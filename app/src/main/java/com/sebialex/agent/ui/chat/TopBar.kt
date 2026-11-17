@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
@@ -40,6 +41,17 @@ fun ChatTopBar(
         Modifier
             .fillMaxWidth()
             .height(56.dp)
+            // A soft scrim so the bar reads as a layer floating over the conversation, with the
+            // messages dissolving beneath it instead of meeting a hard edge.
+            .drawBehind {
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Palette.Ink.copy(alpha = 0.92f),
+                        0.7f to Palette.Ink.copy(alpha = 0.55f),
+                        1f to androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
+            }
             .padding(horizontal = 14.dp),
     ) {
         SurfaceIconButton(R.drawable.ic_close, "Conversations", onClick = onClose, modifier = Modifier.align(Alignment.CenterStart))
