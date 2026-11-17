@@ -58,7 +58,13 @@ import kotlinx.coroutines.launch
  * and tune accelerator, context size and multi-token prediction.
  */
 @Composable
-internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engine: LocalEngine) {
+internal fun OnDeviceSettings(
+    settings: SecureSettings,
+    store: ModelStore,
+    engine: LocalEngine,
+    /** Opens the image-model picker: the Image tab leads to real generation, not a dead end. */
+    onOpenImageModels: () -> Unit = {},
+) {
     val snap by settings.state.collectAsStateWithLifecycle()
     val statuses by store.statuses.collectAsStateWithLifecycle()
     val imported by store.imported.collectAsStateWithLifecycle()
@@ -171,7 +177,8 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
                 }
                 Modality.IMAGE -> ModalityNote(
                     "No on-device image models",
-                    "The on-device runtime runs text models only. Pictures are made by the image model in Settings > Models > Image generation.",
+                    "The on-device runtime runs text models only. Pictures are made by an image model you pick.",
+                    action = "Choose image model" to onOpenImageModels,
                 )
                 Modality.VIDEO -> ModalityNote(
                     "No on-device video models",
@@ -203,12 +210,15 @@ internal fun OnDeviceSettings(settings: SecureSettings, store: ModelStore, engin
     }
 }
 
-/** What a modality tab shows when the runtime cannot run it: the reason, not an empty list. */
+/** What a modality tab shows when the runtime cannot run it: the reason, and a way forward. */
 @Composable
-private fun ModalityNote(title: String, body: String) {
+private fun ModalityNote(title: String, body: String, action: Pair<String, () -> Unit>? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
         Text(body, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
+        action?.let { (label, onClick) ->
+            PillButton(label, onClick = onClick, primary = true, modifier = Modifier.padding(top = 4.dp))
+        }
     }
 }
 

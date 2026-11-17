@@ -247,7 +247,7 @@ fun SettingsScreen(
                             onDismiss = { picking = false },
                         )
                     }
-                    SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine)
+                    SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine, onOpenImageModels = { section = SettingsSection.IMAGE })
                     SettingsSection.IMAGE -> ImageModelGroup(settings, snap, models)
                     SettingsSection.THINKING -> ThinkingGroup(settings, snap, models)
                     SettingsSection.CHATS -> {
