@@ -1,5 +1,7 @@
 package com.sebialex.agent.ui.components
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Size
@@ -59,3 +61,41 @@ fun Modifier.fadeTopEdge(state: androidx.compose.foundation.ScrollState, height:
             blendMode = BlendMode.DstIn,
         )
     }
+
+/**
+ * The "busy" gradient: the content's own glyphs are recolored (SrcIn on an offscreen layer) with
+ * a gray band that drifts left to right, so a running step or a generating conversation reads as
+ * in motion without a spinner. Shared by the conversation list and the step rows so both move
+ * identically. The animation is read in the draw phase only and never recomposes the row.
+ */
+@androidx.compose.runtime.Composable
+fun Modifier.busyShimmer(): Modifier {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "busy")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1800, easing = androidx.compose.animation.core.LinearEasing),
+            androidx.compose.animation.core.RepeatMode.Restart,
+        ),
+        label = "busyBand",
+    )
+    return this
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            val band = (size.width * 0.55f).coerceAtLeast(80.dp.toPx())
+            val x = -band + (size.width + band * 2f) * progress
+            drawRect(
+                brush = Brush.linearGradient(
+                    0f to Color(0xFF8C877F),
+                    0.5f to Color(0xFFE6E1DA),
+                    1f to Color(0xFF8C877F),
+                    start = androidx.compose.ui.geometry.Offset(x, 0f),
+                    end = androidx.compose.ui.geometry.Offset(x + band, 0f),
+                    tileMode = androidx.compose.ui.graphics.TileMode.Clamp,
+                ),
+                blendMode = BlendMode.SrcIn,
+            )
+        }
+}

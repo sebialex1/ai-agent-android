@@ -66,10 +66,15 @@ import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.FadingText
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.components.SurfaceIconButton
+import com.sebialex.agent.ui.components.busyShimmer
 import com.sebialex.agent.ui.components.fadeTopEdge
 import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.chatBackground
 import com.sebialex.agent.ui.theme.softSurface
+
+/** Unpinned rows shown before "Show more", and how many each tap reveals. */
+private const val INITIAL_UNPINNED = 6
+private const val MORE_STEP = 6
 
 /**
  * Minimal conversations menu, reached from the top-left X in the chat.
@@ -146,6 +151,11 @@ fun ConversationsScreen(
             }
         }
 
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // Opening the list lands on the newest conversation instead of wherever it was left scrolled.
+        androidx.compose.runtime.LaunchedEffect(Unit) { listState.scrollToItem(0) }
+        var unpinnedShown by rememberSaveable { mutableStateOf(INITIAL_UNPINNED) }
+
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (filtered.isEmpty()) {
                 Text(
@@ -155,16 +165,20 @@ fun ConversationsScreen(
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
-                val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                // Pinned always show; the rest is revealed a screenful at a time.
+                val groups = groupConversations(filtered)
+                val pinnedRows = groups.firstOrNull { it.first == "Pinned" }?.second.orEmpty()
+                val unpinned = groups.filterNot { it.first == "Pinned" }.flatMap { it.second }
+                val visible = unpinned.take(unpinnedShown)
+                val display = (if (pinnedRows.isEmpty()) emptyList() else listOf("Pinned" to pinnedRows)) +
+                    groupConversations(visible)
                 LazyColumn(
                     Modifier.fillMaxSize().fadeTopEdge(listState),
                     state = listState,
                     contentPadding = PaddingValues(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 12.dp),
-                    verticalArrangement = Arrangement.Bottom,
+                    verticalArrangement = Arrangement.Top,
                 ) {
-                    // Pinned first, then by how recently each conversation was updated.
-                    val groups = groupConversations(filtered)
-                    groups.forEach { (label, rows) ->
+                    display.forEach { (label, rows) ->
                         item(key = "h:$label") { ListHeader(label) }
                         items(rows, key = { (if (it.pinned) "p:" else "c:") + it.id }) { item ->
                             ConversationRow(
@@ -187,6 +201,20 @@ fun ConversationsScreen(
                                 },
                                 onSelectMore = { id -> if (id.isNotBlank() && id !in selected) selected.add(id) },
                                 onOptions = { options = item },
+                            )
+                        }
+                    }
+                    if (unpinned.size > visible.size) {
+                        item(key = "more") {
+                            Text(
+                                "Show ${minOf(MORE_STEP, unpinned.size - visible.size)} more",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Palette.TextSecondary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { unpinnedShown += MORE_STEP }
+                                    .padding(horizontal = 12.dp, vertical = 14.dp),
                             )
                         }
                     }
@@ -375,7 +403,7 @@ private fun ConversationRow(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (selected) AppIcon(R.drawable.ic_check, "Selected", tint = Color.White, size = 13.dp)
+                if (selected) AppIcon(R.drawable.ic_check, "Selected", tint = Palette.OnAccent, size = 13.dp)
             }
         } else {
             QuietIconButton(R.drawable.ic_more, "Conversation options", onClick = onOptions, tint = Palette.IconMuted, iconSize = 18.dp)
@@ -384,43 +412,11 @@ private fun ConversationRow(
 }
 
 /**
- * Title shimmer for a conversation that is generating: the glyphs are recolored (SrcIn on an
- * offscreen layer) with a gray gradient whose lighter band drifts slowly from left to right.
- * Gray enough to read as "busy", light enough to stay legible. Only used in this list.
+ * Title shimmer for a conversation that is generating: the shared busy gradient (see
+ * [com.sebialex.agent.ui.components.busyShimmer]), so a running chat and a running step move alike.
  */
 @Composable
-private fun Modifier.processingShimmer(): Modifier {
-    val t = rememberInfiniteTransition(label = "processing")
-    val progress by t.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
-        label = "shimmer",
-    )
-    return this
-        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-        .drawWithContent {
-            drawContent()
-            val band = (size.width * 0.55f).coerceAtLeast(80.dp.toPx())
-            // Read in the draw phase only, so the animation never recomposes the row.
-            val x = -band + (size.width + band * 2f) * progress
-            drawRect(
-                brush = Brush.linearGradient(
-                    0f to ShimmerBase,
-                    0.5f to ShimmerPeak,
-                    1f to ShimmerBase,
-                    start = Offset(x, 0f),
-                    end = Offset(x + band, 0f),
-                    tileMode = TileMode.Clamp,
-                ),
-                blendMode = BlendMode.SrcIn,
-            )
-        }
-}
-
-/** Resting gray of a busy title, and the lighter band that moves across it. */
-private val ShimmerBase = Color(0xFF8C877F)
-private val ShimmerPeak = Color(0xFFE6E1DA)
+private fun Modifier.processingShimmer(): Modifier = busyShimmer()
 
 private fun relativeTime(at: Long): String {
     val age = (System.currentTimeMillis() - at).coerceAtLeast(0)

@@ -332,6 +332,7 @@ class AgentOrchestrator(
                                 finishedAt = now(),
                                 url = result.sources.firstOrNull()?.url ?: step.url,
                                 path = result.attachment?.path ?: step.path,
+                                hits = result.searchHits,
                             )
                             send(AgentEvent.StepUpdated(finished)); audit.record(finished)
                             result.attachment?.let { a ->

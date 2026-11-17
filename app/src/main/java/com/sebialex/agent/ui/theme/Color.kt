@@ -1,41 +1,44 @@
 package com.sebialex.agent.ui.theme
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 /**
- * The live palette. Its values are written by [apply] whenever the selected theme changes (read
- * inside composition, so the whole app recomposes with the new colors) and are otherwise used
- * exactly like fixed colors. Text colors come from the theme's surfaces with a minimum contrast
+ * The live palette. Every value is snapshot state, so a composable that reads one is subscribed
+ * to it and recomposes when [apply] writes a new theme — plain fields were read once and kept
+ * the old theme's colors. Text colors come from the theme's surfaces with a minimum contrast
  * (see [Themes.textColorsFor]), so no theme can leave text unreadable.
  */
 object Palette {
-    var Ink = Color(0xFF0B0A09)            // app background
-    var Surface = Color(0xFF151412)        // raised rows / sheets
-    var SurfaceHigh = Color(0xFF1D1B19)    // pills, input
-    var SurfaceHighest = Color(0xFF262421) // pressed / chips
-    var Highlight = Color(0x14FFFFFF)      // soft top-edge highlight
-    var TextPrimary = Color(0xFFF2EEE8)
-    var TextSecondary = Color(0xFFA9A49C)
-    var TextTertiary = Color(0xFF716C65)
-    var IconActive = Color(0xFFF2EEE8)
-    var IconMuted = Color(0xFF8E8981)
-    var Accent = Color(0xFFF2EEE8)         // send button fill
-    var OnAccent = Color(0xFF0B0A09)
-    var Warning = Color(0xFFE2B26A)
-    var Danger = Color(0xFFE07A6A)
-    var DiffAdd = Color(0x1F7FCF8F)
-    var DiffAddText = Color(0xFFA9DDB2)
-    var DiffRemove = Color(0x1FE07A6A)
-    var DiffRemoveText = Color(0xFFEBA79C)
-    var CodeBackground = Color(0xFF121110)
-    var Link = Color(0xFFD9CFC2)
+    var Ink by mutableStateOf(Color(0xFF0B0A09))            // app background
+    var Surface by mutableStateOf(Color(0xFF151412))        // raised rows / sheets
+    var SurfaceHigh by mutableStateOf(Color(0xFF1D1B19))    // pills, input
+    var SurfaceHighest by mutableStateOf(Color(0xFF262421)) // pressed / chips
+    var Highlight by mutableStateOf(Color(0x14FFFFFF))      // soft top-edge highlight
+    var TextPrimary by mutableStateOf(Color(0xFFF2EEE8))
+    var TextSecondary by mutableStateOf(Color(0xFFA9A49C))
+    var TextTertiary by mutableStateOf(Color(0xFF716C65))
+    var IconActive by mutableStateOf(Color(0xFFF2EEE8))
+    var IconMuted by mutableStateOf(Color(0xFF8E8981))
+    var Accent by mutableStateOf(Color(0xFFF2EEE8))         // send button fill
+    var OnAccent by mutableStateOf(Color(0xFF0B0A09))
+    var Warning by mutableStateOf(Color(0xFFE2B26A))
+    var Danger by mutableStateOf(Color(0xFFE07A6A))
+    var DiffAdd by mutableStateOf(Color(0x1F7FCF8F))
+    var DiffAddText by mutableStateOf(Color(0xFFA9DDB2))
+    var DiffRemove by mutableStateOf(Color(0x1FE07A6A))
+    var DiffRemoveText by mutableStateOf(Color(0xFFEBA79C))
+    var CodeBackground by mutableStateOf(Color(0xFF121110))
+    var Link by mutableStateOf(Color(0xFFD9CFC2))
 
     /** The background gradient of the current theme, top to bottom. */
-    var Gradient: List<Color> = listOf(Ink)
+    var Gradient: List<Color> by mutableStateOf(listOf(Color(0xFF0B0A09)))
 
     /** The current theme's backdrop decoration ("", "stars", "braille", "liquid"). */
-    var Decor: String = ""
+    var Decor: String by mutableStateOf("")
 
     /** Applies [t] to every live color, deriving the text colors from its surfaces. */
     fun apply(t: ThemePreset) {

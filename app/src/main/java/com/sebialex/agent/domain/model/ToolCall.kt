@@ -175,6 +175,7 @@ data class ToolResult(
     val preview: WebPreview? = null,
 )
 
+@kotlinx.serialization.Serializable
 data class SearchHit(val title: String, val url: String, val snippet: String)
 
 /** Actions of the todo tool. */

@@ -36,6 +36,8 @@ data class Step(
     val exitCode: Int? = null,
     /** The action was risky ([risk]) and ran without asking because auto-approve is on. */
     val autoApproved: Boolean = false,
+    /** Web search results of this step, so the row can list the sites it found. */
+    val hits: List<SearchHit> = emptyList(),
 )
 
 @Serializable

@@ -37,8 +37,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -70,6 +72,7 @@ import com.sebialex.agent.domain.model.Turn
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.Favicon
 import com.sebialex.agent.ui.components.FadingText
+import com.sebialex.agent.ui.components.busyShimmer
 import com.sebialex.agent.ui.markdown.MarkdownContent
 import com.sebialex.agent.ui.theme.MonoSmall
 import com.sebialex.agent.ui.theme.Palette
@@ -262,8 +265,8 @@ fun AssistantTurn(
         val ordered = remember(turn.steps) { stepSegments(turn.steps).flatten() }
         val live = ordered.lastOrNull()?.takeIf { it.status == StepStatus.RUNNING || it.status == StepStatus.AWAITING_APPROVAL }
         val grouped = if (live != null) ordered.dropLast(1) else ordered
-        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenStep)
-        if (live != null) StepRow(live, onClick = { onOpenStep(live) })
+        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource)
+        if (live != null) StepRow(live, onOpenSource)
         if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
             ApprovalCard(pendingApproval, onApproval)
         }
@@ -374,7 +377,7 @@ private fun TypewriterMarkdown(text: String, onDone: () -> Unit) {
 }
 
 @Composable
-private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenStep: (Step) -> Unit) {
+private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenSource: (SourceRef) -> Unit) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, animationSpec = tween(180), label = "chevron")
     Column {
         Row(
@@ -398,21 +401,29 @@ private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, o
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
             Column(Modifier.padding(top = 2.dp)) {
-                steps.forEach { StepRow(it, onClick = { onOpenStep(it) }) }
+                steps.forEach { StepRow(it, onOpenSource) }
             }
         }
     }
 }
 
+/**
+ * One action, expanded in place: tapping the row reveals what it did — a web search lists the
+ * sites it found, anything else shows its real input and output — instead of opening a sheet.
+ * A running step carries the same moving gradient as a generating conversation title.
+ */
 @Composable
-private fun StepRow(step: Step, onClick: () -> Unit) {
+private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit) {
     if (step.kind == StepKind.REASONING) {
-        ThinkingSection(step, onClick)
+        ThinkingSection(step)
         return
     }
+    var open by rememberSaveable(step.id) { mutableStateOf(false) }
+    val rotation by animateFloatAsState(if (open) 90f else 0f, animationSpec = tween(180), label = "stepChevron")
     val failed = step.status == StepStatus.FAILED
     val awaiting = step.status == StepStatus.AWAITING_APPROVAL
-    val muted = step.status == StepStatus.RUNNING || step.status == StepStatus.DENIED
+    val running = step.status == StepStatus.RUNNING
+    val muted = running || step.status == StepStatus.DENIED
     val tint = when {
         failed -> Palette.Danger
         awaiting -> Palette.Warning
@@ -430,50 +441,149 @@ private fun StepRow(step: Step, onClick: () -> Unit) {
         } else null
     }
     Column {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(start = 2.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-            when {
-                //                 failed && step.kind != StepKind.PERMISSION -> AppIcon(R.drawable.ic_warning, "Failed", tint = tint, size = 17.dp)
-                step.kind == StepKind.FETCH -> Favicon(step.payload, size = 15.dp)
-                else -> AppIcon(iconFor(step.kind), null, tint = tint, size = 17.dp)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { open = !open }
+                .padding(start = 2.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                if (step.kind == StepKind.FETCH) Favicon(step.payload, size = 15.dp)
+                else AppIcon(iconFor(step.kind), null, tint = tint, size = 17.dp)
+            }
+            Spacer(Modifier.width(12.dp))
+            FadingText(
+                text = stepLabel(step),
+                style = if (step.tool == "shell" || step.tool == "python") MonoSmall else MaterialTheme.typography.bodyMedium,
+                color = if (muted) Palette.TextTertiary else Palette.TextSecondary,
+                modifier = Modifier.weight(1f).then(if (running) Modifier.busyShimmer() else Modifier),
+            )
+            // Ran without asking (auto-approve): a tiny shield in the row's own muted tint.
+            if (step.autoApproved) {
+                Spacer(Modifier.width(6.dp))
+                AppIcon(R.drawable.ic_shield, "Auto-approved", tint = Palette.TextTertiary, size = 12.dp)
+            }
+            Spacer(Modifier.width(8.dp))
+            AppIcon(R.drawable.ic_chevron_right, if (open) "Collapse" else "Expand", tint = Palette.TextTertiary, size = 14.dp, modifier = Modifier.rotate(rotation))
+        }
+        if (missingTool != null) {
+            Text(
+                missingTool,
+                style = MonoSmall,
+                color = Palette.Warning,
+                maxLines = 2,
+                modifier = Modifier
+                    .padding(start = 34.dp, end = 8.dp, bottom = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Palette.Warning.copy(alpha = 0.08f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+        AnimatedVisibility(
+            visible = open,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+        ) {
+            StepDetail(step, onOpenSource)
+        }
+    }
+}
+
+/** What a step did, in words: "Generating image" while it runs, "Generated image" once it is done. */
+internal fun stepLabel(step: Step): String {
+    val busy = step.status == StepStatus.RUNNING || step.status == StepStatus.AWAITING_APPROVAL
+    fun t(ing: String, done: String) = if (busy) ing else done
+    val name = step.payload.substringAfterLast('/')
+    return when (step.tool) {
+        "web_search" -> t("Searching", "Searched") + " \u201c${step.payload}\u201d"
+        "web_fetch" -> t("Reading ", "Read ") + step.payload
+        "download_file" -> t("Downloading", "Downloaded")
+        "http_request" -> t("Calling ", "Called ") + step.payload
+        "shell", "python" -> step.payload
+        "read_file" -> t("Reading ", "Read ") + name
+        "write_file" -> t("Writing ", "Wrote ") + name
+        "edit_file" -> t("Editing ", "Edited ") + name
+        "list_files" -> t("Listing files", "Listed files")
+        "search_files" -> t("Searching files", "Searched files")
+        "move_file" -> t("Moving ", "Moved ") + step.payload
+        "copy_file" -> t("Copying ", "Copied ") + step.payload
+        "delete_file" -> t("Deleting ", "Deleted ") + name
+        "file_info", "view_image" -> step.payload
+        "zip_files" -> t("Zipping files", "Zipped files")
+        "unzip_file" -> t("Unzipping", "Unzipped")
+        "generate_image" -> t("Generating image", "Generated image")
+        "check_tools" -> t("Checking tools", "Checked tools")
+        "device_info" -> t("Reading device info", "Read device info")
+        "attach_files" -> t("Attaching files", "Attached files")
+        "preview_webapp" -> t("Preparing preview", "Prepared preview")
+        "conversation_memory" -> t("Recalling past chats", "Recalled past chats")
+        "ask_user" -> t("Asking you", "Asked you")
+        "todo" -> t("Updating the list", "Updated the list")
+        "spawn_subagent" -> t("Starting a subagent", "Started a subagent")
+        "main_conversation" -> t("Reading the conversation", "Read the conversation")
+        "vision_intent" -> t("Checking the image", "Checked the image")
+        else -> step.payload
+    }
+}
+
+/**
+ * The expanded body of a step. A web search becomes a vertical list of the sites it found
+ * (favicon, title, host); tapping one opens its preview. Every other step shows its real
+ * input/output, scrollable, with the exit code when there is one.
+ */
+@Composable
+private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit) {
+    Column(Modifier.padding(start = 32.dp, end = 8.dp, top = 2.dp, bottom = 8.dp)) {
+        if (step.kind == StepKind.SEARCH && step.hits.isNotEmpty()) {
+            step.hits.forEach { hit ->
+                val host = com.sebialex.agent.data.web.hostOf(hit.url)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onOpenSource(SourceRef(hit.url, host, hit.title, hit.snippet)) }
+                        .padding(vertical = 7.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Favicon(host, size = 15.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        FadingText(
+                            hit.title.ifBlank { host },
+                            MaterialTheme.typography.bodySmall,
+                            Palette.TextSecondary,
+                        )
+                        Text(host, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+                    }
+                }
+            }
+        } else {
+            val body = step.output.ifBlank { step.input }
+            if (body.isNotBlank()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Palette.CodeBackground)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text(body, style = MonoSmall, color = Palette.TextTertiary)
+                }
+            }
+            step.exitCode?.let {
+                Text(
+                    "exit code $it",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (it == 0) Palette.TextTertiary else Palette.Danger,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
-        Spacer(Modifier.width(12.dp))
-        FadingText(
-            text = step.payload,
-            style = if (step.kind == StepKind.SHELL) MonoSmall else MaterialTheme.typography.bodyMedium,
-            color = if (muted) Palette.TextTertiary else Palette.TextSecondary,
-            modifier = Modifier.weight(1f),
-        )
-        // Ran without asking (auto-approve): a tiny shield in the row's own muted tint.
-        if (step.autoApproved) {
-            Spacer(Modifier.width(6.dp))
-            AppIcon(R.drawable.ic_shield, "Auto-approved", tint = Palette.TextTertiary, size = 12.dp)
-        }
-        Spacer(Modifier.width(8.dp))
-        AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
-    }
-    if (missingTool != null) {
-        Text(
-            missingTool,
-            style = MonoSmall,
-            color = Palette.Warning,
-            maxLines = 2,
-            modifier = Modifier
-                .padding(start = 34.dp, end = 8.dp, bottom = 6.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Palette.Warning.copy(alpha = 0.08f))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        )
-    }
     }
 }
 
@@ -528,11 +638,11 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
 /**
  * The model's thinking for a turn that also called tools, as its own section under the tool
  * calls: a quiet "Thinking" / "Thought for 12s" header with a chevron. While the model is still
- * thinking the live one-line window shows under the header; once done it is collapsed, and
- * expanding it shows the full reasoning text (tap the text for the raw audit sheet).
+ * thinking the live one-line window shows under the header; tapping the header or the window
+ * expands the full reasoning in place — no sheet.
  */
 @Composable
-private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
+private fun ThinkingSection(step: Step) {
     val live = step.status == StepStatus.RUNNING
     var open by androidx.compose.runtime.saveable.rememberSaveable(step.id) { androidx.compose.runtime.mutableStateOf(false) }
     val rotation by animateFloatAsState(if (open) 90f else 0f, animationSpec = tween(180), label = "thinkingChevron")
@@ -557,7 +667,7 @@ private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
             AppIcon(R.drawable.ic_chevron_right, if (open) "Hide thinking" else "Show thinking", tint = Palette.TextTertiary, size = 15.dp, modifier = Modifier.rotate(rotation))
         }
         // Live and collapsed: the moving one-line window, so thinking is still visible as it streams.
-        if (live && !open && step.output.isNotBlank()) ThoughtRow(step, onOpen)
+        if (live && !open && step.output.isNotBlank()) ThoughtRow(step) { open = !open }
         AnimatedVisibility(
             visible = open,
             enter = expandVertically(tween(200)) + fadeIn(tween(160)),
@@ -575,7 +685,6 @@ private fun ThinkingSection(step: Step, onOpen: () -> Unit) {
                     }
                     .heightIn(max = 360.dp)
                     .verticalScroll(rememberScrollState())
-                    .clickable(onClick = onOpen)
                     .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             ) {
                 Text(
