@@ -174,7 +174,7 @@ fun FileManager(
                 }
                 if (items.isEmpty()) item(key = "empty") {
                     Text(
-                        if (dir == "/") "The workspace is empty. Files the agent or the terminal create appear here." else "This folder is empty.",
+                        "Empty",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Palette.TextTertiary,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 24.dp),

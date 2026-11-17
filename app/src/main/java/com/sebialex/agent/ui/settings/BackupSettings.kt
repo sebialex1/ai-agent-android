@@ -184,7 +184,7 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
     val restore = rememberRestoreFlow(backup, onRestored) { message = it }
     fun restoreFromFolder() { if (backup.backupInFolder() != null) restore(true) else message = "No backup file in the folder yet." }
 
-    SettingsGroup("Backup folder") {
+    SettingsGroup("Backup") {
         val action = BackupRows.folderAction(status.folderUri != null, status.pendingRestore)
         Row(
             Modifier
@@ -240,9 +240,7 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
                 }
             }, chevron = false)
         }
-    }
-
-    SettingsGroup("API keys in the backup") {
+        RowDivider()
         if (editingPass) {
             PassphraseField(pass) { pass = it }
             if (pass.isNotEmpty() && pass.trim().length < 8) Text("At least 8 characters.", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
@@ -260,8 +258,8 @@ internal fun BackupSettings(backup: BackupManager, settings: SecureSettings, onR
             }, danger = true)
         } else {
             NavRow(
-                title = if (hasPass) "Included, encrypted" else "Not included",
-                value = if (hasPass) "Tap to change the passphrase" else "Tap to set a passphrase",
+                title = "API keys",
+                value = if (hasPass) "Included, encrypted" else "Not included",
                 icon = com.sebialex.agent.R.drawable.ic_key,
                 onClick = { editingPass = true },
                 chevron = true,
