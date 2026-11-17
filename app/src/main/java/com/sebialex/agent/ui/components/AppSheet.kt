@@ -4,6 +4,8 @@ import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -194,6 +196,45 @@ fun SheetTextField(
             )
         }
         QuietIconButton(R.drawable.ic_check, "Save", onClick = { if (draft.isNotBlank()) onSubmit(draft.trim()) }, enabled = draft.isNotBlank())
+    }
+}
+
+/** Multiline themed input with a save button. Blank is allowed, so it can clear what was set. */
+@Composable
+fun SheetTextArea(
+    initial: String,
+    placeholder: String,
+    onSubmit: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var draft by remember(initial) { mutableStateOf(initial) }
+    Column(
+        modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .softSurface(RoundedCornerShape(16.dp), Palette.SurfaceHigh, elevation = 2.dp)
+                .heightIn(min = 130.dp, max = 280.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            BasicTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Palette.TextPrimary),
+                cursorBrush = SolidColor(Palette.TextPrimary),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    if (draft.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = Palette.TextTertiary)
+                    inner()
+                },
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            QuietIconButton(R.drawable.ic_check, "Save", onClick = { onSubmit(draft.trim()) })
+        }
     }
 }
 

@@ -536,8 +536,23 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     }
     /** Drops per-conversation settings of a deleted conversation. */
     fun forgetConversation(sessionId: String) {
-        edit { remove(KEY_MEMORY_PREFIX + sessionId) }
+        edit {
+            remove(KEY_MEMORY_PREFIX + sessionId)
+            remove(KEY_PROMPT_PREFIX + sessionId)
+        }
         _memoryChats.value = _memoryChats.value - sessionId
+    }
+
+    /**
+     * The user's own instructions for one conversation, added on top of the built-in system
+     * prompt. Blank means none, so a conversation without one behaves exactly as before.
+     */
+    fun conversationPrompt(sessionId: String): String =
+        prefs.getString(KEY_PROMPT_PREFIX + sessionId, null)?.trim().orEmpty()
+
+    fun setConversationPrompt(sessionId: String, value: String) = edit {
+        val v = value.trim()
+        if (v.isEmpty()) remove(KEY_PROMPT_PREFIX + sessionId) else putString(KEY_PROMPT_PREFIX + sessionId, v)
     }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
     fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
@@ -681,6 +696,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"
         private const val KEY_OLLAMA_CUSTOM = "ollama_model_custom"
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
+        /** The user's own system-prompt addition, per conversation. A plain setting, so it is backed up. */
+        private const val KEY_PROMPT_PREFIX = "conversation_prompt::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"
         private const val KEY_AUTO_TITLES = "auto_titles"
         private const val KEY_THEME = "app_theme"

@@ -67,6 +67,8 @@ class AgentOrchestrator(
     private val autoApprove: () -> Boolean = { false },
     /** Memory of earlier conversations is on for this conversation (per-conversation toggle). */
     private val memoryEnabled: () -> Boolean = { false },
+    /** The user's own instructions for this conversation, added on top of the system prompt. */
+    private val customPrompt: () -> String = { "" },
     private val maxSteps: Int = 30,
     /** Where spawn_subagent gets its children; null when this orchestrator cannot start any. */
     private val subagents: Subagents? = null,
@@ -150,6 +152,7 @@ class AgentOrchestrator(
                     runId = runId,
                     stepsUsed = executed,
                     stepBudget = maxSteps,
+                    customPrompt = customPrompt(),
                     onContent = { delta ->
                         synchronized(answer) {
                             answer.append(delta)

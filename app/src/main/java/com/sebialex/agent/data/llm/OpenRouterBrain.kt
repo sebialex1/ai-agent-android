@@ -252,7 +252,8 @@ class OpenRouterBrain(
             else -> ""
         }
         return SYSTEM_PROMPT + noTools + role + memory + todos + record + budget + "\nToday is $date.\n" +
-            if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
+            (if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")) +
+            ctx.customSection()
     }
 
     /**

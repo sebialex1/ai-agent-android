@@ -274,6 +274,7 @@ class AppContainer(app: Application) {
                 workspace = rt.workspace,
                 audit = rt.audit,
                 autoApprove = { settings.autoApprove() },
+                customPrompt = { settings.conversationPrompt(sessionId) },
                 maxSteps = com.sebialex.agent.domain.agent.SubagentRuns.CHILD_MAX_STEPS,
             )
         }
@@ -285,6 +286,7 @@ class AppContainer(app: Application) {
             audit = rt.audit,
             autoApprove = { settings.autoApprove() },
             memoryEnabled = { settings.conversationMemory(sessionId) },
+            customPrompt = { settings.conversationPrompt(sessionId) },
             subagents = subagents,
         )
     }

@@ -413,7 +413,8 @@ class LocalBrain(
         val base = if (loaded.toolCalling) OpenRouterBrain.COMPACT_SYSTEM_PROMPT else NO_TOOLS_PROMPT
         val memory = if (loaded.toolCalling && ctx.memoryTool) "\n" + OpenRouterBrain.MEMORY_PROMPT else ""
         return base + memory + "\nYou run fully on this phone (${loaded.name}, ${loaded.backend}). Today is $date.\n" +
-            if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")
+            (if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")) +
+            ctx.customSection()
     }
 
     /**

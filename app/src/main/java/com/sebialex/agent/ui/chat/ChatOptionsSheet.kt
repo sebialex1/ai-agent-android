@@ -13,9 +13,10 @@ import com.sebialex.agent.ui.components.SheetConfirm
 import com.sebialex.agent.ui.components.SheetDivider
 import com.sebialex.agent.ui.components.SheetOption
 import com.sebialex.agent.ui.components.SheetSwitch
+import com.sebialex.agent.ui.components.SheetTextArea
 import com.sebialex.agent.ui.components.SheetTextField
 
-private enum class OptionsMode { MENU, RENAME, CONFIRM_DELETE }
+private enum class OptionsMode { MENU, RENAME, INSTRUCTIONS, CONFIRM_DELETE }
 
 /**
  * Options of one conversation, in the app's own sheet style (no plain system menu): pin,
@@ -70,6 +71,12 @@ fun ChatOptionsSheet(
                         settings.setMemoryForNewChats(it)
                     },
                 )
+                SheetOption(
+                    icon = R.drawable.ic_code,
+                    title = "Custom instructions",
+                    subtitle = if (settings.conversationPrompt(sessionId).isEmpty()) "None" else "Added to the system prompt",
+                    onClick = { mode = OptionsMode.INSTRUCTIONS },
+                )
                 if (saved) {
                     SheetDivider()
                     SheetOption(R.drawable.ic_trash, "Delete", onClick = { mode = OptionsMode.CONFIRM_DELETE }, danger = true)
@@ -79,6 +86,11 @@ fun ChatOptionsSheet(
                 initial = title,
                 placeholder = "Conversation title",
                 onSubmit = { onRename(it); onDismiss() },
+            )
+            OptionsMode.INSTRUCTIONS -> SheetTextArea(
+                initial = settings.conversationPrompt(sessionId),
+                placeholder = "Your instructions for this conversation, added on top of the agent's own prompt. Leave empty to remove them.",
+                onSubmit = { settings.setConversationPrompt(sessionId, it); onDismiss() },
             )
             OptionsMode.CONFIRM_DELETE -> SheetConfirm(
                 message = "Delete this conversation, its workspace files and its history? This cannot be undone.",

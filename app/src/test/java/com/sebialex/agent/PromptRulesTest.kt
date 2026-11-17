@@ -1,6 +1,9 @@
 package com.sebialex.agent
 
 import com.sebialex.agent.data.llm.OpenRouterBrain
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,5 +23,35 @@ class PromptRulesTest {
         assertFalse("attached automatically" in OpenRouterBrain.SYSTEM_PROMPT)
         val tools = OpenRouterBrain.toolsFor(memory = false).toString()
         assertFalse("attached to your answer automatically" in tools)
+    }
+
+    @Test
+    fun blankCustomInstructionsAddNothingToThePrompt() {
+        val base = com.sebialex.agent.domain.agent.BrainContext("task", emptyList(), emptyList(), emptyList())
+        assertEquals("", base.customSection())
+        assertEquals("", base.copy(customPrompt = "   \n ").customSection())
+        val system = systemPromptOf(base)
+        assertFalse("The user's own instructions" in system)
+    }
+
+    @Test
+    fun theSystemPromptCarriesTheUsersOwnInstructions() {
+        val ctx = com.sebialex.agent.domain.agent.BrainContext(
+            "task", emptyList(), emptyList(), emptyList(), customPrompt = "  Always answer in Romanian.  ",
+        )
+        val section = ctx.customSection()
+        assertTrue(section.contains("Always answer in Romanian."))
+        assertFalse(section.contains("  Always"))
+        val system = systemPromptOf(ctx)
+        assertTrue("The user's own instructions for this conversation" in system)
+        assertTrue("Always answer in Romanian." in system)
+        // The built-in rules are still there: the addition is on top, not a replacement.
+        assertTrue(OpenRouterBrain.SYSTEM_PROMPT.trim() in system)
+    }
+
+    /** The system message actually sent for [ctx], as the brain builds it. */
+    private fun systemPromptOf(ctx: com.sebialex.agent.domain.agent.BrainContext): String {
+        val messages = OpenRouterBrain(apiKey = "k", model = "m").messages(ctx)
+        return messages[0].jsonObject["content"]!!.jsonPrimitive.content
     }
 }

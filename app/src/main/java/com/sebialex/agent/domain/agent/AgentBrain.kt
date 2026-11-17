@@ -62,6 +62,11 @@ data class BrainContext(
     val stepsUsed: Int = 0,
     val stepBudget: Int = 0,
     /**
+     * The user's own instructions for this conversation, added on top of the built-in system
+     * prompt. Blank means none, so the prompt is byte-for-byte what it was before.
+     */
+    val customPrompt: String = "",
+    /**
      * Answer text as it streams in, delta by delta, so the chat can show it live instead of
      * typing out a finished answer. Carried on the context (not the `next` signature) so every
      * brain and fake keeps compiling; a brain that cannot stream simply never calls it.
@@ -70,6 +75,15 @@ data class BrainContext(
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }
+
+    /**
+     * The user's instructions as one delimited prompt section, appended after the built-in
+     * prompt. Empty when there are none, so the prompt is unchanged. One definition, so every
+     * brain formats it identically.
+     */
+    fun customSection(): String =
+        if (customPrompt.isBlank()) ""
+        else "\n# The user's own instructions for this conversation\n" + customPrompt.trim() + "\n"
 
     /** The same request without any picture, for models that do not accept image input. */
     fun withoutImages(): BrainContext = copy(
