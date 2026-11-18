@@ -223,6 +223,7 @@ fun SettingsScreen(
                             RowDivider()
                             CustomProvidersGroup(settings, snap)
                         }
+                        GeminiAccountGroup(settings, termux)
                         // generate_image's model, the thinking control and subagents: one card,
                         // so this page stays short and every row sits on the same surface.
                         SettingsGroup("Answering") {

@@ -271,6 +271,23 @@ class AppContainer(app: Application) {
         Thread { runCatching { termux.sharedRoot.listFiles()?.forEach { it.deleteRecursively() } } }.start()
     }
 
+    /**
+     * Hands the imported Gemini session to a local shim: a cookie file in the shared folder
+     * Termux can read. The app stores and forwards the session but never speaks Gemini's web
+     * protocol itself — that needs Chrome TLS impersonation, which Android's HTTP stack cannot do.
+     * Returns the path written, or the reason it could not be.
+     */
+    fun exportGeminiCookies(): Result<String> = runCatching {
+        val raw = settings.geminiAccount() ?: error("No Gemini session imported yet.")
+        val payload = kotlinx.serialization.json.Json.decodeFromString(
+            com.sebialex.agent.data.secure.AgtFile.Payload.serializer(), raw,
+        )
+        val out = java.io.File(termux.sharedRoot, "gemini-cookies.json")
+        out.parentFile?.mkdirs()
+        out.writeText(com.sebialex.agent.data.secure.AgtFile.shimFile(payload))
+        out.absolutePath
+    }
+
     fun newOrchestrator(sessionId: String): AgentOrchestrator {
         val rt = runtime(sessionId)
         // The user's profile is re-read fresh on every model call, so an edit in Settings (or a

@@ -77,6 +77,8 @@ object CustomProviders {
         Preset("vllm", "vLLM", "http://localhost:8000/v1", local = true),
         Preset("litellm", "LiteLLM proxy", "http://localhost:4000/v1", local = true),
         Preset("jan", "Jan", "http://127.0.0.1:1337/v1", local = true),
+        // A local shim speaking to gemini.google.com with the session imported from an .agt file.
+        Preset("gemini-account", "Gemini (my account)", "http://127.0.0.1:8100/v1", local = true),
     )
 
     const val CUSTOM_PRESET = "custom"

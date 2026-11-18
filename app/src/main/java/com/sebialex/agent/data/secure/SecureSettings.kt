@@ -164,6 +164,14 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun hfToken(): String = prefs.getString(KEY_HF_TOKEN, null)?.trim().orEmpty()
     fun setHfToken(value: String?) = edit { putOrRemove(KEY_HF_TOKEN, value) }
 
+    /**
+     * The imported Gemini session (an `.agt` payload as JSON). A session cookie is a password,
+     * so it lives only in this Keystore-backed store and is never written to the workspace,
+     * which other apps can read.
+     */
+    fun geminiAccount(): String? = prefs.getString(KEY_GEMINI_ACCOUNT, null)?.takeIf { it.isNotBlank() }
+    fun setGeminiAccount(json: String?) = edit { putOrRemove(KEY_GEMINI_ACCOUNT, json) }
+
     /** On-device models added from Hugging Face search, oldest first. */
     fun hfModels(): List<com.sebialex.agent.data.local.HfModel> =
         prefs.getString(KEY_HF_MODELS, null)?.let { raw ->
@@ -711,6 +719,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_THEME = "app_theme"
         const val DEFAULT_THEME = "midnight"
         private const val KEY_HF_TOKEN = "hf_token"
+        /** The imported Gemini session cookie jar. A secret: never in a plain backup. */
+        private const val KEY_GEMINI_ACCOUNT = "gemini_account"
         private const val KEY_HF_MODELS = "hf_models_v1"
         private const val KEY_LOCAL_SAMPLER = "local_sampler_v1"
         /** Per-model runtime overrides, edited from the model's own card. */
