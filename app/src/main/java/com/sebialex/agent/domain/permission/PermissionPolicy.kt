@@ -49,6 +49,8 @@ class PermissionPolicy(
         } else PermissionDecision.Allow
         // Read-only view of the user's own earlier chats, only offered when the user enabled it.
         is ToolCall.Memory -> PermissionDecision.Allow
+        // Changes only the app-own memory file the user sees and edits in Settings; no approval card.
+        is ToolCall.UserMemory -> PermissionDecision.Allow
         is ToolCall.ListFiles -> outsideOr(call.path)
         is ToolCall.SearchFiles -> outsideOr(call.path)
         is ToolCall.EditFile -> outsideOr(call.path)

@@ -85,6 +85,7 @@ enum class SettingsSection(val label: String, @androidx.annotation.DrawableRes v
     IMAGE("Image model", R.drawable.ic_image, parent = "MODELS"),
     THINKING("Thinking", R.drawable.ic_lightbulb, parent = "MODELS"),
     CHATS("Chats", R.drawable.ic_history),
+    MEMORY("Memory", R.drawable.ic_memory),
     BACKUP("Backup & restore", R.drawable.ic_download),
     UPDATES("Updates", R.drawable.ic_refresh),
     ABOUT("About", R.drawable.ic_info),
@@ -100,6 +101,7 @@ fun SettingsScreen(
     ollama: OllamaCloud,
     backup: com.sebialex.agent.data.backup.BackupManager,
     updates: com.sebialex.agent.data.update.UpdateFlow,
+    userMemory: com.sebialex.agent.data.persistence.UserMemoryStore,
     onRestored: () -> Unit,
     onBack: () -> Unit,
     onClearConversations: () -> Unit,
@@ -272,6 +274,7 @@ fun SettingsScreen(
                             }
                         }
                     }
+                    SettingsSection.MEMORY -> MemorySettings(settings, userMemory)
                     SettingsSection.BACKUP -> BackupSettings(backup, settings, onRestored)
                     SettingsSection.UPDATES -> UpdateSettings(updates)
                     SettingsSection.ABOUT -> AboutTab()

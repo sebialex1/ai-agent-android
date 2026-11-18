@@ -194,6 +194,10 @@ A chat's options sheet (the ⋯ next to it in the conversations list) has the **
 
 The tool can only read `session.json` files; nothing in it writes. The current conversation is left out, since it is already in context.
 
+## Memory of the user
+
+Independent of per-chat memory: the agent (OpenRouter, Ollama Cloud and custom providers — not on-device models) can save lasting facts about you with `user_memory` (`remember` / `update` / `forget` / `list`), and the saved facts are injected into every conversation's prompt, so it learns how you like things across chats. Everything it saves is visible, editable and deletable in **Settings > Memory**; the switch there turns the whole thing off. Facts stay in one app-private file (`user_memory_v1.json`); the tool prompt tells the model to keep durable facts only and never secrets.
+
 ## Conversations
 
 The X at the top left opens the conversations menu: settings and new conversation across the top, recently updated conversations below, and one input at the bottom that doubles as the search (the list filters while you type) and starts a new conversation when you press send. Tap a row to reopen it, or use its options to delete it.
@@ -248,14 +252,15 @@ app/src/main/java/com/sebialex/agent
 │   ├── llm/CustomReasoning, ProviderMetadata  reasoning detection for custom providers (metadata > docs > unknown)
 │   ├── local/                  LocalModels catalog, ModelStore (downloads/imports), LocalEngine (LiteRT-LM, GPU/CPU), LocalBrain
 │   └── persistence/            per-conversation session store, JSONL audit log,
-│                               ConversationMemoryReader (capped list/summary/paged read)
+│                               ConversationMemoryReader (capped list/summary/paged read), UserMemoryStore (what the agent
+                                knows about the user; edited in Settings > Memory)
 └── ui/
     ├── theme/                  theme palettes (dark and light), typography, soft surfaces
     ├── components/             icon buttons, fading single-line text, favicon loader
     ├── chat/                   timeline, turns, steps, approval card, input pill, sheets, conversations menu
     ├── markdown/               Compose Markdown renderer
     ├── files/                  reader / raw / diff / editor
-    ├── settings/               section list and pages (General, Models, On-device, Chats, About), model picker, keys, reasoning, sandbox status
+    ├── settings/               section list and pages (General, Models, On-device, Chats, Memory, About), model picker, keys, reasoning, sandbox status
     └── terminal/               workspace shell
 ```
 

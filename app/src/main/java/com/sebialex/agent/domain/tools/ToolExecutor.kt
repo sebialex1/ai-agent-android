@@ -30,6 +30,8 @@ class ToolExecutor(
     private val images: ImageGenerator? = null,
     /** Video model for generate_video; null when none is set up. */
     private val videos: com.sebialex.agent.data.llm.VideoGenerator? = null,
+    /** What is remembered about the user (user_memory); null when this runtime cannot access it. */
+    private val userMemory: com.sebialex.agent.data.persistence.UserMemoryStore? = null,
 ) {
     suspend fun execute(call: ToolCall): ToolResult = withContext(Dispatchers.IO) {
         try {
@@ -98,6 +100,7 @@ class ToolExecutor(
                 }
                 is ToolCall.Python -> runPython(call)
                 is ToolCall.Memory -> runMemory(call)
+                is ToolCall.UserMemory -> runUserMemory(call)
                 is ToolCall.ListFiles -> FileTools.list(workspace, call)
                 is ToolCall.SearchFiles -> FileTools.search(workspace, call)
                 is ToolCall.EditFile -> FileTools.edit(workspace, call)
@@ -234,6 +237,38 @@ class ToolExecutor(
             "read_conversation" -> if (id.isEmpty()) ToolResult(call.callId, false, "read_conversation needs conversation_id.")
                 else ToolResult(call.callId, true, m.read(id, call.offset))
             else -> ToolResult(call.callId, false, "Unknown action \"${call.action}\". Use one of: ${com.sebialex.agent.domain.model.MEMORY_ACTIONS.joinToString(", ")}.")
+        }
+    }
+
+    /** Applies the user_memory action; every change is visible (and reversible) in Settings > Memory. */
+    private suspend fun runUserMemory(call: ToolCall.UserMemory): ToolResult {
+        val store = userMemory ?: return ToolResult(call.callId, false, "Remembering about the user is not available in this conversation.")
+        return when (call.action) {
+            "remember" -> {
+                val text = call.text ?: return ToolResult(call.callId, false, "remember needs text.")
+                val saved = store.remember(text, call.topic.orEmpty())
+                    ?: return ToolResult(call.callId, false, "The memory list is full. Forget or update an entry instead.")
+                ToolResult(call.callId, true, "remembered: ${saved.text}" + (if (saved.topic.isNotBlank()) " (${saved.topic})" else ""))
+            }
+            "update" -> {
+                val id = call.id ?: return ToolResult(call.callId, false, "update needs id.")
+                val text = call.text ?: return ToolResult(call.callId, false, "update needs text.")
+                val changed = store.update(id, text, call.topic.orEmpty())
+                if (changed) ToolResult(call.callId, true, "updated memory $id: $text")
+                else ToolResult(call.callId, false, "No memory with id $id. Call list first.")
+            }
+            "forget" -> {
+                val id = call.id ?: return ToolResult(call.callId, false, "forget needs id.")
+                val forgotten = store.forget(id)
+                if (forgotten) ToolResult(call.callId, true, "forgot memory $id")
+                else ToolResult(call.callId, false, "No memory with id $id. Call list first.")
+            }
+            "list" -> {
+                val list = store.all()
+                if (list.isEmpty()) ToolResult(call.callId, true, "Nothing remembered yet.")
+                else ToolResult(call.callId, true, list.joinToString("\n") { "${it.id}: ${it.text}" + (if (it.topic.isNotBlank()) " (${it.topic})" else "") })
+            }
+            else -> ToolResult(call.callId, false, "Unknown action \"${call.action}\". Use one of: ${com.sebialex.agent.domain.model.USER_MEMORY_ACTIONS.joinToString(", ")}.")
         }
     }
 

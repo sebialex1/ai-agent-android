@@ -238,6 +238,7 @@ class OpenRouterBrain(
         val noTools = if (withTools) "" else "\nTools are not available with this model: answer directly, do not claim to run anything, " +
             "and do not write tool calls or tool-call JSON ({\"action\": ...}) into your answer.\n"
         val memory = if (ctx.memoryTool && withTools) "\n" + MEMORY_PROMPT else ""
+        val aboutUser = if (ctx.userMemoryTool && withTools) "\n" + USER_MEMORY_PROMPT else ""
         val todos = if (ctx.todos.isEmpty() || !withTools) "" else
             "\nThis conversation's todo list (todo tool):\n" + com.sebialex.agent.domain.agent.Todos.render(ctx.todos) + "\n"
         val record = com.sebialex.agent.domain.agent.TurnRecord.context(replayed(ctx))
@@ -251,7 +252,7 @@ class OpenRouterBrain(
             ctx.subagentModels.isNotEmpty() -> "\n" + subagentsPrompt(ctx.subagentModels)
             else -> ""
         }
-        return SYSTEM_PROMPT + noTools + role + memory + todos + record + budget + "\nToday is $date.\n" +
+        return SYSTEM_PROMPT + noTools + role + memory + aboutUser + todos + record + budget + "\nToday is $date.\n" +
             (if (files.isEmpty()) "The workspace is empty." else "Workspace files:\n" + files.joinToString("\n")) +
             ctx.customSection()
     }
@@ -460,6 +461,7 @@ class OpenRouterBrain(
             is ToolCall.WriteFile -> "write_file"
             is ToolCall.Python -> "python"
             is ToolCall.Memory -> MEMORY_TOOL_NAME
+            is ToolCall.UserMemory -> USER_MEMORY_TOOL_NAME
             is ToolCall.ListFiles -> "list_files"
             is ToolCall.SearchFiles -> "search_files"
             is ToolCall.EditFile -> "edit_file"
@@ -502,6 +504,12 @@ class OpenRouterBrain(
                 c.conversationId?.let { put("conversation_id", it) }
                 if (c.offset > 0) put("offset", c.offset)
                 c.query?.let { put("query", it) }
+            }.toString()
+            is ToolCall.UserMemory -> buildJsonObject {
+                put("action", c.action)
+                c.id?.let { put("id", it) }
+                c.text?.let { put("text", it) }
+                c.topic?.let { put("topic", it) }
             }.toString()
             is ToolCall.ListFiles -> buildJsonObject { put("path", c.path); if (c.recursive) put("recursive", true) }.toString()
             is ToolCall.SearchFiles -> buildJsonObject { put("query", c.query); put("path", c.path); if (c.regex) put("regex", true) }.toString()
@@ -589,6 +597,15 @@ class OpenRouterBrain(
                         else -> emptyList()
                     }.map { it.trim() }.filter { it.isNotEmpty() }
                     ToolCall.Python(id, code, packages, arg("filename"))
+                }
+                USER_MEMORY_TOOL_NAME -> {
+                    val action = arg("action")?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return missing("action")
+                    ToolCall.UserMemory(
+                        id, action,
+                        arg("id")?.takeIf { it.isNotBlank() },
+                        arg("text")?.takeIf { it.isNotBlank() },
+                        arg("topic")?.takeIf { it.isNotBlank() },
+                    )
                 }
                 MEMORY_TOOL_NAME -> {
                     val action = arg("action")?.trim()?.takeIf { it.isNotEmpty() } ?: return missing("action")
@@ -694,7 +711,7 @@ class OpenRouterBrain(
                     ToolCall.SpawnSubagent(id, it.take(600), arg("context")?.trim()?.takeIf { c -> c.isNotEmpty() }, arg("model")?.trim()?.takeIf { m -> m.isNotEmpty() })
                 } ?: missing("objective")
                 MAIN_CONVERSATION_TOOL_NAME -> ToolCall.MainConversation(id, (arg("count")?.trim()?.toDoubleOrNull()?.toInt() ?: 6).coerceIn(1, 20))
-                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory (only when enabled).")
+                else -> ToolCall.Invalid(id, name, rawArgs, "Unknown tool \"$name\". Available: $TOOL_NAMES, conversation_memory and user_memory (only when enabled).")
             }
         }
 
@@ -892,12 +909,49 @@ class OpenRouterBrain(
         /** One-line list of the agent's tools, shown in Settings > About. */
         const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
-            "device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, spawn_subagent"
+            "device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, spawn_subagent, user_memory"
 
         const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
             "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
             "http_request, device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, " +
-            "spawn_subagent (parallel subagents) when subagent models are set, and conversation_memory when memory of past chats is on."
+            "spawn_subagent (parallel subagents) when subagent models are set, conversation_memory when memory of past chats is on, " +
+            "and user_memory when learning about the user is on."
+
+        const val USER_MEMORY_TOOL_NAME = "user_memory"
+
+        /** What the agent can save about the user; only sent when the user enabled it. */
+        val USER_MEMORY_TOOL: JsonElement = buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", USER_MEMORY_TOOL_NAME)
+                put(
+                    "description",
+                    "Remember lasting facts about the user (preferences, habits, work, likes) across conversations, and " +
+                        "update or drop them when they change. Save durable facts only, never one-off task details, and never " +
+                        "secrets or sensitive personal data. Everything saved is visible to the user in Settings.",
+                )
+                putJsonObject("parameters") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("action") {
+                            put("type", "string")
+                            putJsonArray("enum") { com.sebialex.agent.domain.model.USER_MEMORY_ACTIONS.forEach { add(it) } }
+                            put("description", "What to do")
+                        }
+                        putJsonObject("id") { put("type", "string"); put("description", "Memory id from list, for update or forget") }
+                        putJsonObject("text") { put("type", "string"); put("description", "The fact, one short durable sentence (remember, update)") }
+                        putJsonObject("topic") { put("type", "string"); put("description", "Optional short tag like Preferences, Work, Likes") }
+                    }
+                    putJsonArray("required") { add("action") }
+                }
+            }
+        }
+
+        /** Extra system prompt lines when learning about the user is on. */
+        internal const val USER_MEMORY_PROMPT =
+            "Learning about the user is on: when you notice a lasting preference, habit or fact worth keeping, save it with the " +
+                "user_memory tool (the saved facts are already in your prompt). Keep entries short and current\u200A:\u200Aupdate instead of " +
+                "duplicating, forget what no longer holds.\n"
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
 
@@ -939,9 +993,13 @@ class OpenRouterBrain(
          * The tools to send, plus conversation memory when it is on. [compact] is the smaller set for
          * on-device models with a short context window (the core tools plus list/edit/device info).
          */
-        fun toolsFor(memory: Boolean, compact: Boolean = false): JsonArray {
+        fun toolsFor(memory: Boolean, compact: Boolean = false, userMemory: Boolean = false): JsonArray {
             val base = if (compact) TOOLS.filter { t -> toolNameOf(t) in COMPACT_TOOLS } else TOOLS
-            return JsonArray(if (memory) base + MEMORY_TOOL else base)
+            val extras = buildList {
+                if (memory) add(MEMORY_TOOL)
+                if (userMemory) add(USER_MEMORY_TOOL)
+            }
+            return JsonArray(base + extras)
         }
 
         /**
@@ -950,7 +1008,7 @@ class OpenRouterBrain(
          * tools that talk to the user or shape the answer (they belong to the main agent).
          */
         fun toolsFor(ctx: com.sebialex.agent.domain.agent.BrainContext): JsonArray {
-            val base = toolsFor(ctx.memoryTool)
+            val base = toolsFor(ctx.memoryTool, userMemory = ctx.userMemoryTool)
             return when {
                 ctx.mode == com.sebialex.agent.domain.agent.AgentMode.SUBAGENT ->
                     JsonArray(base.filter { toolNameOf(it) !in MAIN_ONLY_TOOLS } + MAIN_CONVERSATION_TOOL)
@@ -963,7 +1021,7 @@ class OpenRouterBrain(
         const val MAIN_CONVERSATION_TOOL_NAME = "main_conversation"
 
         /** Tools a subagent never gets: the user, the answer and the todo list belong to the main agent. */
-        internal val MAIN_ONLY_TOOLS = setOf("ask_user", "todo", "attach_files", "preview_webapp", SPAWN_TOOL_NAME)
+        internal val MAIN_ONLY_TOOLS = setOf("ask_user", "todo", "attach_files", "preview_webapp", USER_MEMORY_TOOL_NAME, SPAWN_TOOL_NAME)
 
         /** spawn_subagent, with the allowed models as an enum (the first one is the default). */
         internal fun spawnTool(models: List<String>): JsonElement = buildJsonObject {

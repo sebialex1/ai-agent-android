@@ -165,6 +165,7 @@ fun AppRoot(container: AppContainer) {
                     ollama = container.ollama,
                     backup = container.backup,
                     updates = container.updates,
+                    userMemory = container.userMemory,
                     onRestored = vm::reloadConversations,
                     onBack = ::pop,
                     onClearConversations = { vm.clearAll(); backToChat() },

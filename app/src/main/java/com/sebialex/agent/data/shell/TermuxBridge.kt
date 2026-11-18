@@ -23,7 +23,9 @@ enum class TermuxProblem(val message: String) {
     ),
     NO_RUN_PERMISSION(
         "permission denied: this app is not allowed to run commands in Termux. Grant " +
-            "\"Run commands in Termux environment\" in Settings > General > Sandbox.",
+            "\"Run commands in Termux environment\" in Settings > General > Sandbox; if the grant dialog " +
+            "never shows (some ROMs hide it), open this app's App info > Permissions > Additional " +
+            "permissions and enable it there.",
     ),
     NO_STORAGE(
         "permission denied: shared storage access is off, so the workspace cannot be shared with " +

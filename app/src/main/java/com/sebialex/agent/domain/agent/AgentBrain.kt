@@ -67,6 +67,16 @@ data class BrainContext(
      */
     val customPrompt: String = "",
     /**
+     * What is remembered about the user across conversations, already rendered as a prompt
+     * section. Blank when empty or when the feature is off.
+     */
+    val userProfile: String = "",
+    /**
+     * The user turned on learning about them, so the `user_memory` tool is offered. When false
+     * the tool is not advertised at all (the profile may still be shown, the user can edit it).
+     */
+    val userMemoryTool: Boolean = false,
+    /**
      * Answer text as it streams in, delta by delta, so the chat can show it live instead of
      * typing out a finished answer. Carried on the context (not the `next` signature) so every
      * brain and fake keeps compiling; a brain that cannot stream simply never calls it.
@@ -81,9 +91,11 @@ data class BrainContext(
      * prompt. Empty when there are none, so the prompt is unchanged. One definition, so every
      * brain formats it identically.
      */
-    fun customSection(): String =
-        if (customPrompt.isBlank()) ""
+    fun customSection(): String {
+        val custom = if (customPrompt.isBlank()) ""
         else "\n# The user's own instructions for this conversation\n" + customPrompt.trim() + "\n"
+        return custom + userProfile
+    }
 
     /** The same request without any picture, for models that do not accept image input. */
     fun withoutImages(): BrainContext = copy(

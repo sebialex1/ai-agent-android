@@ -44,6 +44,7 @@ class SessionRuntime(
     sessions: SessionStore,
     images: com.sebialex.agent.domain.tools.ImageGenerator? = null,
     videos: com.sebialex.agent.data.llm.VideoGenerator? = null,
+    userMemory: com.sebialex.agent.data.persistence.UserMemoryStore? = null,
 ) {
     val workspace = Workspace(dir)
     val mirror = WorkspaceMirror(
@@ -57,7 +58,7 @@ class SessionRuntime(
     val memory = ConversationMemoryReader(sessions, sessionId)
     /** One terminal for the agent and the user: same shell, working directory and history. */
     val terminal = com.sebialex.agent.data.shell.SharedTerminal(shell)
-    val tools = ToolExecutor(workspace, shell, terminal, web, memory, images, videos)
+    val tools = ToolExecutor(workspace, shell, terminal, web, memory, images, videos, userMemory)
 }
 
 /** Manual dependency container. */
@@ -88,6 +89,9 @@ class AppContainer(app: Application) {
 
     /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
+
+    /** Remembered facts about the user, shared by every conversation (the user_memory tool). */
+    val userMemory = com.sebialex.agent.data.persistence.UserMemoryStore(app.filesDir)
     val localEngine = LocalEngine(modelStore, settings, appScope)
 
     /** Typing suggestions from the tiny on-device model; active only when the user turns it on. */
@@ -240,7 +244,9 @@ class AppContainer(app: Application) {
 
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
-        runtimes.getOrPut(sessionId) { SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images, videos) }
+        runtimes.getOrPut(sessionId) {
+            SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images, videos, userMemory)
+        }
 
     /**
      * generate_image: the provider and model picked in Settings > Models > Image generation
@@ -267,6 +273,9 @@ class AppContainer(app: Application) {
 
     fun newOrchestrator(sessionId: String): AgentOrchestrator {
         val rt = runtime(sessionId)
+        // The user's profile is re-read fresh on every model call, so an edit in Settings (or a
+        // mid-turn update by the agent itself) shows up at once. Subagents get it too.
+        val profileFlow = { userMemory.profile().takeIf { settings.aboutUser() } ?: "" }
         // Subagents share this conversation's workspace, tools, policy and audit log; each runs
         // on its own model and keeps its own transcript (see Subagents).
         val subagents = object : com.sebialex.agent.domain.agent.Subagents {
@@ -279,6 +288,7 @@ class AppContainer(app: Application) {
                 audit = rt.audit,
                 autoApprove = { settings.autoApprove() },
                 customPrompt = { settings.conversationPrompt(sessionId) },
+                userProfile = profileFlow,
                 maxSteps = com.sebialex.agent.domain.agent.SubagentRuns.CHILD_MAX_STEPS,
             )
         }
@@ -291,6 +301,8 @@ class AppContainer(app: Application) {
             autoApprove = { settings.autoApprove() },
             memoryEnabled = { settings.conversationMemory(sessionId) },
             customPrompt = { settings.conversationPrompt(sessionId) },
+            userProfile = profileFlow,
+            userMemoryTool = { settings.aboutUser() },
             subagents = subagents,
         )
     }

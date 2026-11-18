@@ -40,6 +40,20 @@ sealed interface ToolCall {
         val query: String? = null,
     ) : ToolCall
 
+    /**
+     * What is remembered about the user across conversations. [action] is one of
+     * [USER_MEMORY_ACTIONS]: `remember` ([text], optional [topic]), `update` ([id], [text],
+     * [topic]), `forget` ([id]) or `list`. The user sees and edits everything in Settings >
+     * Memory.
+     */
+    data class UserMemory(
+        override val callId: String,
+        val action: String,
+        val id: String? = null,
+        val text: String? = null,
+        val topic: String? = null,
+    ) : ToolCall
+
     /** Lists a workspace folder (sizes, kinds), optionally recursively. */
     data class ListFiles(override val callId: String, val path: String = "/", val recursive: Boolean = false) : ToolCall
 
@@ -196,3 +210,6 @@ val TODO_ACTIONS = listOf("add", "done", "reopen", "remove", "clear_done", "list
 
 /** Actions of the conversation memory tool. */
 val MEMORY_ACTIONS = listOf("list_conversations", "summarize_conversation", "read_conversation")
+
+/** Actions of the user memory tool (what the agent remembers about the user). */
+val USER_MEMORY_ACTIONS = listOf("remember", "update", "forget", "list")

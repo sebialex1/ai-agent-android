@@ -126,6 +126,18 @@ fun SandboxSetting(termux: TermuxBridge) {
             enabled = status.installed,
             onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
         )
+        if (status.installed && !status.runPermission) {
+            // Some ROMs (One UI in particular) may never show the runtime dialog for this
+            // rare permission. It can always be granted by hand: this app's App info >
+            // Permissions > Additional permissions > "Run commands in Termux environment".
+            Text(
+                "No dialog on your phone (some ROMs hide it)? Open your own app page and grant it under " +
+                    "Additional permissions.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                modifier = Modifier.fillMaxWidth().clickable { openAppDetails(context) }.padding(start = 32.dp, bottom = 4.dp),
+            )
+        }
         SetupStep(
             ok = checkOk == true || (check == null && status.externalApps == true),
             failed = checkOk == false || status.externalApps == false,

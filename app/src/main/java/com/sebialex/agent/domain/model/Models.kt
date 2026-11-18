@@ -106,6 +106,13 @@ data class SubagentRun(
 data class TodoItem(val id: Int, val text: String, val done: Boolean = false)
 
 /**
+ * One thing the agent remembered about the user (the user_memory tool, managed in Settings >
+ * Memory). [id] is unique and stable forever; [topic] is a short optional tag the model chose.
+ */
+@Serializable
+data class UserMemory(val id: String, val text: String, val topic: String = "", val createdAt: Long = 0, val updatedAt: Long = 0)
+
+/**
  * One text segment of an assistant turn, in the order it was produced: narration before a batch
  * of tool calls, then more narration after, then the final answer. [id] is unique per turn (one
  * model call = one block, upserted while it streams); [at] is the call's start time, used to

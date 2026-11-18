@@ -60,6 +60,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val localSpeculative: Boolean,
         /** What new conversations start with: on unless the user explicitly saved "off". */
         val memoryForNewChats: Boolean = true,
+        /** The agent may save lasting facts about the user (user_memory), shown in Settings > Memory. Default on. */
+        val aboutUser: Boolean = true,
         /** Let the model write conversation titles. */
         val autoTitles: Boolean = true,
         /** Every provider's keys (masked), by provider id; see [KeyPool]. */
@@ -147,6 +149,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun autoTitles(): Boolean = prefs.getBoolean(KEY_AUTO_TITLES, true)
     fun setMemoryForNewChats(value: Boolean) = edit { putBoolean(KEY_MEMORY_NEW_CHATS, value) }
     fun setAutoTitles(value: Boolean) = edit { putBoolean(KEY_AUTO_TITLES, value) }
+
+    /** Learning about the user (user_memory) is on; the facts live in [com.sebialex.agent.data.persistence.UserMemoryStore]. */
+    fun aboutUser(): Boolean = prefs.getBoolean(KEY_ABOUT_USER, true)
+    fun setAboutUser(value: Boolean) = edit { putBoolean(KEY_ABOUT_USER, value) }
 
     // ---- Appearance ----
 
@@ -643,6 +649,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         localContext = localContext(),
         localSpeculative = localSpeculative(),
         memoryForNewChats = memoryForNewChats(),
+        aboutUser = aboutUser(),
         autoTitles = autoTitles(),
         theme = themeId(),
         hfModels = hfModels(),
@@ -696,6 +703,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_OLLAMA_MODEL = "ollama_model_last"
         private const val KEY_OLLAMA_CUSTOM = "ollama_model_custom"
         private const val KEY_MEMORY_PREFIX = "conversation_memory::"
+        private const val KEY_ABOUT_USER = "memory_about_user"
         /** The user's own system-prompt addition, per conversation. A plain setting, so it is backed up. */
         private const val KEY_PROMPT_PREFIX = "conversation_prompt::"
         private const val KEY_MEMORY_NEW_CHATS = "conversation_memory_new_chats"

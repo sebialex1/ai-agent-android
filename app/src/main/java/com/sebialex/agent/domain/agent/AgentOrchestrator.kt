@@ -78,6 +78,10 @@ class AgentOrchestrator(
     private val memoryEnabled: () -> Boolean = { false },
     /** The user's own instructions for this conversation, added on top of the system prompt. */
     private val customPrompt: () -> String = { "" },
+    /** What is known about the user (from the memory file), rendered as a prompt section. */
+    private val userProfile: () -> String = { "" },
+    /** Learning about the user is on for this conversation: the user_memory tool is offered. */
+    private val userMemoryTool: () -> Boolean = { false },
     private val maxSteps: Int = 30,
     /** Where spawn_subagent gets its children; null when this orchestrator cannot start any. */
     private val subagents: Subagents? = null,
@@ -166,6 +170,8 @@ class AgentOrchestrator(
                     stepsUsed = executed,
                     stepBudget = maxSteps,
                     customPrompt = customPrompt(),
+                    userProfile = userProfile(),
+                    userMemoryTool = userMemoryTool(),
                     onContent = { delta ->
                         synchronized(answer) {
                             answer.append(delta)
@@ -528,7 +534,8 @@ class AgentOrchestrator(
         return Vision(
             intent, paths, images,
             "\n\n[Attached and shown below: ${images.joinToString(", ") { it.label }}." +
-                (if (intent == VisionIntent.Intent.ONLY_MEDIA) " The user sent it without any text: describe what it shows." else "") + "]",
+                (if (intent == VisionIntent.Intent.ONLY_MEDIA) " The user sent it without any text: they may just be reacting or sharing a moment, not asking for an " +
+                    "analysis. Respond naturally and briefly; describe it in detail only when that is clearly what they want." else "") + "]",
         )
     }
 
@@ -599,6 +606,24 @@ class AgentOrchestrator(
                 call.conversationId?.let { append(", \"conversation_id\": \"").append(esc(it)).append('"') }
                 if (call.offset > 0) append(", \"offset\": ").append(call.offset)
                 call.query?.let { append(", \"query\": \"").append(esc(it)).append('"') }
+                append('}')
+            },
+            startedAt = now(),
+        )
+        is ToolCall.UserMemory -> Step(
+            nextId(), StepKind.FILE_WRITE,
+            when (call.action) {
+                "remember" -> "remember: ${call.text.orEmpty().take(60)}"
+                "update" -> "update memory"
+                "forget" -> "forget memory"
+                else -> "what's remembered"
+            },
+            "user_memory",
+            buildString {
+                append("{\"action\": \"").append(esc(call.action)).append('"')
+                call.id?.let { append(", \"id\": \"").append(esc(it)).append('"') }
+                call.text?.let { append(", \"text\": \"").append(esc(it)).append('"') }
+                call.topic?.let { append(", \"topic\": \"").append(esc(it)).append('"') }
                 append('}')
             },
             startedAt = now(),
