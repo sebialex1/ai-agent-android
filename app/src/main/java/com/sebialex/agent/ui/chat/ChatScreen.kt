@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -217,7 +218,12 @@ fun ChatScreen(
             state = listState,
             reverseLayout = true,
             // Older messages dissolve under the top bar instead of being cut off at its edge.
-            modifier = Modifier.fillMaxSize().fadeTopEdge(listState, reverse = true),
+            // Depth of field: while a floating card is open the conversation behind it softens,
+            // so the card reads as the nearer layer. minSdk 31, so RenderEffect is always there.
+            modifier = Modifier
+                .fillMaxSize()
+                .fadeTopEdge(listState, reverse = true)
+                .then(if (mentionOpen) Modifier.blur(7.dp) else Modifier),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(26.dp, androidx.compose.ui.Alignment.Bottom),
         ) {

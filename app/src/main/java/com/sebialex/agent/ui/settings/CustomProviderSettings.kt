@@ -88,6 +88,14 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
                             Spacer(Modifier.width(8.dp))
                             Text(p.baseUrl, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
+                        // What this provider can do, by modality.
+                        val images = com.sebialex.agent.data.llm.MediaModels.customImageModels(p, snap.imageOverrides).size
+                        ModalityLine("Text", if (p.models.isEmpty()) "No models listed" else "${p.models.size} models")
+                        ModalityLine("Image", if (images > 0) "$images models" else "None listed")
+                        ModalityLine(
+                            "Video",
+                            if (p.preset == CustomProviders.GEMINI_ACCOUNT_PRESET) "Supported" else "Not supported",
+                        )
                         if (confirmRemove == p.id) {
                             com.sebialex.agent.ui.components.SheetConfirm(
                                 message = "Remove ${p.name} and its keys?",
@@ -106,6 +114,15 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
     editing?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.let { p ->
         EditProviderSheet(settings, p, onDismiss = { editing = null })
     } }
+}
+
+/** One modality of a provider: what it is called and what it can do, on one quiet line. */
+@Composable
+private fun ModalityLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.width(56.dp))
+        Text(value, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+    }
 }
 
 /** Which wire API a provider speaks, offered as two choices when adding or editing one. */

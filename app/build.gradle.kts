@@ -13,7 +13,9 @@ android {
 
     defaultConfig {
         applicationId = "com.sebialex.agent"
-        minSdk = 26
+        // 31+ so backdrop blur (RenderEffect) is available on every supported device.
+        // This drops Android 8-11: those devices can no longer install or update the app.
+        minSdk = 31
         targetSdk = 34
         // CI passes VERSION_CODE (the run number) so every build is accepted as an update over the last.
         versionCode = (findProperty("VERSION_CODE") as String? ?: System.getenv("VERSION_CODE"))?.toIntOrNull() ?: 1

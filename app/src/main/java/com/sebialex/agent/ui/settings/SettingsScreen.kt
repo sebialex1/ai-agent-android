@@ -199,14 +199,24 @@ fun SettingsScreen(
                                 icon = R.drawable.ic_code,
                                 onClick = { picking = true },
                             )
-                            NavRow(
-                                title = "On-device models",
+                        }
+                        // Two categories, each nested: what runs on the phone, and what runs elsewhere.
+                        SettingsGroup("Local") {
+                            ExpandRow(
+                                "On-device models",
                                 value = if (downloaded == 0) "None downloaded" else "$downloaded downloaded",
                                 icon = R.drawable.ic_phone,
-                                onClick = { section = SettingsSection.ON_DEVICE },
-                            )
+                            ) {
+                                NavRow(
+                                    "Text",
+                                    value = "${com.sebialex.agent.data.local.LocalModels.forModality(com.sebialex.agent.data.local.Modality.TEXT).size} in the catalogue",
+                                    onClick = { section = SettingsSection.ON_DEVICE },
+                                )
+                                NavRow("Image", value = "Through a provider", onClick = { section = SettingsSection.IMAGE })
+                                NavRow("Video", value = "Through a provider", onClick = { section = SettingsSection.IMAGE })
+                            }
                         }
-                        SettingsGroup("Providers") {
+                        SettingsGroup("Cloud") {
                             listOf(
                                 SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
                                 SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
