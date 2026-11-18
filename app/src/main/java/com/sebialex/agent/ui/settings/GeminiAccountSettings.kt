@@ -119,7 +119,7 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                     if (shimRunning) "Stop the shim" else "Start the shim",
                     onClick = {
                     val raw = stored
-                    if (raw == null) { message = "Import a session first."; return@PillButton }
+                    if (raw == null) { message = "Import a session first."; return@QuietIconButton }
                     busy = true
                     scope.launch {
                         try {
@@ -151,6 +151,7 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                         } finally {
                             busy = false
                         }
+                    }
                     },
                     tint = if (shimRunning) Palette.Danger else Palette.Accent,
                     enabled = !busy,
