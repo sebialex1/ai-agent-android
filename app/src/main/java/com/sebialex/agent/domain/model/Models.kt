@@ -105,12 +105,23 @@ data class SubagentRun(
 @Serializable
 data class TodoItem(val id: Int, val text: String, val done: Boolean = false)
 
+/**
+ * One text segment of an assistant turn, in the order it was produced: narration before a batch
+ * of tool calls, then more narration after, then the final answer. [id] is unique per turn (one
+ * model call = one block, upserted while it streams); [at] is the call's start time, used to
+ * interleave blocks with steps. Older saves have no blocks and render as one answer.
+ */
+@Serializable
+data class TurnText(val id: String, val text: String, val at: Long = 0)
+
 @Serializable
 data class Turn(
     val id: String,
     val role: Role,
     val text: String,
     val steps: List<Step> = emptyList(),
+    /** Narration and answer segments in the order they happened (empty in older saves). */
+    val blocks: List<TurnText> = emptyList(),
     val attachments: List<FileAttachment> = emptyList(),
     /**
      * Workspace files the agent attached to its answer on purpose (attach_files), shown as

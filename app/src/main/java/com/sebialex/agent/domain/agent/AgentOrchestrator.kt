@@ -25,13 +25,22 @@ sealed interface AgentEvent {
     data class StepAdded(val step: Step) : AgentEvent
     data class StepUpdated(val step: Step) : AgentEvent
     /** The answer so far, as it streams from the model (the whole text, not a fragment). */
-    data class ContentDelta(val text: String) : AgentEvent
+    data class ContentDelta(
+        val text: String,
+        /** Id of the text block this call streams into; a new call starts a new block. */
+        val block: String = "",
+        /** When this model call started, so the block interleaves with steps. */
+        val at: Long = 0,
+    ) : AgentEvent
     data class Finished(
         val text: String,
         val attachments: List<FileAttachment>,
         val sources: List<SourceRef>,
         /** Files the agent attached to the answer (attach_files). */
         val artifacts: List<FileAttachment> = emptyList(),
+        /** Block of the call that produced the answer, committed as the last text block. */
+        val block: String = "",
+        val at: Long = 0,
     ) : AgentEvent
 
     /** preview_webapp: a web app is ready to preview (a card in the answer). */
@@ -138,6 +147,10 @@ class AgentOrchestrator(
 
             while (executed < maxSteps) {
                 val memory = memoryEnabled()
+                // One text block per model call: the narration streamed before this call's tool
+                // calls stays where it happened, and the next call writes below it.
+                val blockId = java.util.UUID.randomUUID().toString()
+                val requestedAt = now()
                 // Live answer text: streamed deltas replace the turn's text as they arrive, so the
                 // chat shows the answer in real time. Throttled like reasoning; the Finished event
                 // always carries the whole text, so a dropped intermediate delta is harmless.
@@ -160,13 +173,12 @@ class AgentOrchestrator(
                             if (!contentSent || t - lastContent >= LIVE_THROTTLE_MS) {
                                 contentSent = true
                                 lastContent = t
-                                trySend(AgentEvent.ContentDelta(answer.toString()))
+                                trySend(AgentEvent.ContentDelta(answer.toString(), blockId, requestedAt))
                             }
                         }
                     },
                 )
                 served = ctx
-                val requestedAt = now()
                 // Live reasoning: each model call gets its own thought step, created on the first
                 // non-blank streamed delta and updated (throttled) while the model thinks. Steps are
                 // appended in event order, so the turn keeps the real interleaving
@@ -210,7 +222,7 @@ class AgentOrchestrator(
                 when (decision) {
                     is BrainDecision.Answer -> {
                         // The answer is what the user sees and what is saved: never the app's own record.
-                        send(AgentEvent.Finished(TurnRecord.stripEcho(decision.text), attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts)))
+                        send(AgentEvent.Finished(TurnRecord.stripEcho(decision.text), attachments.values.toList(), sources.values.toList(), liveArtifacts(artifacts), blockId, requestedAt))
                         return@channelFlow
                     }
                     is BrainDecision.Act -> {

@@ -69,6 +69,7 @@ import com.sebialex.agent.domain.model.Step
 import com.sebialex.agent.domain.model.StepKind
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.Turn
+import com.sebialex.agent.domain.model.TurnText
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.Favicon
 import com.sebialex.agent.ui.components.FadingText
@@ -268,22 +269,48 @@ fun AssistantTurn(
 ) {
     val fresh = remember(turn.id) { System.currentTimeMillis() - turn.createdAt < 2000 }
     Column(Modifier.fillMaxWidth().bubbleEnter(motion && fresh), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Everything the agent did (tool calls and thinking) lives in ONE collapsible group, in the
-        // real order it happened. Only the step still in flight stays visible below the group so
-        // live thinking / a running tool remains seen; it joins the group once it finishes.
+        // The turn reads in the order it happened: what the model said, then the steps that
+        // followed below it (one collapsible group per burst), then the next text below them.
+        // Only the step still in flight stays below its group so live thinking / a running tool
+        // remains seen. Turns saved by older builds (no blocks) keep the fixed answer layout.
         val ordered = remember(turn.steps) { stepSegments(turn.steps).flatten() }
         val live = ordered.lastOrNull()?.takeIf { it.status == StepStatus.RUNNING || it.status == StepStatus.AWAITING_APPROVAL }
-        val grouped = if (live != null) ordered.dropLast(1) else ordered
-        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
-        if (live != null) StepRow(live, onOpenSource, resolveFile)
-        if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
-            ApprovalCard(pendingApproval, onApproval)
-        }
-        turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
-        if (turn.text.isNotBlank()) {
-            androidx.compose.foundation.text.selection.SelectionContainer {
-                if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+        if (turn.blocks.isEmpty()) {
+            val grouped = if (live != null) ordered.dropLast(1) else ordered
+            if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
+            if (live != null) StepRow(live, onOpenSource, resolveFile)
+            if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
+                ApprovalCard(pendingApproval, onApproval)
             }
+            turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
+            if (turn.text.isNotBlank()) {
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+                }
+            }
+        } else {
+            val sections = remember(turn.steps, turn.blocks) { turnSections(turn.blocks, stepSegments(turn.steps)) }
+            val lastText = sections.indexOfLast { it is TurnSection.Text }
+            sections.forEachIndexed { i, section ->
+                when (section) {
+                    is TurnSection.Steps -> {
+                        val running = section.steps.lastOrNull()?.takeIf { it.id == live?.id }
+                        val grouped = if (running != null) section.steps.dropLast(1) else section.steps
+                        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
+                        if (running != null) StepRow(running, onOpenSource, resolveFile)
+                    }
+                    is TurnSection.Text -> if (section.block.text.isNotBlank()) {
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            if (reveal && i == lastText) TypewriterMarkdown(section.block.text, onRevealed)
+                            else MarkdownContent(section.block.text, compact = true)
+                        }
+                    }
+                }
+            }
+            if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
+                ApprovalCard(pendingApproval, onApproval)
+            }
+            turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
         }
         // Subagents of this answer: compact live cards under the message, their steps apart.
         SubagentCards(turn.subagents, onOpenStep, onStopSubagent)
@@ -358,6 +385,25 @@ internal fun stepSegments(steps: List<Step>): List<List<Step>> {
         }
     }
     return out
+}
+
+/** What a turn shows while it reads in real order: one burst of actions, or one text block. */
+internal sealed interface TurnSection {
+    data class Steps(val steps: List<Step>) : TurnSection
+    data class Text(val block: TurnText) : TurnSection
+}
+
+/**
+ * Merges a turn's step segments and text blocks into one chronological plan: by time, steps
+ * before text on equal times (thinking precedes the narration of the same call), otherwise the
+ * original order. Empty when the turn has no blocks (older saves keep the fixed layout).
+ */
+internal fun turnSections(blocks: List<TurnText>, segments: List<List<Step>>): List<TurnSection> {
+    if (blocks.isEmpty()) return emptyList()
+    val items = ArrayList<Pair<Pair<Long, Int>, TurnSection>>()
+    segments.forEachIndexed { i, seg -> if (seg.isNotEmpty()) items.add((seg[0].startedAt to i * 2) to TurnSection.Steps(seg)) }
+    blocks.forEachIndexed { i, b -> items.add((b.at to i * 2 + 1) to TurnSection.Text(b)) }
+    return items.sortedWith(compareBy({ it.first.first }, { it.first.second })).map { it.second }
 }
 
 /**

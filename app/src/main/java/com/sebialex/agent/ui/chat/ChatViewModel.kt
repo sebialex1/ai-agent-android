@@ -16,6 +16,7 @@ import com.sebialex.agent.domain.model.Step
 import com.sebialex.agent.domain.model.StepKind
 import com.sebialex.agent.domain.model.StepStatus
 import com.sebialex.agent.domain.model.Turn
+import com.sebialex.agent.domain.model.TurnText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -429,11 +430,19 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             is AgentEvent.ContentDelta -> {
                 // The answer is arriving live: show it as it comes, and do not typewriter it later.
                 streamed += turnId
-                mutateTurn(sessionId, turnId) { it.copy(text = event.text) }
+                mutateTurn(sessionId, turnId) { it.copy(text = event.text, blocks = upsertBlock(it.blocks, event.block, event.text, event.at)) }
             }
             is AgentEvent.Finished -> {
                 onAnswerReceived(sessionId, turnId)
-                mutateTurn(sessionId, turnId) { it.copy(text = event.text, attachments = event.attachments, artifacts = event.artifacts, sources = event.sources, complete = true) }
+                mutateTurn(sessionId, turnId) {
+                    // The final answer becomes (or overwrites) its call's block, so even a
+                    // non-streamed answer ends up in the chronological flow.
+                    it.copy(
+                        text = event.text,
+                        blocks = upsertBlock(it.blocks, event.block, event.text, event.at),
+                        attachments = event.attachments, artifacts = event.artifacts, sources = event.sources, complete = true,
+                    )
+                }
                 persist(sessionId)
                 maybeWriteTitle(sessionId)
             }
@@ -787,4 +796,16 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun newId() = UUID.randomUUID().toString().replace("-", "").take(16)
+}
+
+/**
+ * Commits one streamed text event into the turn's chronological blocks: a known block id
+ * replaces its block (each event carries the whole text of that call), an unknown id appends.
+ * A blank [text] with an unknown id makes no block (never an empty placeholder).
+ */
+internal fun upsertBlock(blocks: List<TurnText>, id: String, text: String, at: Long): List<TurnText> = when {
+    id.isEmpty() -> blocks
+    blocks.any { it.id == id } -> blocks.map { if (it.id == id) TurnText(id, text, at) else it }
+    text.isBlank() -> blocks
+    else -> blocks + TurnText(id, text, at)
 }
