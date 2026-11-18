@@ -25,13 +25,12 @@ object GeminiShim {
     private const val LOG = "gemini-shim.log"
 
     /**
-     * One-time setup in Termux. curl_cffi ships no Android wheel, so pip builds it from source;
-     * that needs a toolchain and can take a while. If it fails, the shim cannot run on the phone
-     * and the session has to be used from a desktop shim instead.
+     * One-time setup in Termux. `pip install -U pip` is deliberately absent: Termux forbids it
+     * because it breaks the python-pip package. `rust` is required because orjson ships no
+     * Android wheel and maturin builds it from source; curl_cffi does have an Android wheel.
      */
     const val SETUP =
-        "pkg install -y python git clang cmake make openssl binutils && " +
-            "pip install -U pip && " +
+        "pkg install -y python python-pip git clang cmake make openssl binutils rust patchelf && " +
             "pip install \"git+https://github.com/FarisHijazi/gemini-web-api\""
 
     /** Launches the shim detached, with the imported session in its environment. */

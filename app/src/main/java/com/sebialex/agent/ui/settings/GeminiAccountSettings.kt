@@ -161,7 +161,7 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
             chevron = false,
             onClick = {
                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(GeminiShim.SETUP))
-                message = "Copied. Paste it in Termux once. curl_cffi has no Android wheel, so it builds from source and can take a while."
+                message = "Copied. Paste it in Termux once. orjson builds from source with Rust, so it can take a while."
             },
         )
         message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary) }
