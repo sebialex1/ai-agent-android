@@ -2,11 +2,12 @@ package com.sebialex.agent.data.web
 
 import com.sebialex.agent.domain.model.SearchHit
 
-data class FetchedPage(val url: String, val title: String, val text: String)
+data class FetchedPage(val url: String, val title: String, val text: String, val images: List<String> = emptyList())
 
 /** Web search and retrieval. Every implementation talks to the real network. */
 interface WebGateway {
-    suspend fun search(query: String): List<SearchHit>
+    /** [withImages] asks for image results as well; implementations without them ignore it. */
+    suspend fun search(query: String, withImages: Boolean = false): List<SearchHit>
     suspend fun fetch(url: String): FetchedPage
 }
 
@@ -21,7 +22,7 @@ class RoutingWebGateway(
     private val rotate: (failed: String, reason: String) -> String? = { _, _ -> null },
     private val direct: WebGateway = DirectWebClient(),
 ) : WebGateway {
-    override suspend fun search(query: String): List<SearchHit> = withKeys { it.search(query) }
+    override suspend fun search(query: String, withImages: Boolean): List<SearchHit> = withKeys { it.search(query, withImages) }
 
     override suspend fun fetch(url: String): FetchedPage = withKeys { it.fetch(url) }
 

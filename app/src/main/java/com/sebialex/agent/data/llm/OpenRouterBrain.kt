@@ -489,7 +489,7 @@ class OpenRouterBrain(
 
         /** Wire JSON arguments of a tool call. */
         fun arguments(c: ToolCall): String = when (c) {
-            is ToolCall.WebSearch -> buildJsonObject { put("query", c.query) }.toString()
+            is ToolCall.WebSearch -> buildJsonObject { put("query", c.query); if (c.images) put("images", true) }.toString()
             is ToolCall.WebFetch -> buildJsonObject { put("url", c.url) }.toString()
             is ToolCall.Shell -> buildJsonObject { put("command", c.command) }.toString()
             is ToolCall.ReadFile -> buildJsonObject { put("path", c.path) }.toString()
@@ -579,7 +579,7 @@ class OpenRouterBrain(
             fun flag(k: String) = arg(k)?.trim()?.lowercase() in setOf("true", "1", "yes")
             fun missing(k: String) = ToolCall.Invalid(id, name, rawArgs, "Missing required argument \"$k\" for $name")
             return when (name) {
-                "web_search" -> arg("query")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebSearch(id, it) } ?: missing("query")
+                "web_search" -> arg("query")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebSearch(id, it, flag("images")) } ?: missing("query")
                 "web_fetch" -> arg("url")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebFetch(id, it) } ?: missing("url")
                 "shell" -> arg("command")?.takeIf { it.isNotBlank() }?.let { ToolCall.Shell(id, it) } ?: missing("command")
                 "read_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ReadFile(id, it) } ?: missing("path")
@@ -752,9 +752,11 @@ class OpenRouterBrain(
 
             # Tools
             Web
-            - web_search: real web search (titles, URLs, snippets). Use it to find pages, videos, docs, current facts.
-            - web_fetch: read a page's text. Fetch the pages you rely on; only cite pages you actually fetched.
+            - web_search: real web search (titles, URLs, snippets). Use it to find pages, videos, docs, current facts;
+              images=true also returns image results for the query.
+            - web_fetch: read a page's text and see which images it embeds. Fetch the pages you rely on; only cite pages you actually fetched.
             - download_file: save any URL (PDF, image, video file, archive, dataset) into the workspace.
+            - view_image: look at a saved image. To see a web image: web_fetch the page, download_file an image URL, view_image the file.
             - http_request: call a web API (GET/POST/PUT/PATCH/DELETE, headers, JSON body). Non-GET asks the user.
             Commands and code
             - shell: run a command in /workspace. Built-ins (ls, cat, grep, find, mv, cp, rm, ...) run directly; the
@@ -849,7 +851,8 @@ class OpenRouterBrain(
          */
         internal val COMPACT_SYSTEM_PROMPT = """
             You are an agent on an Android phone with a private workspace at /workspace. Tool calls are really executed.
-            - web_search / web_fetch: find and read pages; only cite pages you fetched.
+            - web_search / web_fetch: find and read pages (web_search with images=true finds images; web_fetch lists a page's images);
+              only cite pages you fetched.
             - shell: run commands (Termux: bash, pkg, pip, python). Pass -y to pkg/apt. Programs that are missing are
               reported with their install command (check_tools checks first); install them when the task needs it.
             - python: run Python code; `packages` are pip-installed first.
@@ -1175,8 +1178,12 @@ class OpenRouterBrain(
 
         val TOOLS: JsonArray = JsonArray(
             listOf(
-                fn("web_search", "Search the web. Returns result titles, URLs and snippets.", "query" to "Search query"),
-                fn("web_fetch", "Fetch a URL and return its readable text content.", "url" to "Absolute http(s) URL"),
+                typedFn(
+                    "web_search", "Search the web. Returns result titles, URLs and snippets; with images=true also image result URLs.",
+                    Param("query", "string", "Search query"),
+                    Param("images", "boolean", "Set true to also get image results", required = false),
+                ),
+                fn("web_fetch", "Fetch a URL and return its readable text content, plus the URLs of the images on the page. To look at one: download_file, then view_image.", "url" to "Absolute http(s) URL"),
                 fn("shell", "Run a command in the sandboxed workspace. Built-ins run directly; anything else runs in Termux (bash, apt, pkg, pip, python). Working directory is /workspace.", "command" to "Command line"),
                 PYTHON_TOOL,
                 fn("read_file", "Read a text file from the workspace.", "path" to "Path relative to /workspace"),

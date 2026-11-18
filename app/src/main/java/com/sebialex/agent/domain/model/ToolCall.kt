@@ -4,7 +4,7 @@ package com.sebialex.agent.domain.model
 sealed interface ToolCall {
     val callId: String
 
-    data class WebSearch(override val callId: String, val query: String) : ToolCall
+    data class WebSearch(override val callId: String, val query: String, val images: Boolean = false) : ToolCall
     data class WebFetch(override val callId: String, val url: String) : ToolCall
     data class Shell(override val callId: String, val command: String) : ToolCall
     data class ReadFile(override val callId: String, val path: String) : ToolCall

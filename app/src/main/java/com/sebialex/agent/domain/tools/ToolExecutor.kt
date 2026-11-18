@@ -37,7 +37,7 @@ class ToolExecutor(
         try {
             when (call) {
                 is ToolCall.WebSearch -> {
-                    val hits = web.search(call.query)
+                    val hits = web.search(call.query, call.images)
                     ToolResult(
                         call.callId, true,
                         hits.joinToString("\n\n") { "${it.title}\n${it.url}\n${it.snippet}" }.ifEmpty { "no results" },
@@ -47,9 +47,12 @@ class ToolExecutor(
                 is ToolCall.WebFetch -> {
                     val page = web.fetch(call.url)
                     val text = page.text.ifBlank { "(the page had no readable text)" }
+                    val images = if (page.images.isEmpty()) "" else
+                        "\n\nImages on this page (download_file a URL into the workspace, then view_image the saved file to look at it):\n" +
+                            page.images.joinToString("\n") { "- $it" }
                     // A page only counts as a source when it actually returned readable content.
                     val sources = if (page.text.isNotBlank()) listOf(SourceRef(page.url, hostOf(page.url), page.title, snippetOf(page.text))) else emptyList()
-                    ToolResult(call.callId, true, text, sources = sources)
+                    ToolResult(call.callId, true, text + images, sources = sources)
                 }
                 is ToolCall.Shell -> {
                     // Programs the command needs are looked up first: a missing yt-dlp or ffmpeg

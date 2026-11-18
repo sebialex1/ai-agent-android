@@ -50,7 +50,7 @@ class SubagentTest {
         override fun execute(command: String, cwd: String) = ShellResult("", 0, cwd)
     }
     private val noWeb = object : WebGateway {
-        override suspend fun search(query: String): List<SearchHit> = emptyList()
+        override suspend fun search(query: String, withImages: Boolean): List<SearchHit> = emptyList()
         override suspend fun fetch(url: String) = FetchedPage(url, "", "")
     }
     private val allow = object : ApprovalGate {

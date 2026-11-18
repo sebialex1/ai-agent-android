@@ -32,7 +32,8 @@ class TinyFishClient(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    override suspend fun search(query: String): List<SearchHit> = withContext(Dispatchers.IO) {
+    /** TinyFish has no image endpoint: [withImages] is ignored here. */
+    override suspend fun search(query: String, withImages: Boolean): List<SearchHit> = withContext(Dispatchers.IO) {
         val url = URL(searchEndpoint + "?query=" + URLEncoder.encode(query, "UTF-8"))
         val body = request(url, "GET", null)
         val root = json.parseToJsonElement(body).jsonObject

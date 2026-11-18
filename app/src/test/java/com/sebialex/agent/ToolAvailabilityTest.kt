@@ -51,7 +51,7 @@ class ToolAvailabilityTest {
     private val noStorage = TermuxStatus(installed = true, runPermission = true, storage = false)
 
     private val noWeb = object : WebGateway {
-        override suspend fun search(query: String): List<SearchHit> = emptyList()
+        override suspend fun search(query: String, withImages: Boolean): List<SearchHit> = emptyList()
         override suspend fun fetch(url: String) = FetchedPage(url, "", "")
     }
 
