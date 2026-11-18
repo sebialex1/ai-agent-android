@@ -78,10 +78,33 @@ object CustomProviders {
         Preset("litellm", "LiteLLM proxy", "http://localhost:4000/v1", local = true),
         Preset("jan", "Jan", "http://127.0.0.1:1337/v1", local = true),
         // A local shim speaking to gemini.google.com with the session imported from an .agt file.
-        Preset("gemini-account", "Gemini (my account)", "http://127.0.0.1:8100/v1", local = true),
+        Preset(GEMINI_ACCOUNT_PRESET, "Gemini (my account)", GEMINI_ACCOUNT_URL, local = true),
     )
 
     const val CUSTOM_PRESET = "custom"
+
+    /**
+     * The local shim that speaks to gemini.google.com with the session imported from an `.agt`.
+     * Importing registers it as a provider, so its models show in the chat and image pickers like
+     * any other. The app talks OpenAI to it; the shim does the Gemini protocol.
+     */
+    const val GEMINI_ACCOUNT_PRESET = "gemini-account"
+    const val GEMINI_ACCOUNT_URL = "http://127.0.0.1:8100/v1"
+
+    /** The provider entry for the imported Gemini session, with whatever models the shim listed. */
+    fun geminiAccountProvider(
+        models: List<String> = emptyList(),
+        modelInfo: Map<String, ProviderModelMeta> = emptyMap(),
+    ) = SecureSettings.CustomProvider(
+        id = GEMINI_ACCOUNT_PRESET,
+        name = "Gemini (my account)",
+        baseUrl = GEMINI_ACCOUNT_URL,
+        preset = GEMINI_ACCOUNT_PRESET,
+        models = models,
+        detected = "Local shim using your imported Gemini session",
+        modelInfo = modelInfo,
+        api = API_CHAT,
+    )
 
     fun preset(id: String): Preset? = PRESETS.firstOrNull { it.id == id }
 

@@ -172,4 +172,19 @@ class MediaModelsTest {
         assertEquals("custom:oa", BackupBundle.primitiveValue(p.settings.getValue(SecureSettings.KEY_MEDIA_IMAGE_PROVIDER)))
         assertEquals("gpt-image-1", BackupBundle.primitiveValue(p.settings.getValue(SecureSettings.KEY_MEDIA_IMAGE_MODEL)))
     }
+
+    @Test fun theImportedGeminiSessionIsAProviderWithImageModels() {
+        val p = com.sebialex.agent.data.llm.CustomProviders.geminiAccountProvider(listOf("gemini-3-pro", "gemini-3-flash"))
+        assertEquals(com.sebialex.agent.data.llm.CustomProviders.GEMINI_ACCOUNT_PRESET, p.id)
+        assertEquals(com.sebialex.agent.data.llm.CustomProviders.GEMINI_ACCOUNT_URL, p.baseUrl)
+        assertEquals(com.sebialex.agent.data.llm.CustomProviders.API_CHAT, p.api)
+        // Its models list in the image picker like any other provider's, not only after a manual mark.
+        val images = MediaModels.customImageModels(p)
+        assertEquals(2, images.size)
+        assertTrue(images.all { it.source == "Gemini account images API" })
+        // The preset is offered in the provider dropdown too.
+        assertTrue(com.sebialex.agent.data.llm.CustomProviders.PRESETS.any { it.id == p.id })
+        // A local address, so plain http is allowed to it.
+        assertTrue(com.sebialex.agent.data.llm.CustomProviders.isLocalAddress(p.baseUrl))
+    }
 }

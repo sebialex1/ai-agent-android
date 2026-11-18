@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.data.backup.BackupBundle
+import com.sebialex.agent.data.llm.CustomProviders
 import com.sebialex.agent.data.secure.AgtFile
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.data.shell.TermuxBridge
@@ -87,8 +88,22 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                     val path = payload?.let { handOff(it) }
                     message = if (path != null) "Written to $path" else "Could not write the cookie file. Allow All files access in Settings > General > Sandbox."
                 })
+                PillButton("Refresh models", onClick = {
+                    scope.launch {
+                        val catalog = withContext(Dispatchers.IO) {
+                            runCatching { CustomProviders.fetchCatalog(CustomProviders.GEMINI_ACCOUNT_URL, null) }.getOrNull()
+                        }
+                        if (catalog == null) {
+                            message = "No answer from the shim at ${CustomProviders.GEMINI_ACCOUNT_URL}. Start it, then refresh."
+                        } else {
+                            settings.saveCustomProvider(CustomProviders.geminiAccountProvider(catalog.first, catalog.second))
+                            message = "${catalog.first.size} models listed."
+                        }
+                    }
+                })
                 PillButton("Remove", danger = true, onClick = {
                     settings.setGeminiAccount(null)
+                    settings.removeCustomProvider(CustomProviders.GEMINI_ACCOUNT_PRESET)
                     runCatching { java.io.File(termux.sharedRoot, "gemini-cookies.json").delete() }
                     message = "Session removed."
                 })
@@ -132,6 +147,20 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                             return@SheetOption
                         }
                         settings.setGeminiAccount(Json.encodeToString(AgtFile.Payload.serializer(), payload))
+                        // Register it as a provider so its models list in the chat and image pickers.
+                        // The shim may not be running yet; keep whatever was listed before if so.
+                        val existing = settings.customProvider(CustomProviders.GEMINI_ACCOUNT_PRESET)
+                        scope.launch {
+                            val catalog = withContext(Dispatchers.IO) {
+                                runCatching { CustomProviders.fetchCatalog(CustomProviders.GEMINI_ACCOUNT_URL, null) }.getOrNull()
+                            }
+                            settings.saveCustomProvider(
+                                CustomProviders.geminiAccountProvider(
+                                    catalog?.first ?: existing?.models.orEmpty(),
+                                    catalog?.second ?: existing?.modelInfo.orEmpty(),
+                                ),
+                            )
+                        }
                         val path = handOff(payload)
                         message = if (path != null) "Imported. Cookie file at $path" else "Imported. Could not write the cookie file — allow All files access."
                         pending = null

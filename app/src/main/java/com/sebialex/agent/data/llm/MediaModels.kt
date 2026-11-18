@@ -103,6 +103,8 @@ object MediaModels {
     private fun familySource(provider: SecureSettings.CustomProvider, model: String): String? {
         val id = model.lowercase()
         return when {
+            // The imported-session shim serves /images/generations for the models it lists.
+            provider.preset == CustomProviders.GEMINI_ACCOUNT_PRESET -> "Gemini account images API"
             ProviderMetadata.isOpenAiHost(provider.baseUrl) && (id.startsWith("gpt-image-") || id.startsWith("dall-e-")) ->
                 "OpenAI Images API model"
             ProviderMetadata.isGeminiHost(provider.baseUrl) && id.startsWith("gemini-") && "-image" in id ->
