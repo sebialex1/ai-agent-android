@@ -88,11 +88,15 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             PillButton(if (summary == null) "Import .agt" else "Replace", onClick = { picker.launch(arrayOf("*/*")) }, primary = true)
             if (summary != null) {
-                PillButton("Write cookie file", onClick = {
-                    val payload = runCatching { Json.decodeFromString(AgtFile.Payload.serializer(), stored!!) }.getOrNull()
-                    val path = payload?.let { handOff(it) }
-                    message = if (path != null) "Written to $path" else "Could not write the cookie file. Allow All files access in Settings > General > Sandbox."
-                })
+                com.sebialex.agent.ui.components.QuietIconButton(
+                    com.sebialex.agent.R.drawable.ic_download, "Write the cookie file for the shim",
+                    onClick = {
+                        val payload = runCatching { Json.decodeFromString(AgtFile.Payload.serializer(), stored!!) }.getOrNull()
+                        val path = payload?.let { handOff(it) }
+                        message = if (path != null) "Written to $path" else "Could not write the cookie file. Allow All files access in Settings > General > Sandbox."
+                    },
+                    tint = Palette.IconMuted, size = 34.dp, iconSize = 16.dp,
+                )
                 com.sebialex.agent.ui.components.QuietIconButton(
                     com.sebialex.agent.R.drawable.ic_refresh, "Refresh models",
                     onClick = {
@@ -110,7 +114,10 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                     },
                     tint = Palette.IconMuted, size = 34.dp, iconSize = 16.dp,
                 )
-                PillButton(if (shimRunning) "Stop" else "Start", primary = !shimRunning, enabled = !busy, onClick = {
+                com.sebialex.agent.ui.components.QuietIconButton(
+                    if (shimRunning) com.sebialex.agent.R.drawable.ic_stop else com.sebialex.agent.R.drawable.ic_play,
+                    if (shimRunning) "Stop the shim" else "Start the shim",
+                    onClick = {
                     val raw = stored
                     if (raw == null) { message = "Import a session first."; return@PillButton }
                     busy = true
@@ -144,14 +151,21 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                         } finally {
                             busy = false
                         }
-                    }
-                })
-                PillButton("Remove", danger = true, onClick = {
-                    settings.setGeminiAccount(null)
-                    settings.removeCustomProvider(CustomProviders.GEMINI_ACCOUNT_PRESET)
-                    runCatching { java.io.File(termux.sharedRoot, "gemini-cookies.json").delete() }
-                    message = "Session removed."
-                })
+                    },
+                    tint = if (shimRunning) Palette.Danger else Palette.Accent,
+                    enabled = !busy,
+                    size = 34.dp, iconSize = 16.dp,
+                )
+                com.sebialex.agent.ui.components.QuietIconButton(
+                    com.sebialex.agent.R.drawable.ic_trash, "Remove the session",
+                    onClick = {
+                        settings.setGeminiAccount(null)
+                        settings.removeCustomProvider(CustomProviders.GEMINI_ACCOUNT_PRESET)
+                        runCatching { java.io.File(termux.sharedRoot, "gemini-cookies.json").delete() }
+                        message = "Session removed."
+                    },
+                    tint = Palette.Danger, size = 34.dp, iconSize = 16.dp,
+                )
             }
         }
         NavRow(
