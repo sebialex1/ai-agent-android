@@ -27,6 +27,11 @@ enum class TermuxProblem(val message: String) {
             "never shows (some ROMs hide it), open this app's App info > Permissions > Additional " +
             "permissions and enable it there.",
     ),
+    TERMUX_LACKS_PERMISSION(
+        "your Termux build does not offer the \"Run commands\" permission at all (some Termux " +
+            "distributions never declare it, and no app can be granted a permission that does not " +
+            "exist). Install Termux from F-Droid, open it once, then try again.",
+    ),
     NO_STORAGE(
         "permission denied: shared storage access is off, so the workspace cannot be shared with " +
             "Termux. Allow \"All files access\" in Settings > General > Sandbox.",
@@ -44,9 +49,17 @@ data class TermuxStatus(
      * stale "false" never stops the next attempt (the user may have just fixed it).
      */
     val externalApps: Boolean? = null,
+    /**
+     * Whether any installed package declares `com.termux.permission.RUN_COMMAND` at all. Some
+     * Termux builds (the deprecated Play Store one, some forks) never declare it; then no app
+     * can ever be granted it and the only fix is a Termux that does (the F-Droid build).
+     * Default true so existing constructors and emergency paths keep their meaning.
+     */
+    val permissionDefined: Boolean = true,
 ) {
     val problem: TermuxProblem? = when {
         !installed -> TermuxProblem.NOT_INSTALLED
+        !permissionDefined -> TermuxProblem.TERMUX_LACKS_PERMISSION
         !runPermission -> TermuxProblem.NO_RUN_PERMISSION
         !storage -> TermuxProblem.NO_STORAGE
         else -> null
@@ -92,6 +105,9 @@ class TermuxBridge(private val context: Context) : TermuxRunner {
         runPermission = context.checkSelfPermission(PERMISSION_RUN_COMMAND) == PackageManager.PERMISSION_GRANTED,
         storage = hasStorageAccess(),
         externalApps = externalAppsAllowed,
+        permissionDefined = runCatching {
+            @Suppress("DEPRECATION") context.packageManager.getPermissionInfo(PERMISSION_RUN_COMMAND, 0)
+        }.isSuccess,
     )
 
     /** Last thing Termux told us about `allow-external-apps`; see [TermuxStatus.externalApps]. */
