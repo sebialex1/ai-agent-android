@@ -58,6 +58,29 @@ fun MessageActionRow(
 /** How long the action row takes to unfold or fold. */
 private const val ROW_MS = 180
 
+/**
+ * The actions of one of the agent's answers, shown on long-press: Copy and Regenerate.
+ * Regenerate re-runs the request that produced this answer, so it waits while a run is active.
+ */
+@Composable
+fun AnswerActionRow(
+    visible: Boolean,
+    canModify: Boolean,
+    onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(tween(ROW_MS), expandFrom = Alignment.Top) + fadeIn(tween(ROW_MS)),
+        exit = shrinkVertically(tween(ROW_MS), shrinkTowards = Alignment.Top) + fadeOut(tween(ROW_MS - 60)),
+    ) {
+        Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            QuietIconButton(R.drawable.ic_copy, "Copy answer", onCopy, tint = Palette.IconMuted, size = 36.dp, iconSize = 18.dp)
+            QuietIconButton(R.drawable.ic_refresh, "Regenerate answer", onRegenerate, tint = Palette.IconMuted, enabled = canModify, size = 36.dp, iconSize = 18.dp)
+        }
+    }
+}
+
 /** Thin strip above the input while a sent message is being edited: what is edited, and a cancel. */
 @Composable
 fun EditingBanner(preview: String, onCancel: () -> Unit, modifier: Modifier = Modifier) {

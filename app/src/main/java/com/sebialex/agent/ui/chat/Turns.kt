@@ -264,6 +264,13 @@ fun AssistantTurn(
     onStopSubagent: (String) -> Unit = {},
     /** The user's send-motion setting; only a just-received answer animates. */
     motion: Boolean = true,
+    /** A tap on the answer: shows or hides its action row. Null: the answer has no actions. */
+    onTap: (() -> Unit)? = null,
+    actionsOpen: Boolean = false,
+    /** Regenerate is possible now (not while an answer runs). */
+    canModify: Boolean = false,
+    onCopy: () -> Unit = {},
+    onRegenerate: () -> Unit = {},
 ) {
     val fresh = remember(turn.id) { System.currentTimeMillis() - turn.createdAt < 2000 }
     Column(Modifier.fillMaxWidth().bubbleEnter(motion && fresh), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -282,8 +289,19 @@ fun AssistantTurn(
             }
             turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
             if (turn.text.isNotBlank()) {
-                androidx.compose.foundation.text.selection.SelectionContainer {
-                    if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+                Column {
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Box(
+                            Modifier.then(
+                                // A plain tap only: long-press still selects text, drags still scroll.
+                                if (onTap == null) Modifier
+                                else Modifier.pointerInput(turn.id) { detectTapGestures(onTap = { onTap.invoke() }) },
+                            ),
+                        ) {
+                            if (reveal) TypewriterMarkdown(turn.text, onRevealed) else MarkdownContent(turn.text, compact = true)
+                        }
+                    }
+                    AnswerActionRow(actionsOpen, canModify, onCopy, onRegenerate)
                 }
             }
         } else {

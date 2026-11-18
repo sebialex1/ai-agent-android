@@ -591,6 +591,20 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         send(text)
     }
 
+    /**
+     * Re-runs the request that produced [turnId]: that answer and everything after it leave the
+     * history, and the user message it answered is sent again. Waits while a run is active.
+     */
+    fun regenerate(turnId: String) {
+        val sessionId = currentId
+        if (runs.containsKey(sessionId)) return
+        val s = cache[sessionId] ?: return
+        val idx = s.turns.indexOfFirst { it.id == turnId }
+        if (idx <= 0) return
+        val request = s.turns.subList(0, idx).lastOrNull { it.role == Role.USER } ?: return
+        resendEdited(request.id, request.text)
+    }
+
     /** Deletes one of your messages and the answer that followed it (up to your next message). */
     fun deleteMessage(turnId: String) {
         val sessionId = currentId

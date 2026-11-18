@@ -271,6 +271,14 @@ fun ChatScreen(
                         pendingApproval = state.pendingApproval,
                         onOpenStep = { openStepId = it.id },
                         motion = snap.bubbleMotion,
+                        onTap = { actionsFor = if (actionsFor == turn.id) null else turn.id },
+                        actionsOpen = actionsFor == turn.id,
+                        canModify = !state.running && vm.canModifyMessages(),
+                        onCopy = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(turn.text))
+                            actionsFor = null
+                        },
+                        onRegenerate = { actionsFor = null; vm.regenerate(turn.id) },
                         onOpenFile = { f: FileAttachment -> onOpenFile(f.path, f.baseSnapshot) },
                         onOpenSource = { previewSource = it },
                         onMoreSources = { moreSources = it },
