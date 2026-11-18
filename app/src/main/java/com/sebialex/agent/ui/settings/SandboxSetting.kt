@@ -119,43 +119,24 @@ fun SandboxSetting(termux: TermuxBridge) {
             action = "Get",
             onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
         )
-        // There is no substitute permission: RUN_COMMAND is declared by Termux itself, so when the
-        // installed Termux never declares it, no app can be granted it. Say so and point at a
-        // Termux that does (the F-Droid build), instead of a dialog that can never appear.
-        if (status.installed && !status.permissionDefined) {
-            StatusRow(
-                label = "Permission to run commands",
-                ok = false,
-                action = "Get",
-                onAction = { open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/"))) },
-            )
+        StatusRow(
+            label = "Permission to run commands",
+            ok = status.runPermission,
+            action = "Allow",
+            enabled = status.installed,
+            onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
+        )
+        if (status.installed && !status.runPermission) {
+            // Some ROMs (One UI in particular) may never show the runtime dialog for this
+            // rare permission. It can always be granted by hand: this app's App info >
+            // Permissions > Additional permissions > "Run commands in Termux environment".
             Text(
-                "Your Termux build does not offer this permission at all (no app declares it). Install " +
-                    "the F-Droid Termux, open it once, and come back.",
+                "No dialog on your phone (some ROMs hide it)? Open your own app page and grant it under " +
+                    "Additional permissions.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
-                modifier = Modifier.fillMaxWidth().padding(start = 32.dp, bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth().clickable { openAppDetails(context) }.padding(start = 32.dp, bottom = 4.dp),
             )
-        } else {
-            StatusRow(
-                label = "Permission to run commands",
-                ok = status.runPermission,
-                action = "Allow",
-                enabled = status.installed,
-                onAction = { askRun.launch(TermuxBridge.PERMISSION_RUN_COMMAND) },
-            )
-            if (status.installed && !status.runPermission) {
-                // Some ROMs (One UI in particular) may never show the runtime dialog for this
-                // rare permission. It can always be granted by hand: this app's App info >
-                // Permissions > Additional permissions > "Run commands in Termux environment".
-                Text(
-                    "No dialog on your phone (some ROMs hide it)? Open your own app page and grant it under " +
-                        "Additional permissions.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Palette.TextTertiary,
-                    modifier = Modifier.fillMaxWidth().clickable { openAppDetails(context) }.padding(start = 32.dp, bottom = 4.dp),
-                )
-            }
         }
         SetupStep(
             ok = checkOk == true || (check == null && status.externalApps == true),
