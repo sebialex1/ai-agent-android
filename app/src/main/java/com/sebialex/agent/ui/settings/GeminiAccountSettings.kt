@@ -19,6 +19,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.data.backup.BackupBundle
 import com.sebialex.agent.data.llm.CustomProviders
+import com.sebialex.agent.data.llm.GeminiShim
 import com.sebialex.agent.data.secure.AgtFile
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.data.shell.TermuxBridge
@@ -48,9 +50,12 @@ import kotlinx.serialization.json.Json
 internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) {
     val snap by settings.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var pending by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var shimRunning by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
     // Any settings edit republishes the snapshot, so this re-reads after an import or removal.
     val stored = remember(snap) { settings.geminiAccount() }
     val summary = remember(stored) {
@@ -88,16 +93,56 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                     val path = payload?.let { handOff(it) }
                     message = if (path != null) "Written to $path" else "Could not write the cookie file. Allow All files access in Settings > General > Sandbox."
                 })
-                PillButton("Refresh models", onClick = {
-                    scope.launch {
-                        val catalog = withContext(Dispatchers.IO) {
-                            runCatching { CustomProviders.fetchCatalog(CustomProviders.GEMINI_ACCOUNT_URL, null) }.getOrNull()
+                com.sebialex.agent.ui.components.QuietIconButton(
+                    com.sebialex.agent.R.drawable.ic_refresh, "Refresh models",
+                    onClick = {
+                        scope.launch {
+                            val catalog = withContext(Dispatchers.IO) {
+                                runCatching { CustomProviders.fetchCatalog(CustomProviders.GEMINI_ACCOUNT_URL, null) }.getOrNull()
+                            }
+                            if (catalog == null) {
+                                message = "No answer from the shim at ${CustomProviders.GEMINI_ACCOUNT_URL}. Start it, then refresh."
+                            } else {
+                                settings.saveCustomProvider(CustomProviders.geminiAccountProvider(catalog.first, catalog.second))
+                                message = "${catalog.first.size} models listed."
+                            }
                         }
-                        if (catalog == null) {
-                            message = "No answer from the shim at ${CustomProviders.GEMINI_ACCOUNT_URL}. Start it, then refresh."
-                        } else {
-                            settings.saveCustomProvider(CustomProviders.geminiAccountProvider(catalog.first, catalog.second))
-                            message = "${catalog.first.size} models listed."
+                    },
+                    tint = Palette.IconMuted, size = 34.dp, iconSize = 16.dp,
+                )
+                PillButton(if (shimRunning) "Stop" else "Start", primary = !shimRunning, enabled = !busy, onClick = {
+                    val raw = stored
+                    if (raw == null) { message = "Import a session first."; return@PillButton }
+                    busy = true
+                    scope.launch {
+                        try {
+                            if (shimRunning) {
+                                withContext(Dispatchers.IO) { runCatching { GeminiShim.stop(termux, GeminiShim.HOME) } }
+                                shimRunning = false
+                                message = "Stopped."
+                                return@launch
+                            }
+                            val payload = runCatching { Json.decodeFromString(AgtFile.Payload.serializer(), raw) }.getOrNull()
+                            if (payload == null) { message = "The stored session could not be read."; return@launch }
+                            val started = withContext(Dispatchers.IO) {
+                                runCatching { GeminiShim.start(termux, payload, GeminiShim.HOME) }.getOrNull()
+                            }
+                            if (started == null) {
+                                message = "Termux did not answer. Check Settings > General > Sandbox."
+                                return@launch
+                            }
+                            message = "Starting the shim…"
+                            val ids = GeminiShim.awaitModels(60_000)
+                            if (ids == null) {
+                                val log = withContext(Dispatchers.IO) { runCatching { GeminiShim.log(termux, GeminiShim.HOME) }.getOrNull() }
+                                message = "The shim did not come up. " + (log?.take(400) ?: started)
+                            } else {
+                                shimRunning = true
+                                settings.saveCustomProvider(CustomProviders.geminiAccountProvider(ids))
+                                message = "Running · ${ids.size} models listed."
+                            }
+                        } finally {
+                            busy = false
                         }
                     }
                 })
@@ -109,6 +154,16 @@ internal fun GeminiAccountGroup(settings: SecureSettings, termux: TermuxBridge) 
                 })
             }
         }
+        NavRow(
+            title = "Set up in Termux",
+            value = "Copy the one-time install command",
+            icon = com.sebialex.agent.R.drawable.ic_terminal,
+            chevron = false,
+            onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(GeminiShim.SETUP))
+                message = "Copied. Paste it in Termux once. curl_cffi has no Android wheel, so it builds from source and can take a while."
+            },
+        )
         message?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.TextSecondary) }
     }
 
