@@ -949,9 +949,12 @@ class OpenRouterBrain(
 
         /** Extra system prompt lines when learning about the user is on. */
         internal const val USER_MEMORY_PROMPT =
-            "Learning about the user is on: when you notice a lasting preference, habit or fact worth keeping, save it with the " +
-                "user_memory tool (the saved facts are already in your prompt). Keep entries short and current\u200A:\u200Aupdate instead of " +
-                "duplicating, forget what no longer holds.\n"
+            "You keep a profile of the user: durable facts about them (name, work, projects, likes and dislikes, " +
+                "habits, how they want you to answer) saved with the user_memory tool. When the user tells you something " +
+                "like that, save it with user_memory in the same turn without waiting to be asked, even for facts given " +
+                "in passing. Update or forget instead of duplicating; keep entries short and current. The facts saved " +
+                "so far are listed at the end of this prompt; when nothing is there yet, start building the profile " +
+                "from what this user tells you now (earlier conversations can be searched with conversation_memory).\n"
 
         const val MEMORY_TOOL_NAME = "conversation_memory"
 

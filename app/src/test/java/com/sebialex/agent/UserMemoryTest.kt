@@ -170,6 +170,42 @@ class UserMemoryTest {
         assertEquals("user_memory", OpenRouterBrain.toolName(ToolCall.UserMemory("1", "list")))
     }
 
+    private fun systemOf(ctx: BrainContext): String {
+        val messages = OpenRouterBrain(apiKey = "k", model = "m").messages(ctx)
+        return ((messages[0] as JsonObject)["content"] as JsonPrimitive).content
+    }
+
+    @Test fun theLearningHintReachesTheSystemPromptOnlyWhenTheToolIsOn() {
+        val off = BrainContext(task = "t", history = emptyList(), observations = emptyList(), workspaceFiles = emptyList())
+        assertFalse("user_memory" in systemOf(off))
+        val on = off.copy(userMemoryTool = true)
+        val system = systemOf(on)
+        assertTrue("user_memory" in system)
+        // The hint must make the model save proactively, not "when it notices something".
+        assertTrue("same turn" in system)
+        assertTrue("without waiting to be asked" in system)
+    }
+
+    @Test fun savedProfileFactsReachTheSystemPrompt() {
+        val ctx = BrainContext(
+            task = "t", history = emptyList(), observations = emptyList(), workspaceFiles = emptyList(),
+            userProfile = "\n# What you know about the user\n- Name is Alex (Identity)\n",
+        )
+        val system = systemOf(ctx)
+        assertTrue("Name is Alex" in system)
+        assertTrue("# What you know about the user" in system)
+    }
+
+    @Test fun subagentsGetTheProfileButNeitherHintNorTool() {
+        val ctx = BrainContext(
+            task = "t", history = emptyList(), observations = emptyList(), workspaceFiles = emptyList(),
+            mode = AgentMode.SUBAGENT, userProfile = "\n- Name is Alex\n",
+        )
+        // Subagents run without the user_memory tool: no hint either, facts only.
+        assertFalse("user_memory" in systemOf(ctx))
+        assertTrue("Name is Alex" in systemOf(ctx))
+    }
+
     private fun names(tools: JsonArray) = tools.flatMap { t ->
         val o = t as JsonObject
         listOf((o["name"] as? JsonPrimitive)?.content, (((o["function"] as? JsonObject)?.get("name")) as? JsonPrimitive)?.content)
