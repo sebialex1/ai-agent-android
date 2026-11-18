@@ -262,9 +262,7 @@ fun ChatScreen(
                 } else {
                     AssistantTurn(
                         turn = turn,
-                        expanded = turn.id in state.expanded,
                         pendingApproval = state.pendingApproval,
-                        onToggle = { vm.toggleSteps(turn.id) },
                         onOpenStep = { openStepId = it.id },
                         motion = snap.bubbleMotion,
                         onOpenFile = { f: FileAttachment -> onOpenFile(f.path, f.baseSnapshot) },

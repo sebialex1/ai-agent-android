@@ -42,12 +42,12 @@ class TurnSectionsTest {
     fun narrationStaysAboveTheStepsItLedTo() {
         val blocks = listOf(TurnText("b1", "Let me look.", at = 100))
         val steps = listOf(step("s1", 200), step("s2", 300))
-        val sections = turnSections(blocks, listOf(steps))
+        val sections = turnSections(blocks, steps)
         assertEquals(2, sections.size)
         assertTrue(sections[0] is TurnSection.Text)
         assertTrue(sections[1] is TurnSection.Steps)
         // Text after the steps: a second model call answers below the burst it caused.
-        val later = turnSections(blocks + TurnText("b2", "All done.", at = 400), listOf(steps))
+        val later = turnSections(blocks + TurnText("b2", "All done.", at = 400), steps)
         assertEquals(listOf("b1", "b2"), later.filterIsInstance<TurnSection.Text>().map { it.block.id })
         assertTrue(later[0] is TurnSection.Text)
         assertTrue(later[1] is TurnSection.Steps)
@@ -57,25 +57,70 @@ class TurnSectionsTest {
     @Test
     fun thinkingAndNarrationOfOneCallShowThinkingFirst() {
         // Same start time: the reasoning streamed before the content, so its row goes first.
-        val sections = turnSections(listOf(TurnText("b1", "Text.", at = 100)), listOf(listOf(step("s1", 100))))
+        val sections = turnSections(listOf(TurnText("b1", "Text.", at = 100)), listOf(step("s1", 100)))
         assertTrue(sections[0] is TurnSection.Steps)
         assertTrue(sections[1] is TurnSection.Text)
     }
 
     @Test
     fun multipleStepSegmentsKeepTheirOrderAroundText() {
-        val segments = listOf(listOf(step("s1", 100)), listOf(step("s2", 200)))
+        val steps = listOf(step("s1", 100), step("s2", 200))
         val blocks = listOf(
             TurnText("b1", "between", at = 150),
             TurnText("b2", "end", at = 300),
         )
-        val kinds = turnSections(blocks, segments).map { it::class.simpleName }
+        val kinds = turnSections(blocks, steps).map { it::class.simpleName }
         assertEquals(listOf("Steps", "Text", "Steps", "Text"), kinds)
     }
 
     @Test
+    fun everyBurstGetsItsOwnStepsBlockEvenWithoutThinkingRows() {
+        // A model that narrates, acts, narrates again, acts again, answers — with no reasoning
+        // step between the bursts: each burst must still be its own collapsible group.
+        val steps = listOf(
+            step("s1", 150), step("s2", 160),
+            step("s3", 350), step("s4", 360),
+            step("s5", 550),
+        )
+        val blocks = listOf(
+            TurnText("b1", "Looking first.", at = 100),
+            TurnText("b2", "Now the second part.", at = 300),
+            TurnText("b3", "Last part.", at = 500),
+            TurnText("b4", "All done.", at = 700),
+        )
+        val kinds = turnSections(blocks, steps).map { it::class.simpleName }
+        assertEquals(listOf("Text", "Steps", "Text", "Steps", "Text", "Steps", "Text"), kinds)
+    }
+
+    @Test
+    fun textWrittenInConsecutiveCallsWithoutActionsReadsAsOne() {
+        val sections = turnSections(
+            listOf(TurnText("b1", "First", at = 100), TurnText("b2", "Second", at = 200)),
+            listOf(step("s1", 150)),
+        )
+        val kinds = sections.map { it::class.simpleName }
+        assertEquals(listOf("Text", "Steps", "Text"), kinds)
+    }
+
+    @Test
+    fun repeatedThinkingIsNotASecondRow() {
+        val sections = turnSections(
+            listOf(TurnText("b1", "Text", at = 300)),
+            listOf(
+                Step("t1", StepKind.REASONING, "Thinking", "reasoning", input = "", output = "Thinking", status = StepStatus.DONE, startedAt = 100),
+                Step("t2", StepKind.REASONING, "Thinking", "reasoning", input = "", output = "  Thinking  ", status = StepStatus.DONE, startedAt = 200),
+                step("s1", 250),
+            ),
+        )
+        val kinds = sections.map { it::class.simpleName }
+        assertEquals(listOf("Steps", "Text"), kinds)
+        // Think and tool of the burst read as one collapsible group, duplicates off.
+        assertEquals(2, (sections[0] as TurnSection.Steps).steps.size)
+    }
+
+    @Test
     fun noBlocksKeepsTheFixedLegacyLayout() {
-        assertTrue(turnSections(emptyList(), listOf(listOf(step("s1", 1)))).isEmpty())
+        assertTrue(turnSections(emptyList(), listOf(step("s1", 1))).isEmpty())
     }
 
     @Test

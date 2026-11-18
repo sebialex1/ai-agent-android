@@ -31,8 +31,6 @@ import java.util.UUID
 data class ChatUiState(
     val session: Session,
     val running: Boolean = false,
-    /** Assistant turn ids whose step list is expanded. */
-    val expanded: Set<String> = emptySet(),
     val pendingApproval: ApprovalRequest? = null,
     /**
      * Assistant turns whose answer just arrived and should be revealed with the typewriter.
@@ -86,7 +84,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     /** Messages waiting for the running turn of each conversation to finish (declared before init: publish() reads it). */
     private val queues = HashMap<String, List<QueuedMessage>>()
     private var currentId: String = newId()
-    private var expanded: Set<String> = emptySet()
     private var revealing: Set<String> = emptySet()
     /** Turns whose answer streamed in live, so they are never typewritten afterwards. */
     private val streamed = HashSet<String>()
@@ -166,7 +163,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             cache[id] = session
             dropIfEmpty(currentId)
             currentId = id
-            expanded = emptySet()
             revealing = emptySet()
             io.trySend { container.sessions.setActive(id) }
             publish()
@@ -179,7 +175,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val fresh = freshSession()
         cache[fresh.id] = fresh
         currentId = fresh.id
-        expanded = emptySet()
         revealing = emptySet()
         publish()
     }
@@ -196,7 +191,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             val fresh = freshSession()
             cache[fresh.id] = fresh
             currentId = fresh.id
-            expanded = emptySet()
         }
         publish()
         io.trySend { container.sessions.delete(id) }
@@ -242,7 +236,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         val fresh = freshSession()
         cache[fresh.id] = fresh
         currentId = fresh.id
-        expanded = emptySet()
         publish()
         io.trySend { container.sessions.clearAll() }
     }
@@ -322,9 +315,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             updatedAt = now,
         )
         val modelTask = if (resume) Resume.continuationTask(task) else task
-        // Sending a new message collapses every previous execution group.
         if (sessionId == currentId) {
-            expanded = setOf(assistant.id)
             io.trySend { container.sessions.setActive(sessionId) }
         }
         persist(sessionId)
@@ -625,10 +616,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         return body.ifBlank { paths.joinToString(" ") { it.substringAfterLast('/') } }
     }
 
-    fun toggleSteps(turnId: String) {
-        expanded = if (turnId in expanded) expanded - turnId else expanded + turnId
-        publish()
-    }
 
     /**
      * Copies a user-picked document, photo or camera capture into the current conversation's
@@ -727,7 +714,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         _state.value = ChatUiState(
             session = session,
             running = run != null && !run.stopped,
-            expanded = expanded,
             pendingApproval = run?.pending,
             revealing = revealing,
             queued = queues[currentId].orEmpty(),

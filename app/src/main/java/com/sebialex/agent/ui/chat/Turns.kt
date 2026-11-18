@@ -242,9 +242,7 @@ fun QueuedBubble(
 @Composable
 fun AssistantTurn(
     turn: Turn,
-    expanded: Boolean,
     pendingApproval: ApprovalRequest?,
-    onToggle: () -> Unit,
     onOpenStep: (Step) -> Unit,
     onOpenFile: (FileAttachment) -> Unit,
     onOpenSource: (SourceRef) -> Unit,
@@ -277,7 +275,7 @@ fun AssistantTurn(
         val live = ordered.lastOrNull()?.takeIf { it.status == StepStatus.RUNNING || it.status == StepStatus.AWAITING_APPROVAL }
         if (turn.blocks.isEmpty()) {
             val grouped = if (live != null) ordered.dropLast(1) else ordered
-            if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
+            if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, groupKey(turn, grouped.first().id), fresh, onOpenSource, resolveFile)
             if (live != null) StepRow(live, onOpenSource, resolveFile)
             if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
                 ApprovalCard(pendingApproval, onApproval)
@@ -289,14 +287,16 @@ fun AssistantTurn(
                 }
             }
         } else {
-            val sections = remember(turn.steps, turn.blocks) { turnSections(turn.blocks, stepSegments(turn.steps)) }
+            val sections = remember(turn.steps, turn.blocks) { turnSections(turn.blocks, turn.steps) }
             val lastText = sections.indexOfLast { it is TurnSection.Text }
             sections.forEachIndexed { i, section ->
                 when (section) {
                     is TurnSection.Steps -> {
                         val running = section.steps.lastOrNull()?.takeIf { it.id == live?.id }
                         val grouped = if (running != null) section.steps.dropLast(1) else section.steps
-                        if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, expanded, onToggle, onOpenSource, resolveFile)
+                        if (grouped.isNotEmpty()) {
+                            StepsGroup(grouped, grouped.size, groupKey(turn, grouped.first().id), fresh, onOpenSource, resolveFile)
+                        }
                         if (running != null) StepRow(running, onOpenSource, resolveFile)
                     }
                     is TurnSection.Text -> if (section.block.text.isNotBlank()) {
@@ -394,16 +394,40 @@ internal sealed interface TurnSection {
 }
 
 /**
- * Merges a turn's step segments and text blocks into one chronological plan: by time, steps
- * before text on equal times (thinking precedes the narration of the same call), otherwise the
- * original order. Empty when the turn has no blocks (older saves keep the fixed layout).
+ * Merges a turn's actions and text blocks into one chronological plan: by time, steps before
+ * text on equal times (thinking precedes the narration of the same call). Consecutive actions
+ * between two texts form one collapsible group — a burst of tool calls with no thinking row in
+ * between must still split at the text it was answering to. A duplicate or empty thinking row is
+ * dropped, and text written in consecutive calls with nothing built in between reads as one.
+ * Empty when the turn has no blocks (older saves keep the fixed layout).
  */
-internal fun turnSections(blocks: List<TurnText>, segments: List<List<Step>>): List<TurnSection> {
+internal fun turnSections(blocks: List<TurnText>, steps: List<Step>): List<TurnSection> {
     if (blocks.isEmpty()) return emptyList()
-    val items = ArrayList<Pair<Pair<Long, Int>, TurnSection>>()
-    segments.forEachIndexed { i, seg -> if (seg.isNotEmpty()) items.add((seg[0].startedAt to i * 2) to TurnSection.Steps(seg)) }
-    blocks.forEachIndexed { i, b -> items.add((b.at to i * 2 + 1) to TurnSection.Text(b)) }
-    return items.sortedWith(compareBy({ it.first.first }, { it.first.second })).map { it.second }
+    val timeline = ArrayList<Triple<Long, Int, TurnSection>>()
+    val seenThoughts = HashSet<String>()
+    steps.forEachIndexed { i, st ->
+        if (st.kind == StepKind.REASONING) {
+            val thought = st.output.trim()
+            if (thought.isEmpty() || !seenThoughts.add(thought)) return@forEachIndexed
+        }
+        timeline.add(Triple(st.startedAt, i, TurnSection.Steps(listOf(st))))
+    }
+    blocks.forEachIndexed { i, b ->
+        if (b.text.isNotBlank()) timeline.add(Triple(b.at, steps.size + i, TurnSection.Text(b)))
+    }
+    val sorted = timeline.sortedWith(compareBy({ it.first }, { it.second })).map { it.third }
+    val out = ArrayList<TurnSection>()
+    for (s in sorted) {
+        val last = out.lastOrNull()
+        val merged = when {
+            s is TurnSection.Steps && last is TurnSection.Steps -> TurnSection.Steps(last.steps + s.steps)
+            s is TurnSection.Text && last is TurnSection.Text ->
+                TurnSection.Text(TurnText(last.block.id, last.block.text + "\n\n" + s.block.text, last.block.at))
+            else -> null
+        }
+        if (merged != null) out[out.lastIndex] = merged else out.add(s)
+    }
+    return out
 }
 
 /**
@@ -433,14 +457,30 @@ private fun TypewriterMarkdown(text: String, onDone: () -> Unit) {
     MarkdownContent(text.substring(0, shown.coerceIn(0, text.length)), compact = true)
 }
 
+/** Stable identity of one burst inside [turn]: no two groups share their open state. */
+private fun groupKey(turn: Turn, firstStepId: String) = "${turn.id}:$firstStepId"
+
+/**
+ * One collapsible burst of actions. The open state is the group's own ([groupKey] keeps it
+ * per turn and per burst), so extending one block never moves the others; [initiallyExpanded]
+ * covers the old behavior where a just-sent turn's group starts open.
+ */
 @Composable
-private fun StepsGroup(steps: List<Step>, actionCount: Int, expanded: Boolean, onToggle: () -> Unit, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File?) {
+private fun StepsGroup(
+    steps: List<Step>,
+    actionCount: Int,
+    groupKey: String,
+    initiallyExpanded: Boolean,
+    onOpenSource: (SourceRef) -> Unit,
+    resolveFile: (String) -> java.io.File?,
+) {
+    var expanded by rememberSaveable(groupKey) { mutableStateOf(initiallyExpanded) }
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, animationSpec = tween(180), label = "chevron")
     Column {
         Row(
             Modifier
                 .clip(RoundedCornerShape(10.dp))
-                .clickable(onClick = onToggle)
+                .clickable(onClick = { expanded = !expanded })
                 .padding(start = 2.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
