@@ -55,7 +55,7 @@ internal fun SwitchRow(title: String, subtitle: String? = null, checked: Boolean
     var help by rememberSaveable(title) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled) { onChange(!checked) }.heightIn(min = 48.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled) { onChange(!checked) }.heightIn(min = 42.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -143,7 +143,7 @@ internal fun NavRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .heightIn(min = 52.dp)
+            .heightIn(min = 46.dp)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -267,8 +267,8 @@ internal fun SettingsGroup(title: String, modifier: Modifier = Modifier, help: S
                 .fillMaxWidth()
                 .clip(SettingsCardShape)
                 .background(Palette.Surface)
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             content()
         }

@@ -50,11 +50,18 @@ object BubbleStyles {
     private val MIDNIGHT_GLASS = BubbleStyle("midnight-glass", "Midnight glass", listOf(Color(0x66262421), Color(0x660B0A09)), effect = "glass")
     private val MONO = BubbleStyle("mono", "Mono", listOf(Color(0xFF2B2B2E), Color(0xFF4A4A50)))
     private val SUNRISE = BubbleStyle("sunrise", "Sunrise", listOf(Color(0xFF5A2A4A), Color(0xFFC25E6A), Color(0xFFF2A65A)), effect = "glow")
+    private val POLAR = BubbleStyle("polar", "Polar", listOf(Color(0xFF0C2430), Color(0xFF12454F), Color(0xFF2A7F7A)), effect = "sheen")
+    private val NEBULA = BubbleStyle("nebula", "Nebula", listOf(Color(0xFF2A0F3D), Color(0xFF5B1E63), Color(0xFF9333EA)), effect = "glow")
+    private val OBSIDIAN = BubbleStyle("obsidian", "Obsidian", listOf(Color(0xFF0B0B0F), Color(0xFF1C1C24)), effect = "dots")
+    private val SAKURA_B = BubbleStyle("sakura", "Sakura", listOf(Color(0xFFFBCFE8), Color(0xFFF9A8D4)), effect = "glass")
+    private val COPPER_B = BubbleStyle("copper", "Copper", listOf(Color(0xFF3A2418), Color(0xFF7A4A28), Color(0xFFC07840)), effect = "sheen")
+    private val MOSS = BubbleStyle("moss", "Moss", listOf(Color(0xFF16241A), Color(0xFF2C4A32)), effect = "stripes")
 
     val ALL = listOf(
         NONE, AURORA, SUNSET, BLURPLE, OCEAN_GLASS, CANDY, EMBER, FOREST, CARAMEL, SLATE, GRAPE,
         NEON_PINK, NEON_MINT, CYBER, DOT_MATRIX, ICE, GOLD,
         ROSE_GOLD, DEEP_SEA, LAVENDER, MIDNIGHT_GLASS, MONO, SUNRISE,
+        POLAR, NEBULA, OBSIDIAN, SAKURA_B, COPPER_B, MOSS,
     )
 
     fun byId(id: String): BubbleStyle = ALL.firstOrNull { it.id == id } ?: NONE

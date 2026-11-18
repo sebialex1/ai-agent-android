@@ -161,10 +161,65 @@ object Themes {
         decor = "liquid",
     )
 
+    /** Aurora: deep polar teal with drifting liquid light over it. */
+    val AURORA = ThemePreset(
+        id = "aurora", label = "Aurora",
+        ink = Color(0xFF04141A), surface = Color(0xCC0C2430), surfaceHigh = Color(0xB3123240),
+        surfaceHighest = Color(0x991B4557), accent = Color(0xFF5EEAD4),
+        gradient = listOf(Color(0xFF04141A), Color(0xFF072A2E), Color(0xFF0A1F33), Color(0xFF04141A)),
+        decor = "liquid",
+    )
+
+    /** Nebula: violet-magenta deep field with a fixed star scatter. */
+    val NEBULA = ThemePreset(
+        id = "nebula", label = "Nebula",
+        ink = Color(0xFF0B0616), surface = Color(0xFF170E28), surfaceHigh = Color(0xFF201436),
+        surfaceHighest = Color(0xFF2C1C49), accent = Color(0xFFF0ABFC),
+        gradient = listOf(Color(0xFF0B0616), Color(0xFF1B0B33), Color(0xFF2A0F3D), Color(0xFF0B0616)),
+        decor = "stars",
+    )
+
+    /** Obsidian: near-black glass with a faint raised-dot grid. */
+    val OBSIDIAN = ThemePreset(
+        id = "obsidian", label = "Obsidian",
+        ink = Color(0xFF050506), surface = Color(0xFF101013), surfaceHigh = Color(0xFF17171C),
+        surfaceHighest = Color(0xFF212129), accent = Color(0xFFE4E4E7),
+        gradient = listOf(Color(0xFF050506), Color(0xFF0B0B0F), Color(0xFF050506)),
+        decor = "braille",
+    )
+
+    /** Sakura: light blossom paper with soft liquid colour behind frosted surfaces. */
+    val SAKURA = ThemePreset(
+        id = "sakura", label = "Sakura",
+        ink = Color(0xFFFDF2F6), surface = Color(0xCCFFFFFF), surfaceHigh = Color(0xB3FBE4EE),
+        surfaceHighest = Color(0x99F6CFDF), accent = Color(0xFFDB2777),
+        gradient = listOf(Color(0xFFFDF2F6), Color(0xFFFCE7F1), Color(0xFFFDF2F6)),
+        decor = "liquid",
+    )
+
+    /** Deep space: the darkest blue field, stars over it, ice-blue accent. */
+    val DEEP_SPACE = ThemePreset(
+        id = "deep-space", label = "Deep space",
+        ink = Color(0xFF01030A), surface = Color(0xFF080D1C), surfaceHigh = Color(0xFF0E1528),
+        surfaceHighest = Color(0xFF161F38), accent = Color(0xFF7DD3FC),
+        gradient = listOf(Color(0xFF01030A), Color(0xFF050B1A), Color(0xFF0A1226), Color(0xFF01030A)),
+        decor = "stars",
+    )
+
+    /** Copper: warm dark metal with a raised-dot grid and a burnished accent. */
+    val COPPER = ThemePreset(
+        id = "copper", label = "Copper",
+        ink = Color(0xFF140D08), surface = Color(0xFF20150E), surfaceHigh = Color(0xFF2A1C13),
+        surfaceHighest = Color(0xFF38261A), accent = Color(0xFFE0955F),
+        gradient = listOf(Color(0xFF140D08), Color(0xFF1D1209), Color(0xFF140D08)),
+        decor = "braille",
+    )
+
     val ALL = listOf(
         MIDNIGHT, BLURPLE, VIOLET, OCEAN, NORDIC, EMBER, FOREST, GRAPE,
         STARS, BRAILLE, LIQUID_GLASS,
-        WHITE_CARAMEL, SNOW, MATCHA, ROSEWATER,
+        AURORA, NEBULA, OBSIDIAN, DEEP_SPACE, COPPER,
+        WHITE_CARAMEL, SNOW, MATCHA, ROSEWATER, SAKURA,
     )
     val DEFAULT = MIDNIGHT
 
