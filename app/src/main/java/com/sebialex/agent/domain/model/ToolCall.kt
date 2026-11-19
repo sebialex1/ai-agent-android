@@ -69,6 +69,21 @@ sealed interface ToolCall {
         val replaceAll: Boolean = false,
     ) : ToolCall
 
+    /**
+     * Creates and edits real document formats: .docx (Word) and .pdf, with read_file extracting
+     * their text (plus .pptx/.xlsx/.odt/.rtf) automatically.
+     */
+    data class Document(
+        override val callId: String,
+        val path: String,
+        /** create (new .docx/.pdf from content), replace (old_text→new_text in a .docx), append (content paragraphs). */
+        val action: String,
+        val content: String? = null,
+        val oldText: String? = null,
+        val newText: String? = null,
+        val replaceAll: Boolean = false,
+    ) : ToolCall
+
     /** Moves or renames a workspace file or folder. */
     data class MoveFile(override val callId: String, val from: String, val to: String) : ToolCall
 

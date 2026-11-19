@@ -83,7 +83,9 @@ class ToolExecutor(
                 is ToolCall.ReadFile -> {
                     // Imported photos and other binaries would only reach the model as noise.
                     val f = workspace.resolve(call.path)
-                    if (f.isFile && isBinary(f)) {
+                    if (f.isFile && DocumentTools.handles(f.name)) {
+                        ToolResult(call.callId, true, DocumentTools.extract(f))
+                    } else if (f.isFile && isBinary(f)) {
                         ToolResult(call.callId, true, "binary file, ${f.length()} bytes (${call.path}). Use the python tool to inspect it.")
                     } else ToolResult(call.callId, true, workspace.read(call.path))
                 }
@@ -107,6 +109,7 @@ class ToolExecutor(
                 is ToolCall.ListFiles -> FileTools.list(workspace, call)
                 is ToolCall.SearchFiles -> FileTools.search(workspace, call)
                 is ToolCall.EditFile -> FileTools.edit(workspace, call)
+                is ToolCall.Document -> DocumentTools.run(workspace, call)
                 is ToolCall.MoveFile -> {
                     workspace.move(call.from, call.to)
                     ToolResult(call.callId, true, "moved ${workspace.toVirtual(call.from)} to ${workspace.toVirtual(call.to)}")

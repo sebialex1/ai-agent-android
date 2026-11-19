@@ -54,6 +54,7 @@ class PermissionPolicy(
         is ToolCall.ListFiles -> outsideOr(call.path)
         is ToolCall.SearchFiles -> outsideOr(call.path)
         is ToolCall.EditFile -> outsideOr(call.path)
+        is ToolCall.Document -> outsideOr(call.path)
         is ToolCall.MoveFile -> if (isOutside(call.from) || isOutside(call.to)) {
             PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, "${call.from} \u2192 ${call.to}")
         } else PermissionDecision.Allow

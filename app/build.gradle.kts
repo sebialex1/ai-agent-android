@@ -91,6 +91,7 @@ dependencies {
     implementation(libs.litertlm.android)
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
+    implementation(libs.pdfbox.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }

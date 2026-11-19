@@ -637,6 +637,9 @@ class AgentOrchestrator(
             nextId(), StepKind.FILE_WRITE, call.path.substringAfterLast('/'), "edit_file",
             "{\"path\": \"${esc(call.path)}\"}\n\n--- old\n${call.oldText}\n+++ new\n${call.newText}", path = call.path, startedAt = now(),
         )
+        is ToolCall.Document -> Step(
+            nextId(), StepKind.FILE_WRITE, "${call.action} ${call.path.substringAfterLast('/')}", "document", args(call), path = call.path, startedAt = now(),
+        )
         is ToolCall.MoveFile -> Step(nextId(), StepKind.FILE_WRITE, "${call.from.substringAfterLast('/')} \u2192 ${call.to}", "move_file", args(call), path = call.to, startedAt = now())
         is ToolCall.DeleteFile -> Step(nextId(), StepKind.FILE_WRITE, "delete ${call.path.substringAfterLast('/')}", "delete_file", args(call), startedAt = now())
         is ToolCall.DownloadFile -> Step(nextId(), StepKind.FETCH, hostOf(call.url), "download_file", args(call), url = call.url, path = call.path, startedAt = now())

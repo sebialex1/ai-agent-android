@@ -465,6 +465,7 @@ class OpenRouterBrain(
             is ToolCall.ListFiles -> "list_files"
             is ToolCall.SearchFiles -> "search_files"
             is ToolCall.EditFile -> "edit_file"
+            is ToolCall.Document -> "document"
             is ToolCall.MoveFile -> "move_file"
             is ToolCall.DeleteFile -> "delete_file"
             is ToolCall.DownloadFile -> "download_file"
@@ -515,6 +516,13 @@ class OpenRouterBrain(
             is ToolCall.SearchFiles -> buildJsonObject { put("query", c.query); put("path", c.path); if (c.regex) put("regex", true) }.toString()
             is ToolCall.EditFile -> buildJsonObject {
                 put("path", c.path); put("old_text", c.oldText); put("new_text", c.newText)
+                if (c.replaceAll) put("replace_all", true)
+            }.toString()
+            is ToolCall.Document -> buildJsonObject {
+                put("path", c.path); put("action", c.action)
+                c.content?.let { put("content", it) }
+                c.oldText?.let { put("old_text", it) }
+                c.newText?.let { put("new_text", it) }
                 if (c.replaceAll) put("replace_all", true)
             }.toString()
             is ToolCall.MoveFile -> buildJsonObject { put("from", c.from); put("to", c.to) }.toString()
@@ -583,6 +591,11 @@ class OpenRouterBrain(
                 "web_fetch" -> arg("url")?.takeIf { it.isNotBlank() }?.let { ToolCall.WebFetch(id, it) } ?: missing("url")
                 "shell" -> arg("command")?.takeIf { it.isNotBlank() }?.let { ToolCall.Shell(id, it) } ?: missing("command")
                 "read_file" -> arg("path")?.takeIf { it.isNotBlank() }?.let { ToolCall.ReadFile(id, it) } ?: missing("path")
+                "document" -> {
+                    val path = arg("path")?.takeIf { it.isNotBlank() } ?: return missing("path")
+                    val action = arg("action")?.takeIf { it.isNotBlank() } ?: return missing("action")
+                    ToolCall.Document(id, path, action, arg("content"), arg("old_text"), arg("new_text"), flag("replace_all"))
+                }
                 "write_file" -> {
                     val path = arg("path")?.takeIf { it.isNotBlank() } ?: return missing("path")
                     val content = arg("content") ?: return missing("content")
@@ -772,7 +785,10 @@ class OpenRouterBrain(
             Files (paths are relative to /workspace)
             - list_files / search_files / file_info: browse folders, grep text, get size/type/dimensions/duration.
             - read_file / write_file / edit_file: read text, write whole files, replace an exact snippet (prefer
-              edit_file for small changes). Write documents as Markdown unless another format is asked for.
+              edit_file for small changes). read_file also extracts text from Word, PDF, PowerPoint, Excel,
+              OpenDocument and RTF files. Write documents as Markdown unless another format is asked for.
+            - document: create real .docx or PDF files and edit .docx precisely (replace exact text, append
+              paragraphs) when the user asks for Word or PDF output.
             - move_file / copy_file / delete_file: rename, move, copy, delete (deleting asks the user).
             - zip_files / unzip_file: pack files into a .zip or extract one.
             - view_image: look at a workspace image (or frames of a video) when the task needs to see it. Imports the
@@ -859,7 +875,7 @@ class OpenRouterBrain(
             - shell: run commands (Termux: bash, pkg, pip, python). Pass -y to pkg/apt. Programs that are missing are
               reported with their install command (check_tools checks first); install them when the task needs it.
             - python: run Python code; `packages` are pip-installed first.
-            - read_file / write_file / edit_file / list_files: work with workspace files (paths relative to /workspace).
+            - read_file / write_file / edit_file / list_files: files under /workspace (read_file extracts Word/PDF text).
             - attach_files: attach files you produced to your answer with a short human-readable `name` (rename ugly
               auto-generated names). Do not paste file contents instead.
             - device_info: date, time and device facts.
@@ -913,12 +929,12 @@ class OpenRouterBrain(
         }
 
         /** One-line list of the agent's tools, shown in Settings > About. */
-        const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, list_files, " +
+        const val TOOL_NAMES = "web_search, web_fetch, shell, python, read_file, write_file, edit_file, document, list_files, " +
             "search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, http_request, " +
             "device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, spawn_subagent, user_memory"
 
-        const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, " +
-            "edit_file, list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
+        const val TOOL_SUMMARY = "web_search, web_fetch, shell (Termux: bash, apt, pkg, pip), python, read_file, write_file, edit_file, document, " +
+            "list_files, search_files, move_file, copy_file, delete_file, file_info, zip_files, unzip_file, download_file, " +
             "http_request, device_info, check_tools, attach_files, generate_image, generate_video, view_image, ask_user, todo, preview_webapp, " +
             "spawn_subagent (parallel subagents) when subagent models are set, conversation_memory when memory of past chats is on, " +
             "and user_memory when learning about the user is on."
@@ -1189,7 +1205,16 @@ class OpenRouterBrain(
                 fn("web_fetch", "Fetch a URL and return its readable text content, plus the URLs of the images on the page. To look at one: download_file, then view_image.", "url" to "Absolute http(s) URL"),
                 fn("shell", "Run a command in the sandboxed workspace. Built-ins run directly; anything else runs in Termux (bash, apt, pkg, pip, python). Working directory is /workspace.", "command" to "Command line"),
                 PYTHON_TOOL,
-                fn("read_file", "Read a text file from the workspace.", "path" to "Path relative to /workspace"),
+                fn("read_file", "Read a workspace file (.docx, .pdf, .pptx, .xlsx, .odt and .rtf are returned as extracted text).", "path" to "Path relative to /workspace"),
+                typedFn(
+                    "document", "Create Word (.docx) or PDF files, or edit a .docx precisely. In content, blank-line separated lines are paragraphs, lines starting with # / ## / ### are headings and lines starting with - are bullets; **bold**, *italic* and `code` work inline.",
+                    Param("path", "string", "File path relative to /workspace, ending in .docx or .pdf"),
+                    Param("action", "string", "create (new document from content), replace (old_text to new_text in a .docx), append (content paragraphs at the end of a .docx)", enum = listOf("create", "replace", "append")),
+                    Param("content", "string", "For create and append: the document content", required = false),
+                    Param("old_text", "string", "For replace: exact text to find (must match within one paragraph; matches across differently formatted runs)", required = false),
+                    Param("new_text", "string", "For replace: the replacement text", required = false),
+                    Param("replace_all", "boolean", "For replace: replace every occurrence (default: the first only)", required = false),
+                ),
                 fn("write_file", "Create or overwrite a workspace file with the full content.", "path" to "Path relative to /workspace", "content" to "Full file content"),
                 typedFn(
                     "edit_file", "Replace an exact piece of text in a workspace file. old_text must match exactly once unless replace_all is true.",

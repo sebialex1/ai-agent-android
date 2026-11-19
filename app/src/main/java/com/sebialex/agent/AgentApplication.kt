@@ -334,6 +334,8 @@ class AgentApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // PDF reading through PDFBox needs its resource loader pointed at the app context once.
+        com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(this)
         container = AppContainer(this)
     }
 }
