@@ -138,13 +138,18 @@ class ToolExecutor(
     /**
      * Resolves each file to attach; a requested human-readable name renames the file in its
      * folder first (keeping its extension, never overwriting another file). Missing files fail
-     * the call with the reason, the others are still attached.
+     * the call with the reason, the others are still attached. A spec may also be an http(s) URL:
+     * it is downloaded into the workspace (like download_file) and the saved file is attached, so
+     * sending an image from a search result or a web page takes one call instead of two.
      */
     private fun attach(call: ToolCall.AttachFiles): ToolResult {
         val done = mutableListOf<FileAttachment>()
         val lines = mutableListOf<String>()
         for (spec in call.files.take(MAX_ARTIFACTS)) {
-            val f = runCatching { workspace.resolve(spec.path) }.getOrNull()
+            val f = if (spec.path.startsWith("http://") || spec.path.startsWith("https://")) {
+                runCatching { NetTools.fetchTo(workspace, spec.path, null).file }.getOrNull()
+                    ?: run { lines += "${spec.path}: could not download it (not attached)"; continue }
+            } else runCatching { workspace.resolve(spec.path) }.getOrNull()
             if (f == null || !f.isFile) {
                 lines += "${spec.path}: no such file (not attached)"
                 continue

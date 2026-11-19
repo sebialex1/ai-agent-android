@@ -794,7 +794,8 @@ class OpenRouterBrain(
             - view_image: look at a workspace image (or frames of a video) when the task needs to see it. Imports the
               user asked you to look at are already shown with their message; never look when told not to.
             Results
-            - attach_files: attach the files you produced to your answer (see Artifacts).
+            - attach_files: attach the files you produced to your answer (see Artifacts). A `path` may also be an http(s)
+              URL: the file is downloaded into the workspace and attached in one call.
             - generate_image: create a picture from a description; it is saved in the workspace. When the user asked
               for the picture, attach it with attach_files (a short, human-readable name).
             - generate_video: create a short video with sound from a description (3-15 seconds). It takes a few minutes,
@@ -832,6 +833,9 @@ class OpenRouterBrain(
               tappable chip that opens the built-in viewer/player. Attach several files at once if there are several.
             - Do not paste file contents, base64 or a code block instead of attaching, and do not tell the user to dig
               through the workspace.
+            - To show the user a picture from the web ("send me an image of X", a photo from a site): web_search with
+              images=true (or take an image URL web_fetch listed), then attach_files with that URL directly — no
+              download_file/view_image detour. Pick the URL most likely to be a real image file.
             - Files often get ugly auto-generated names (`video_7312345678901.mp4`, `out.mp4`, `tmpa8f3.png`,
               `%(title)s` leftovers). Give every attached file a short, human-readable `name`, e.g.
               "Cat jumps into the pool.mp4"; the file is renamed in place. Keep the right extension.
@@ -1148,7 +1152,9 @@ class OpenRouterBrain(
                     "description",
                     "Attach workspace files the user asked for or that you produced for them in this turn (video, image, audio, PDF, " +
                         "document, archive) to your answer. Only files created or changed in this turn, or that the user mentioned or " +
-                        "asked to see, are attached. " +
+                        "asked to see, are attached. A `path` may also be an http(s) URL of a web file (e.g. an image from " +
+                        "web_search with images=true, or one listed by web_fetch): it is downloaded into the workspace and " +
+                        "attached in one call — the easy way to put a picture from the web under your answer. " +
                         "The user sees each one as a compact chip that opens the built-in viewer/player. Give a short, " +
                         "human-readable `name` when the file has an ugly auto-generated one; the file is renamed in place.",
                 )

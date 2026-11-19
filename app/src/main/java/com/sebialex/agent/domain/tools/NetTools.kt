@@ -67,7 +67,22 @@ internal object NetTools {
     }
 
     fun download(ws: Workspace, call: ToolCall.DownloadFile): ToolResult {
-        val url = checkUrl(call.url)
+        val f = fetchTo(ws, call.url, call.path)
+        val path = ws.virtualOf(f.file)
+        val attachment = FileAttachment(path = path, name = f.file.name, updatedAt = System.currentTimeMillis())
+        return ToolResult(call.callId, true, "saved ${f.total} bytes to $path" + if (f.type.isNotEmpty()) " (${f.type})" else "", attachment = attachment)
+    }
+
+    /** A file fetched from the web into the workspace. */
+    class FetchedFile(val file: java.io.File, val total: Long, val type: String)
+
+    /**
+     * Downloads [urlRaw] into the workspace — under [name] when given, otherwise `downloads/` plus
+     * the name the server or the URL suggests. Shared by download_file and by attach_files, which
+     * accepts a web URL so one call can put an online image (or small file) under the answer.
+     */
+    fun fetchTo(ws: Workspace, urlRaw: String, name: String?): FetchedFile {
+        val url = checkUrl(urlRaw)
         val conn = url.openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = 20_000
@@ -75,12 +90,11 @@ internal object NetTools {
             conn.instanceFollowRedirects = true
             conn.setRequestProperty("User-Agent", UA)
             val code = conn.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code while downloading ${call.url}")
+            if (code !in 200..299) throw IOException("HTTP $code while downloading $urlRaw")
             val length = conn.contentLengthLong
             if (length > MAX_DOWNLOAD_BYTES) throw IOException("file is ${length / (1 shl 20)} MB, over the ${MAX_DOWNLOAD_BYTES / (1 shl 20)} MB limit")
-            val name = call.path ?: ("downloads/" + fileName(conn, url))
-            val target = ws.resolve(name)
-            if (target.isDirectory) throw IOException("$name is a folder")
+            val target = ws.resolve(name ?: ("downloads/" + fileName(conn, url)))
+            if (target.isDirectory) throw IOException("${name ?: urlRaw} is a folder")
             target.parentFile?.mkdirs()
             var total = 0L
             conn.inputStream.use { input ->
@@ -98,10 +112,7 @@ internal object NetTools {
                     }
                 }
             }
-            val path = ws.virtualOf(target)
-            val attachment = FileAttachment(path = path, name = target.name, updatedAt = System.currentTimeMillis())
-            val type = conn.contentType?.substringBefore(';').orEmpty()
-            return ToolResult(call.callId, true, "saved $total bytes to $path" + if (type.isNotEmpty()) " ($type)" else "", attachment = attachment)
+            return FetchedFile(target, total, conn.contentType?.substringBefore(';').orEmpty())
         } finally {
             conn.disconnect()
         }

@@ -225,6 +225,9 @@ class ResponsesBrain(
         /** By item id; [Call.id] carries the provider's call_id. */
         val calls = LinkedHashMap<String, Call>()
         var finishReason: String? = null
+        /** A delta stream already filled the text; final `message`/`reasoning` items must not append again. */
+        var textStreamed = false
+        var reasoningStreamed = false
     }
 
     private fun readStream(conn: HttpURLConnection, body: String, onReasoning: (String) -> Unit): Answer {
@@ -268,10 +271,14 @@ class ResponsesBrain(
     /** One SSE event; deltas fill in the answer, the final state arrives with the response events. */
     private fun event(chunk: JsonObject, answer: Answer, onReasoning: (String) -> Unit) {
         when ((chunk["type"] as? JsonPrimitive)?.content) {
-            "response.output_text.delta" -> (chunk["delta"] as? JsonPrimitive)?.takeIf { it.isString }?.let { answer.text.append(it.content) }
+            "response.output_text.delta" -> (chunk["delta"] as? JsonPrimitive)?.takeIf { it.isString }?.let {
+                answer.text.append(it.content)
+                answer.textStreamed = true
+            }
             "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> {
                 (chunk["delta"] as? JsonPrimitive)?.takeIf { it.isString }?.let {
                     answer.reasoning.append(it.content)
+                    answer.reasoningStreamed = true
                     runCatching { onReasoning(it.content) }
                 }
             }
@@ -300,19 +307,26 @@ class ResponsesBrain(
         val call = answer.calls.getOrPut(id) { Call() }
         call.id = (item["call_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: id
         (item["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { call.name = it }
-        (item["arguments"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { call.args.append(it) }
+        // Argument deltas (or a first item carrying them whole) already filled the builder; the
+        // same item repeats on `output_item.done` and in `response.completed` — never append twice.
+        if (call.args.isEmpty()) {
+            (item["arguments"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { call.args.append(it) }
+        }
     }
 
     /** A done output item (stream or final response object) into [answer]. */
     private fun consume(item: JsonObject, answer: Answer, onReasoning: (String) -> Unit) {
         when ((item["type"] as? JsonPrimitive)?.content) {
-            "message" -> (item["content"] as? JsonArray).orEmpty().forEach { part ->
+            // When the text streamed in as deltas, every final event repeats the same full text
+            // (the item is consumed again by `response.completed`): appending there is what makes
+            // answers read "Hi!Hi!Hi!". The deltas already carry the full text; add nothing else.
+            "message" -> if (!answer.textStreamed) (item["content"] as? JsonArray).orEmpty().forEach { part ->
                 val o = part as? JsonObject ?: return@forEach
                 if ((o["type"] as? JsonPrimitive)?.content == "output_text") {
                     ((o["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()).let { answer.text.append(it) }
                 }
             }
-            "reasoning" -> (item["summary"] as? JsonArray).orEmpty().forEach { part ->
+            "reasoning" -> if (!answer.reasoningStreamed) (item["summary"] as? JsonArray).orEmpty().forEach { part ->
                 ((part as? JsonObject)?.get("text") as? JsonPrimitive)?.takeIf { it.isString }?.content?.let {
                     answer.reasoning.append(it)
                     runCatching { onReasoning(it) }

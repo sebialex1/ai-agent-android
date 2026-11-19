@@ -112,4 +112,65 @@ class WebImagesTest {
         assertFalse(web2.askedImages)
         assertTrue("Cat page" in plain.output)
     }
+
+    /** Serves 3 raw bytes as image/png once, then closes (the request is drained first). */
+    private fun servePng(): java.net.ServerSocket {
+        val server = java.net.ServerSocket(0)
+        kotlin.concurrent.thread(isDaemon = true) {
+            runCatching {
+                server.accept().use { conn ->
+                    val reader = java.io.BufferedReader(java.io.InputStreamReader(conn.getInputStream(), Charsets.UTF_8))
+                    var line = reader.readLine()
+                    var len = 0
+                    while (!line.isNullOrEmpty()) {
+                        if (line.lowercase().startsWith("content-length:")) len = line.substringAfter(':').trim().toInt()
+                        line = reader.readLine()
+                    }
+                    repeat(len) { reader.read() }
+                    conn.getOutputStream().write(
+                        ("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 3\r\nConnection: close\r\n\r\n")
+                            .toByteArray() + byteArrayOf(1, 2, 3),
+                    )
+                }
+            }
+        }
+        return server
+    }
+
+    private fun noShell() = object : Shell {
+        override fun execute(command: String, cwd: String) = ShellResult("", 0, cwd)
+    }
+
+    @Test fun attachFilesTakesAWebUrlStraightFromSearchResults() = runBlocking {
+        val server = servePng()
+        try {
+            val ws = Workspace(Files.createTempDirectory("wsurl").toFile())
+            val result = ToolExecutor(workspace = ws, shell = noShell(), web = RecordingWeb())
+                .execute(ToolCall.AttachFiles("c5", listOf(ToolCall.AttachSpec("http://localhost:${server.localPort}/cat.png", "Cat pic"))))
+            assertTrue(result.output, result.ok)
+            val a = result.artifacts.single()
+            assertEquals("Cat pic.png", a.name)
+            // The web file was saved into the workspace the chip points at.
+            assertTrue(1.toByte() == ws.resolve(a.path).readBytes()[0])
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test fun anUnreachableUrlFailsTheAttachWithoutKillingTheRest() = runBlocking {
+        val dead = java.net.ServerSocket(0)
+        val port = dead.localPort
+        dead.close()
+        val ws = Workspace(Files.createTempDirectory("wsurl2").toFile())
+        ws.write("welcome.txt", "hello there")
+        val result = ToolExecutor(workspace = ws, shell = noShell(), web = RecordingWeb()).execute(
+            ToolCall.AttachFiles(
+                "c6",
+                listOf(ToolCall.AttachSpec("http://localhost:$port/nope.png"), ToolCall.AttachSpec("welcome.txt")),
+            ),
+        )
+        // The dead URL is reported, the real file is still attached.
+        assertTrue("could not download" in result.output)
+        assertTrue(result.artifacts.single().path.endsWith("welcome.txt"))
+    }
 }

@@ -89,9 +89,17 @@ class PermissionPolicy(
         // Uses the network and paid credit, and takes minutes: follows the web setting like images.
         is ToolCall.GenerateVideo -> if (askBeforeWebAccess()) PermissionDecision.Ask(RiskReason.NETWORK, "generate video: ${call.prompt.take(80)}")
         else PermissionDecision.Allow
-        // Attaching only references (and may rename) files inside the workspace.
-        is ToolCall.AttachFiles -> call.files.firstOrNull { isOutside(it.path) }?.let { PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, it.path) }
-            ?: PermissionDecision.Allow
+        // Attaching references (and may rename) files inside the workspace. A web URL spec is
+        // fetched first, so it follows the same network rule as download_file.
+        is ToolCall.AttachFiles -> {
+            val url = call.files.firstOrNull { it.path.startsWith("http://") || it.path.startsWith("https://") }?.path
+            when {
+                url != null && askBeforeWebAccess() -> PermissionDecision.Ask(RiskReason.NETWORK, url)
+                call.files.any { !it.path.startsWith("http") && !it.path.startsWith("https") && isOutside(it.path) } ->
+                    PermissionDecision.Ask(RiskReason.OUTSIDE_WORKSPACE, call.files.first { isOutside(it.path) }.path)
+                else -> PermissionDecision.Allow
+            }
+        }
         is ToolCall.ViewImage -> outsideOr(call.path)
         // Chat tools: a card in the answer, a question, the todo list. Nothing leaves the app.
         is ToolCall.AskUser, is ToolCall.Todo -> PermissionDecision.Allow
