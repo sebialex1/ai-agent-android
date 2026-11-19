@@ -54,6 +54,16 @@ class ChatToolsTest {
         assertNull(Todos.nextOpen(listOf(TodoItem(1, "x", done = true))))
     }
 
+    @Test fun theRenderedListTellsTheModelToKeepItselfCurrent() {
+        val list = listOf(TodoItem(1, "one", done = true), TodoItem(2, "two"))
+        val rendered = Todos.render(list)
+        // The agent's chronic bug was a stale list: the injected render must remind it.
+        assertTrue("tick entries as soon as you finish" in rendered)
+        assertTrue("[ ] two" in rendered)
+        val allDone = listOf(TodoItem(3, "one", done = true))
+        assertTrue("every entry is done" in Todos.render(allDone))
+    }
+
     @Test fun setPlanIsGoneEverywhere() {
         // Not advertised to any model (cloud, compact, subagent), not named in the tool lists or the prompt.
         for (tools in listOf(OpenRouterBrain.toolsFor(memory = false), OpenRouterBrain.toolsFor(memory = true), OpenRouterBrain.toolsFor(memory = false, compact = true))) {

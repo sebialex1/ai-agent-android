@@ -405,7 +405,6 @@ fun ChatScreen(
                     TodoPanel(
                         sessionId = sessionId,
                         items = state.session.todos,
-                        onToggle = vm::toggleTodo,
                         onClearDone = vm::clearDoneTodos,
                     )
                 }

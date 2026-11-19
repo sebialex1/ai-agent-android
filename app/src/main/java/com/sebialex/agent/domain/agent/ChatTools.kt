@@ -66,8 +66,12 @@ object Todos {
     }
 
     /** The list as the model reads it: `3. [x] text`. */
-    fun render(items: List<TodoItem>): String =
-        if (items.isEmpty()) "The todo list is empty." else items.joinToString("\n") { "${it.id}. [${if (it.done) "x" else " "}] ${it.text}" }
+    fun render(items: List<TodoItem>): String = when {
+        items.isEmpty() -> "The todo list is empty."
+        items.all { it.done } -> "The todo list: every entry is done. If the task really finished, nothing to do; otherwise correct the list with the todo tool.\n"
+        else -> items.joinToString("\n") { "${it.id}. [${if (it.done) "x" else " "}] ${it.text}" } +
+            "\nKeep this list current with the todo tool: tick entries as soon as you finish them, add what you discover, and do not end the task with an unticked entry that is actually done."
+    }
 
     /** The first entry still open, shown as the hint of the collapsed panel. */
     fun nextOpen(items: List<TodoItem>): TodoItem? = items.firstOrNull { !it.done }

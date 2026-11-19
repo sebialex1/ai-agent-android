@@ -41,36 +41,58 @@ import com.sebialex.agent.ui.theme.Palette
 /**
  * The conversation's todo list (kept by the agent's todo tool) as the top section of the chatbox
  * itself: drawn inside the input's own surface (see [InputPill]'s `top`), above a hairline, so
- * it reads as part of the box rather than a separate card. Collapsed it is one slim row: a
- * checkbox mark, the next open entry (shortened in the middle so its start and end stay
- * readable), the done count and a chevron. Expanded it lists every entry; done ones turn gray
- * and are struck through. Tapping an entry ticks it. It never covers the text field, so typing
- * is never blocked. Only passed to the input while the list has entries ([TodoStrip.visible]).
+ * it reads as part of the box rather than a separate card. The agent — not the user — ticks
+ * entries, so there are no checkboxes: collapsed it is one slim row (the next open entry,
+ * shortened in the middle, the done count and a chevron); expanded the entries unfold upward,
+ * above this row, and done ones are gray and struck through. Only passed to the input while the
+ * list has entries ([TodoStrip.visible]).
  */
 @Composable
 fun TodoPanel(
     sessionId: String,
     items: List<TodoItem>,
-    onToggle: (Int) -> Unit,
     onClearDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (!TodoStrip.visible(items)) return
     var open by rememberSaveable(sessionId, key = "todos:$sessionId") { mutableStateOf(false) }
     val rotation by animateFloatAsState(if (open) 0f else 180f, animationSpec = tween(180), label = "todoArrow")
+    @Composable
+    fun entryRows() {
+        Column(
+            Modifier
+                .heightIn(max = 220.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 14.dp, end = 12.dp, top = 6.dp, bottom = 8.dp),
+        ) {
+            items.forEach { item ->
+                Text(
+                    item.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (item.done) Palette.TextTertiary else Palette.TextPrimary,
+                    textDecoration = if (item.done) TextDecoration.LineThrough else null,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 5.dp),
+                )
+            }
+        }
+    }
     Column(modifier.fillMaxWidth()) {
+        // The entries open upward, above the slim row: growing this section must never push the
+        // text field down out of the chatbox.
+        AnimatedVisibility(
+            visible = open,
+            enter = expandVertically(expandFrom = Alignment.Bottom, animationSpec = tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(shrinkTowards = Alignment.Bottom, animationSpec = tween(180)) + fadeOut(tween(120)),
+        ) {
+            entryRows()
+        }
         Row(
             Modifier
                 .fillMaxWidth()
                 .clickable(onClickLabel = if (open) "Hide todo list" else "Show todo list") { open = !open }
-                .padding(start = 18.dp, end = 14.dp, top = 10.dp, bottom = if (open) 4.dp else 8.dp),
+                .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppIcon(
-                if (TodoStrip.allDone(items)) R.drawable.ic_checkbox_checked else R.drawable.ic_checkbox, null,
-                tint = Palette.IconMuted, size = 14.dp,
-            )
-            Spacer(Modifier.width(8.dp))
             BoxWithConstraints(Modifier.weight(1f)) {
                 // labelSmall is roughly 6.5 dp per character: enough to shorten in the middle without measuring.
                 val fit = (maxWidth.value / 6.5f).toInt().coerceAtLeast(12)
@@ -94,35 +116,6 @@ fun TodoPanel(
             Spacer(Modifier.width(6.dp))
             AppIcon(R.drawable.ic_chevron_down, null, tint = Palette.IconMuted, size = 14.dp, modifier = Modifier.rotate(rotation))
         }
-        AnimatedVisibility(
-            visible = open,
-            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
-            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
-        ) {
-            Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(start = 14.dp, end = 12.dp, bottom = 8.dp)) {
-                items.forEach { item ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onToggle(item.id) }.padding(horizontal = 4.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        AppIcon(
-                            if (item.done) R.drawable.ic_checkbox_checked else R.drawable.ic_checkbox,
-                            if (item.done) "Done" else "Open",
-                            tint = if (item.done) Palette.TextTertiary else Palette.IconMuted,
-                            size = 16.dp,
-                            modifier = Modifier.padding(top = 1.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            item.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (item.done) Palette.TextTertiary else Palette.TextPrimary,
-                            textDecoration = if (item.done) TextDecoration.LineThrough else null,
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -135,7 +128,7 @@ object TodoStrip {
 
     /** Collapsed: the next open entry, shortened in the middle to about [fit] characters. */
     fun hint(items: List<TodoItem>, fit: Int): String =
-        Todos.nextOpen(items)?.let { "Next: " + middleEllipsis(it.text, (fit - 6).coerceAtLeast(5)) } ?: "All ${items.size} done"
+        Todos.nextOpen(items)?.let { middleEllipsis(it.text, fit) } ?: "All ${items.size} done"
 
     /** Collapsed, at the end of the row: "2/5". */
     fun count(items: List<TodoItem>): String = "${items.count { it.done }}/${items.size}"

@@ -212,8 +212,8 @@ fun SettingsScreen(
                                     value = "${com.sebialex.agent.data.local.LocalModels.forModality(com.sebialex.agent.data.local.Modality.TEXT).size} in the catalogue",
                                     onClick = { section = SettingsSection.ON_DEVICE },
                                 )
-                                NavRow("Image", value = "Through a provider", onClick = { section = SettingsSection.IMAGE })
-                                NavRow("Video", value = "Through a provider", onClick = { section = SettingsSection.IMAGE })
+                                // Image and video generation exist only through cloud providers here
+                                // (on-device models are text models), so they are not listed as local.
                             }
                         }
                         SettingsGroup("Cloud") {

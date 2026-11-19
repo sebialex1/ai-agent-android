@@ -35,9 +35,11 @@ class ToolsUiTest {
         assertEquals("1/3", TodoStrip.count(items))
         assertEquals("Todo \u00b7 1 of 3 done", TodoStrip.title(items))
         val hint = TodoStrip.hint(items, fit = 27)
-        assertTrue(hint, hint.startsWith("Next: Write"))
+        // No "Next:" label: the row is the whole hint.
+        assertFalse(hint.startsWith("Next:"))
+        assertTrue(hint, hint.startsWith("Write"))
         assertTrue(hint, hint.endsWith("section"))
-        assertTrue(hint.length <= "Next: ".length + 21)
+        assertTrue(hint.length <= 27)
         assertFalse(TodoStrip.allDone(items))
         val done = items.map { it.copy(done = true) }
         assertEquals("All 3 done", TodoStrip.hint(done, fit = 40))

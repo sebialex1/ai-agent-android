@@ -5,6 +5,7 @@ import com.sebialex.agent.data.llm.MediaModelRef
 import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.ProviderMetadata
 import com.sebialex.agent.data.llm.ProviderModelMeta
+import com.sebialex.agent.data.llm.OpenRouterImages
 import com.sebialex.agent.data.llm.RoutedImageGenerator
 import com.sebialex.agent.data.secure.SecureSettings
 import org.junit.Assert.assertArrayEquals
@@ -159,6 +160,13 @@ class MediaModelsTest {
         assertFalse(BackupBundle.isSecretPref(key))
         val p = BackupBundle.parse(BackupBundle.build(mapOf(key to SecureSettings.IMAGE_OVERRIDE_ON), emptyList(), null, null))
         assertEquals(SecureSettings.IMAGE_OVERRIDE_ON, BackupBundle.primitiveValue(p.settings.getValue(key)))
+    }
+
+    @Test fun theDefaultImageModelIsCurrentGeneration() {
+        // gemini-2.5-flash-image is served by one provider only (Google Vertex) and 403s for many
+        // keys; the default must be a multi-provider current model.
+        assertEquals("google/gemini-3.1-flash-image", OpenRouterImages.DEFAULT_MODEL)
+        assertEquals(OpenRouterImages.DEFAULT_MODEL, MediaModels.DEFAULT.model)
     }
 
     @Test fun mediaSelectionIsAPlainBackedUpSetting() {

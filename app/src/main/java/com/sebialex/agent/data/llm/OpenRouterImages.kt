@@ -60,7 +60,12 @@ class OpenRouterImages(
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) {
                 val detail = MediaModels.errorDetail(text)
-                throw IOException("HTTP $code" + if (!detail.isNullOrBlank()) ": $detail" else "")
+                val hint = when (code) {
+                    402 -> "\\u2014 image generation needs more than $1 of OpenRouter credit: top up or pick a cheaper model."
+                    403 -> "\\u2014 the image provider denied this model: pick a different one in Settings > Models > Image model."
+                    else -> ""
+                }
+                throw IOException("HTTP $code" + (if (!detail.isNullOrBlank()) ": $detail" else "") + (if (hint.isNotEmpty()) " $hint" else ""))
             }
             // Some models answer with a URL (or a data URL) instead of inline bytes.
             return when (val p = MediaModels.parseImageResponse(text)) {
@@ -74,7 +79,10 @@ class OpenRouterImages(
 
     companion object {
         const val ENDPOINT = "https://openrouter.ai/api/v1/images"
-        const val DEFAULT_MODEL = "google/gemini-2.5-flash-image"
+        // Current generation, and served by several providers (Google AI Studio and Vertex), so a
+        // single provider refusing the key does not fail the whole call like gemini-2.5-flash-image's
+        // Vertex-only endpoint did.
+        const val DEFAULT_MODEL = "google/gemini-3.1-flash-image"
     }
 }
 

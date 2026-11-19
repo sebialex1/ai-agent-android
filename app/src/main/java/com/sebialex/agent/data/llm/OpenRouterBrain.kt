@@ -792,7 +792,10 @@ class OpenRouterBrain(
             - ask_user: ask one clear question and wait for the reply (the tool result). Offer 2-5 short choices when
               they fit; the user can also type. Only when you cannot reasonably proceed without their decision.
             - todo: this conversation's todo list, shown above the input and kept across messages. For a task of three
-              or more steps, add the steps first, then mark entries done as you finish them; not for simple questions.
+              or more steps, add the steps first, then keep the list current for the whole task: mark an entry done as
+              soon as it is finished (one call, together with the next tool call when work continues), add the steps you
+              discover along the way, remove or rewrite stale ones, and check the list before you finish the turn \u2014 a
+              done-but-never-ticked list means you forgot the todo tool. Not for simple questions.
               The current list is given below when it has entries.
 
             # Tool calls are never text

@@ -736,7 +736,8 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Only used while the model is thinking: newest words at the bottom of a ~1.4 line
-        // window; whatever overflows fades away.
+        // window; whatever overflows fades away. No chevron here: the "Thinking" header above
+        // already has one, and two expand affordances for the same content read as two sections.
         Box(
             Modifier
                 .weight(1f)
@@ -754,8 +755,6 @@ private fun ThoughtRow(step: Step, onClick: () -> Unit) {
                     .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
             )
         }
-        Spacer(Modifier.width(8.dp))
-        AppIcon(R.drawable.ic_chevron_right, null, tint = Palette.TextTertiary, size = 14.dp)
     }
 }
 

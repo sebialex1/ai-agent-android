@@ -528,12 +528,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
         persist(sessionId)
     }
 
-    /** The user ticks or unticks a todo entry in the panel. */
-    fun toggleTodo(id: Int) {
-        val s = cache[currentId] ?: return
-        updateTodos(currentId, s.todos.map { if (it.id == id) it.copy(done = !it.done) else it })
-    }
-
     /** Removes the entries that are done (panel action). */
     fun clearDoneTodos() {
         val s = cache[currentId] ?: return
