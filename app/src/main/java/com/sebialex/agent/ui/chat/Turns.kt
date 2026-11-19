@@ -305,7 +305,9 @@ fun AssistantTurn(
                 }
             }
         } else {
-            val sections = remember(turn.steps, turn.blocks) { turnSections(turn.blocks, turn.steps) }
+            val sections = remember(turn.steps, turn.blocks, turn.questions) {
+                turnSections(turn.blocks, turn.steps, turn.questions)
+            }
             val lastText = sections.indexOfLast { it is TurnSection.Text }
             sections.forEachIndexed { i, section ->
                 when (section) {
@@ -323,12 +325,18 @@ fun AssistantTurn(
                             else MarkdownContent(section.block.text, compact = true)
                         }
                     }
+                    // The ask_user card sits where in the turn it was asked; the reply (and
+                    // everything the model did after) reads below it.
+                    is TurnSection.Question -> QuestionCard(
+                        section.record,
+                        waiting = section.record.id == askingId && section.record.answer == null,
+                        onAnswer = onAnswer,
+                    )
                 }
             }
             if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
                 ApprovalCard(pendingApproval, onApproval)
             }
-            turn.questions.forEach { q -> QuestionCard(q, waiting = q.id == askingId && q.answer == null, onAnswer = onAnswer) }
         }
         // Subagents of this answer: compact live cards under the message, their steps apart.
         SubagentCards(turn.subagents, onOpenStep, onStopSubagent)
@@ -405,21 +413,28 @@ internal fun stepSegments(steps: List<Step>): List<List<Step>> {
     return out
 }
 
-/** What a turn shows while it reads in real order: one burst of actions, or one text block. */
+/** What a turn shows while it reads in real order: one burst of actions, one text block, or a question. */
 internal sealed interface TurnSection {
     data class Steps(val steps: List<Step>) : TurnSection
     data class Text(val block: TurnText) : TurnSection
+    data class Question(val record: com.sebialex.agent.domain.model.AskRecord) : TurnSection
 }
 
 /**
- * Merges a turn's actions and text blocks into one chronological plan: by time, steps before
- * text on equal times (thinking precedes the narration of the same call). Consecutive actions
- * between two texts form one collapsible group — a burst of tool calls with no thinking row in
- * between must still split at the text it was answering to. A duplicate or empty thinking row is
+ * Merges a turn's actions, text blocks and asked questions into one chronological plan: by time,
+ * steps before text on equal times (thinking precedes the narration of the same call). Consecutive
+ * actions between two texts form one collapsible group — a burst of tool calls with no thinking row
+ * in between must still split at the text it was answering to. A duplicate or empty thinking row is
  * dropped, and text written in consecutive calls with nothing built in between reads as one.
+ * A question is placed where it was asked (ask_user), so whatever the model did after it
+ * (narration, tool calls, further questions) reads below it and the flow keeps making sense.
  * Empty when the turn has no blocks (older saves keep the fixed layout).
  */
-internal fun turnSections(blocks: List<TurnText>, steps: List<Step>): List<TurnSection> {
+internal fun turnSections(
+    blocks: List<TurnText>,
+    steps: List<Step>,
+    questions: List<com.sebialex.agent.domain.model.AskRecord> = emptyList(),
+): List<TurnSection> {
     if (blocks.isEmpty()) return emptyList()
     val timeline = ArrayList<Triple<Long, Int, TurnSection>>()
     val seenThoughts = HashSet<String>()
@@ -432,6 +447,9 @@ internal fun turnSections(blocks: List<TurnText>, steps: List<Step>): List<TurnS
     }
     blocks.forEachIndexed { i, b ->
         if (b.text.isNotBlank()) timeline.add(Triple(b.at, steps.size + i, TurnSection.Text(b)))
+    }
+    questions.forEachIndexed { i, q ->
+        timeline.add(Triple(q.askedAt, steps.size + blocks.size + i, TurnSection.Question(q)))
     }
     val sorted = timeline.sortedWith(compareBy({ it.first }, { it.second })).map { it.third }
     val out = ArrayList<TurnSection>()

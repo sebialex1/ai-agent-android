@@ -12,6 +12,7 @@ import com.sebialex.agent.domain.agent.ApprovalGate
 import com.sebialex.agent.domain.agent.ApprovalRequest
 import com.sebialex.agent.domain.agent.BrainContext
 import com.sebialex.agent.domain.agent.BrainDecision
+import com.sebialex.agent.domain.model.AskRecord
 import com.sebialex.agent.domain.model.SearchHit
 import com.sebialex.agent.domain.model.Step
 import com.sebialex.agent.domain.model.StepKind
@@ -170,6 +171,21 @@ class TurnSectionsTest {
         deltas.forEach { blocks = upsertBlock(blocks, it.block, it.text, it.at) }
         blocks = upsertBlock(blocks, done.block, done.text, done.at)
         assertEquals(listOf("Let me check the workspace first.", "The workspace is empty."), blocks.map { it.text })
+    }
+
+    @Test
+    fun aQuestionIsPlacedWhereItWasAskedNotPinnedUnderTheTurn() {
+        // The model asked for a choice before acting on it, and both the burst that followed the
+        // answer and the narration after it must read below the question.
+        val blocks = listOf(TurnText("b1", "Two options here.", at = 100), TurnText("b2", "Going with your pick.", at = 400))
+        val steps = listOf(step("s1", 300))
+        val question = AskRecord("q1", "Which option?", askedAt = 200)
+        val sections = turnSections(blocks, steps, listOf(question))
+        assertEquals(
+            listOf("Text", "Question", "Steps", "Text"),
+            sections.map { it.javaClass.simpleName },
+        )
+        assertEquals("q1", (sections[1] as TurnSection.Question).record.id)
     }
 
     private fun step(id: String, at: Long) = Step(
