@@ -55,6 +55,26 @@ class OpenAiCompatibleImages(
             put("n", 1)
             MediaModels.openAiImageFields(provider.baseUrl, model, aspectRatio).forEach { (k, v) -> put(k, v) }
         }.toString()
+        // One retry for a 5xx from a gateway: local shims (and the providers behind them) hiccup.
+        var retries = 0
+        while (true) {
+            val (code, text) = post(key, body)
+            if (code !in 200..299) {
+                if (code in 500..599 && retries++ == 0) {
+                    Thread.sleep(2_000)
+                    continue
+                }
+                val detail = MediaModels.errorDetail(text)
+                throw IOException(errorText(code, detail))
+            }
+            return when (val p = MediaModels.parseImageResponse(text)) {
+                is MediaModels.Payload.Bytes -> GeneratedImage(p.bytes, p.mime)
+                is MediaModels.Payload.Link -> downloadImage(p.url, p.mime)
+            }
+        }
+    }
+
+    private fun post(key: String?, body: String): Pair<Int, String> {
         val conn = URL(provider.baseUrl.trimEnd('/') + "/images/generations").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
@@ -66,17 +86,24 @@ class OpenAiCompatibleImages(
             conn.outputStream.use { it.write(body.toByteArray()) }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) {
-                val detail = MediaModels.errorDetail(text)
-                throw IOException("HTTP $code" + if (!detail.isNullOrBlank()) ": $detail" else "")
-            }
-            return when (val p = MediaModels.parseImageResponse(text)) {
-                is MediaModels.Payload.Bytes -> GeneratedImage(p.bytes, p.mime)
-                is MediaModels.Payload.Link -> downloadImage(p.url, p.mime)
-            }
+            return code to text
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** The failure message, with the one useful diagnosis this side of the protocol knows. */
+    private fun errorText(code: Int, detail: String?): String {
+        val base = "HTTP $code" + (detail?.let { ": $it" } ?: "")
+        // A 5xx from the Gemini account shim is its upstream (gemini.google.com) failing: daily
+        // media quota per account, or a session the shim could not refresh.
+        val hint =
+            if (code in 500..599 && provider.preset == CustomProviders.GEMINI_ACCOUNT_PRESET)
+                " \u2014 the Gemini shim could not generate this image: the account's daily image quota " +
+                    "may be spent, or its session needs attention. Try again in a while, or check " +
+                    "Settings > Gemini (my account)."
+            else ""
+        return base + hint
     }
 }
 
