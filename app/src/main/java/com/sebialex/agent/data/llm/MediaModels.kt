@@ -174,12 +174,17 @@ object MediaModels {
 
     private fun decode(b64: String): ByteArray = java.util.Base64.getMimeDecoder().decode(b64.trim())
 
-    /** `{"error": {"message"}}` or `{"error": "text"}` from an error body. */
+    /** `{"error": {"message"}}`, `{"error": "text"}` or FastAPI's `{"detail": "..."}` from an error body. */
     fun errorDetail(text: String): String? = runCatching {
-        when (val e = json.parseToJsonElement(text).jsonObject["error"]) {
+        val root = json.parseToJsonElement(text).jsonObject
+        when (val e = root["error"]) {
             is JsonObject -> (e["message"] as? JsonPrimitive)?.content
             is JsonPrimitive -> e.content
-            else -> null
+            else -> when (val d = root["detail"]) {
+                is JsonPrimitive -> d.content
+                is JsonObject -> (d["message"] as? JsonPrimitive)?.content
+                else -> null
+            }
         }
     }.getOrNull()
 }

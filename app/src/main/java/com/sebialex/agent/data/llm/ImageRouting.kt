@@ -50,7 +50,7 @@ class OpenAiCompatibleImages(
 
     private fun request(key: String?, prompt: String, aspectRatio: String?): GeneratedImage {
         val body = buildJsonObject {
-            put("model", model)
+            put("model", requestModel())
             put("prompt", prompt)
             put("n", 1)
             MediaModels.openAiImageFields(provider.baseUrl, model, aspectRatio).forEach { (k, v) -> put(k, v) }
@@ -65,7 +65,7 @@ class OpenAiCompatibleImages(
                     continue
                 }
                 val detail = MediaModels.errorDetail(text)
-                throw IOException(errorText(code, detail))
+                throw IOException(errorText(code, detail.orEmpty()))
             }
             return when (val p = MediaModels.parseImageResponse(text)) {
                 is MediaModels.Payload.Bytes -> GeneratedImage(p.bytes, p.mime)
@@ -92,19 +92,50 @@ class OpenAiCompatibleImages(
         }
     }
 
+    /** The model name exactly as the caller picked it, except where the endpoint cannot serve it. */
+    private fun requestModel(): String =
+        if (provider.preset == CustomProviders.GEMINI_ACCOUNT_PRESET) modelImageName(model) else model
+
     /** The failure message, with the one useful diagnosis this side of the protocol knows. */
-    private fun errorText(code: Int, detail: String?): String {
-        val base = "HTTP $code" + (detail?.let { ": $it" } ?: "")
+    private fun errorText(code: Int, detail: String): String {
         // A 5xx from the Gemini account shim is its upstream (gemini.google.com) failing: daily
-        // media quota per account, or a session the shim could not refresh.
+        // media quota per account, or a session the shim could not refresh. Its `detail` (forwarded
+        // by errorDetail) names the concrete reason, so only guess when it said nothing at all.
         val hint =
             if (code in 500..599 && provider.preset == CustomProviders.GEMINI_ACCOUNT_PRESET)
-                " \u2014 the Gemini shim could not generate this image: the account's daily image quota " +
-                    "may be spent, or its session needs attention. Try again in a while, or check " +
-                    "Settings > Gemini (my account)."
+                if (detail.isBlank())
+                    " \u2014 the Gemini shim could not generate this image: the account's daily image quota " +
+                        "may be spent, or its session needs attention. Try again in a while, or check " +
+                        "Settings > Gemini (my account)."
+                else
+                    " \u2014 the Gemini shim could not serve this image (its reason is above). If it keeps " +
+                        "failing, check Settings > Gemini (my account)."
             else ""
-        return base + hint
+        return "HTTP $code" + (if (detail.isNotBlank()) ": $detail" else "") + hint
     }
+}
+
+/**
+ * The image model name the Gemini account shim can actually serve.
+ *
+ * Its `/v1/models` advertises chat tier suffixes (`-plus`, `-advanced`) that its media registry has
+ * no entry for, and its model resolver passes those names through untouched — so an image request
+ * for `gemini-3-pro-plus` lands as an unknown model upstream and returns HTTP 502. Chat tolerates
+ * the tier names (its path falls back to a default), image generation does not.
+ */
+internal fun modelImageName(model: String): String {
+    var name = model.trim().substringAfterLast('/')
+    var stripped = true
+    while (stripped) { // e.g. gemini-3-pro-plus -> gemini-3-pro; gemini-3-flash-thinking-plus keeps -thinking
+        stripped = false
+        for (tier in listOf("-plus", "-advanced")) {
+            if (name.endsWith(tier)) {
+                name = name.removeSuffix(tier)
+                stripped = true
+            }
+        }
+    }
+    return name
 }
 
 /**
