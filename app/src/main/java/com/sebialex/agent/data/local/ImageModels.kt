@@ -60,6 +60,19 @@ object ImageModels {
             license = "CreativeML OpenRAIL-M",
             pageUrl = "https://huggingface.co/cuesetac/sd15-mediapipe",
         ),
+        ImageModel(
+            id = PREFIX + "dreamshaper-8",
+            name = "DreamShaper 8",
+            tagline = "SD 1.5 fine-tune with a strong illustrated/dreamy look; same engine, ~1.9 GB.",
+            slug = "dreamshaper-8",
+            zipName = "dreamshaper8-mediapipe.zip",
+            url = hf("l3utterfly/sd-mediapipe", "d1d3148a949fce8c226f20e733c7061e641c7b45", "dreamshaper8-mediapipe.zip"),
+            sizeBytes = 1_910_649_028,
+            minRamGb = 8,
+            ramTiersGb = listOf(8, 12),
+            license = "CreativeML OpenRAIL-M (mixed, see the repo)",
+            pageUrl = "https://huggingface.co/l3utterfly/sd-mediapipe",
+        ),
     )
 
     /** Catalogue entries, in catalogue order. */

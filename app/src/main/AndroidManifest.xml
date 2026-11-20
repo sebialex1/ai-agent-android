@@ -72,6 +72,13 @@
             android:name=".data.background.AgentRunService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- The MediaPipe Image Generator runs here, in its own process: the OpenCL drivers of
+             some phones kill the process on failure (SIGSEGV/abort) and this way only the
+             image request dies - the app stays alive and reports the failure. -->
+        <service
+            android:name=".data.local.ImageGenService"
+            android:exported="false"
+            android:process=":imagegen" />
         <receiver
             android:name=".data.shell.TermuxResultReceiver"
             android:exported="false" />

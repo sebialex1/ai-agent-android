@@ -150,12 +150,31 @@ class DeviceImageRoutingTest {
     }
 
     @Test fun theDeviceRefModelIsTheCatalogId() {
-        val sd = ImageModels.all.first()
-        assertEquals("local/image/sd15", sd.id)
+        val sd = ImageModels.resolve("local/image/sd15")!!
         assertEquals(sd.id, ImageModels.refModel(sd))
         // Imported models keep their own id (the zip file name), so two models never collide.
         assertEquals(ImageModels.imported("imported.zip").id, ImageModels.refModel(ImageModels.imported("imported.zip")))
     }
+
+    @Test fun dreamshaperShipsInTheCatalogWithAPinnedZip() {
+        val ds = ImageModels.resolve("local/image/dreamshaper-8")!!
+        assertEquals("dreamshaper-8", ds.slug)
+        assertEquals("dreamshaper8-mediapipe.zip", ds.zipName)
+        assertTrue(ds.url!!.contains("l3utterfly/sd-mediapipe/resolve/d1d3148a"))
+        assertTrue(ds.sizeBytes in 1_500_000_000..2_500_000_000)
+        // Catalog ids and slugs must not collide: each unpacks into its own folder.
+        assertEquals(catalogSlugs().size, catalogSlugs().distinct().size)
+    }
+
+    @Test fun everyCatalogImageModelPinsACommitAndASizeOnItsOwnSlug() {
+        ImageModels.all.forEach { m ->
+            assertTrue(m.id, m.url!!.contains("/resolve/") && m.url!!.length > m.url!!.indexOf("/resolve/") + 41)
+            assertTrue(m.id, m.sizeBytes > 0)
+            assertEquals(m.id, m.id, ImageModels.resolve(m.id)!!.id)
+        }
+    }
+
+    private fun catalogSlugs() = ImageModels.all.map { it.slug }
 }
 
 class LocalImageGeneratorTest {

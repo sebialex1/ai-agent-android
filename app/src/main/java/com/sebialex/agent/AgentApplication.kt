@@ -93,7 +93,12 @@ class AppContainer(app: Application) {
      * model at a time and is constructed here (it needs a Context; once loaded it stays).
      */
     val imageModels = com.sebialex.agent.data.local.ImageModelStore(app, appScope, java.io.File(modelStore.dir, com.sebialex.agent.data.local.ImageModelStore.DIR))
-    val imageGenRuntime = com.sebialex.agent.data.local.MediaPipeImageGenRuntime(app)
+
+    /**
+     * generate_image engine, in the `:imagegen` process (see [ProcessIsolatedImageGenRuntime]):
+     * a MediaPipe crash on a phone's GPU must not take the app down.
+     */
+    val imageGenRuntime = com.sebialex.agent.data.local.ProcessIsolatedImageGenRuntime(app)
 
     /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)

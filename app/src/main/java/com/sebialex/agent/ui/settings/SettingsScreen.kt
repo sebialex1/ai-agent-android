@@ -262,7 +262,7 @@ fun SettingsScreen(
                         )
                     }
                     SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine, imageStore, onOpenImageModels = { section = SettingsSection.IMAGE })
-                    SettingsSection.IMAGE -> ImageModelGroup(settings, snap, models)
+                    SettingsSection.IMAGE -> ImageModelGroup(settings, snap, models, imageStore)
                     SettingsSection.THINKING -> ThinkingGroup(settings, snap, models)
                     SettingsSection.CHATS -> {
                         // Memory of past chats has no row here: its only switch is in each chat's
