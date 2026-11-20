@@ -69,6 +69,8 @@ fun ChatScreen(
     val snap by settings.state.collectAsStateWithLifecycle()
     // The on-device engine's life (loading/ready) drives the small status line above the input.
     val engineState by engine.state.collectAsStateWithLifecycle()
+    // The on-device picture being drawn right now (its diffusion step), for the running tool row.
+    val imageStep by vm.imageStep.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // The draft belongs to its conversation: restored from the view model when the chat screen
@@ -271,6 +273,7 @@ fun ChatScreen(
                     AssistantTurn(
                         turn = turn,
                         pendingApproval = state.pendingApproval,
+                        imageStep = imageStep,
                         onOpenStep = { openStepId = it.id },
                         motion = snap.bubbleMotion,
                         onTap = { actionsFor = if (actionsFor == turn.id) null else turn.id },

@@ -100,6 +100,12 @@ class AppContainer(app: Application) {
      */
     val imageGenRuntime = com.sebialex.agent.data.local.ProcessIsolatedImageGenRuntime(app)
 
+    /**
+     * The running on-device generation's diffusion readout ("step 7/20"), null when none runs.
+     * The service process reports each step; the chat's generate_image step row reads this.
+     */
+    val imageGenStep = kotlinx.coroutines.flow.MutableStateFlow<com.sebialex.agent.domain.tools.ImageGenStep?>(null)
+
     /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
 
@@ -272,8 +278,11 @@ class AppContainer(app: Application) {
                 modelDir = { imageModels.readyDir(id) },
                 modelName = com.sebialex.agent.data.local.ImageModels.displayName(id),
                 runtime = imageGenRuntime,
+                steps = { settings.imageSteps() },
+                onStep = { step, total -> imageGenStep.value = com.sebialex.agent.domain.tools.ImageGenStep(step, total) },
             )
         },
+        onStep = { step -> imageGenStep.value = step },
     )
 
     /** generate_video: the Google Gemini provider the user added, with its own key. Never a silent fallback. */

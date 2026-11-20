@@ -189,25 +189,34 @@ class LocalImageGeneratorTest {
         var lastSeed = 0
         var lastDir: File? = null
 
-        override fun generate(modelDir: File, prompt: String, steps: Int, seed: Int): ByteArray {
+        override fun generate(
+            modelDir: File,
+            prompt: String,
+            steps: Int,
+            seed: Int,
+            onStep: (step: Int, total: Int, preview: ByteArray?) -> Unit,
+        ): ByteArray {
             calls++
             lastDir = modelDir
             lastPrompt = prompt
             lastSteps = steps
             lastSeed = seed
             if (crash) throw IllegalStateException("boom")
+            for (step in 1..steps) onStep(step, steps, if (step == steps) null else png)
             return png
         }
     }
 
     @Test fun aReadyModelGeneratesPngBytesOnThePhone() = runBlocking {
         val runtime = FakeRuntime()
+        val stepEvents = ArrayList<String>()
         val gen = LocalImageGenerator(
             modelDir = { File("/models/ready") },
             modelName = "SD 1.5",
             runtime = runtime,
-            steps = 7,
+            steps = { 7 },
             randomSeed = { 42 },
+            onStep = { step, total -> stepEvents.add("step $step/$total") },
         )
         val out = gen.generate("a red apple", "16:9")
         assertArrayEquals(byteArrayOf(0x89.toByte(), 0x50.toByte()), out.bytes)
@@ -217,6 +226,8 @@ class LocalImageGeneratorTest {
         assertEquals(7, runtime.lastSteps)
         assertEquals(42, runtime.lastSeed)
         assertEquals(File("/models/ready"), runtime.lastDir)
+        // Every diffusion step reports itself, in order, with its total.
+        assertEquals((1..7).joinToString(", ") { "step $it/7" }, stepEvents.joinToString(", "))
     }
 
     @Test fun aModelThatIsNotOnThePhoneFailsInsteadOfFallingBack() = runBlocking {

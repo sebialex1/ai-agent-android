@@ -38,25 +38,54 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
     @Volatile
     private var reply: Message? = null
 
+    /** The generate() caller's step callback, while one generation is in flight (one at a time). */
+    @Volatile
+    private var stepListener: ((step: Int, total: Int, preview: ByteArray?) -> Unit)? = null
+
     private val replyHandler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
+            if (msg.what == ImageGenContract.MSG_STEP) {
+                // Mid-generation progress. The step's preview picture travels the shared cache
+                // dir next to the result (not Binder); the callback gets no bytes of its own.
+                val data = msg.data ?: return
+                stepListener?.invoke(data.getInt(ImageGenContract.KEY_STEP), data.getInt(ImageGenContract.KEY_TOTAL), null)
+                return
+            }
             reply = Message.obtain(msg)
             replyLatch?.countDown()
         }
     }
 
-    override fun generate(modelDir: File, prompt: String, steps: Int, seed: Int): ByteArray = synchronized(lock) {
+    override fun generate(
+        modelDir: File,
+        prompt: String,
+        steps: Int,
+        seed: Int,
+        onStep: (step: Int, total: Int, preview: ByteArray?) -> Unit,
+    ): ByteArray = synchronized(lock) {
+        stepListener = onStep
+        try {
+            generateLocked(modelDir, prompt, steps, seed)
+        } finally {
+            stepListener = null
+        }
+    }
+
+    private fun generateLocked(modelDir: File, prompt: String, steps: Int, seed: Int): ByteArray {
         bind()
         val out = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/result.png")
+        val preview = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/preview.jpg")
+        preview.delete()
         val data = Bundle().apply {
             putString(ImageGenContract.KEY_PROMPT, prompt)
             putInt(ImageGenContract.KEY_STEPS, steps)
             putInt(ImageGenContract.KEY_SEED, seed)
             putString(ImageGenContract.KEY_MODEL_DIR, modelDir.absolutePath)
             putString(ImageGenContract.KEY_OUT, out.absolutePath)
+            putString(ImageGenContract.KEY_PREVIEW, preview.absolutePath)
         }
         val answer = ask(ImageGenContract.MSG_GENERATE, data, GENERATE_TIMEOUT_MS)
-        when (answer.what) {
+        return when (answer.what) {
             ImageGenContract.MSG_RESULT_OK ->
                 out.takeIf { it.isFile && it.length() > 0 }?.readBytes()
                     ?: throw IOException("the image engine returned no image")

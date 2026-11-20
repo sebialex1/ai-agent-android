@@ -111,6 +111,9 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private val _conversations = MutableStateFlow(ConversationsUiState())
     val conversations: StateFlow<ConversationsUiState> = _conversations.asStateFlow()
 
+    /** The running on-device picture's diffusion readout ("step 7/20"), null when nothing runs. */
+    val imageStep: StateFlow<com.sebialex.agent.domain.tools.ImageGenStep?> get() = container.imageGenStep
+
     init {
         cache[currentId] = _state.value.session
         if (container.settings.memoryForNewChats()) container.settings.setConversationMemory(currentId, true)

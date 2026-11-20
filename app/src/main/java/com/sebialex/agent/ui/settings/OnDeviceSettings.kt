@@ -596,6 +596,25 @@ private fun ImageSection(
         }
     }
     RowDivider()
+    Text(
+        "Steps per picture",
+        style = MaterialTheme.typography.labelMedium,
+        color = Palette.TextSecondary,
+        modifier = Modifier.padding(start = 10.dp, top = 10.dp),
+    )
+    ChoiceChips(
+        options = SecureSettings.IMAGE_STEPS,
+        selected = settings.imageSteps(),
+        label = { "$it" },
+        onSelect = { settings.setImageSteps(it) },
+    )
+    Text(
+        "Fewer steps finish sooner, the picture gets rougher; more steps are slower and cleaner. The step counter in the chat shows the progress either way.",
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.TextTertiary,
+        modifier = Modifier.padding(start = 10.dp, top = 2.dp),
+    )
+    RowDivider()
     NavRow("Import an image model .zip", icon = R.drawable.ic_plus, onClick = onImport, chevron = false)
     val free = runCatching { store.freeBytes() }.getOrDefault(0L)
     if (free > 0) MiniLabel("Saved in ${store.root.parentFile?.name}/${store.root.name} \u00b7 ${LocalModels.formatSize(free)} free")

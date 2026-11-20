@@ -11,6 +11,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -59,6 +60,11 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
@@ -243,6 +249,8 @@ fun QueuedBubble(
 fun AssistantTurn(
     turn: Turn,
     pendingApproval: ApprovalRequest?,
+    /** The on-device picture being drawn right now (its diffusion step); null between generations. */
+    imageStep: com.sebialex.agent.domain.tools.ImageGenStep? = null,
     onOpenStep: (Step) -> Unit,
     onOpenFile: (FileAttachment) -> Unit,
     onOpenSource: (SourceRef) -> Unit,
@@ -283,7 +291,7 @@ fun AssistantTurn(
         if (turn.blocks.isEmpty()) {
             val grouped = if (live != null) ordered.dropLast(1) else ordered
             if (grouped.isNotEmpty()) StepsGroup(grouped, grouped.size, groupKey(turn, grouped.first().id), fresh, onOpenSource, resolveFile)
-            if (live != null) StepRow(live, onOpenSource, resolveFile)
+            if (live != null) StepRow(live, imageStep, onOpenSource, resolveFile)
             if (pendingApproval != null && turn.steps.any { it.id == pendingApproval.stepId }) {
                 ApprovalCard(pendingApproval, onApproval)
             }
@@ -317,7 +325,7 @@ fun AssistantTurn(
                         if (grouped.isNotEmpty()) {
                             StepsGroup(grouped, grouped.size, groupKey(turn, grouped.first().id), fresh, onOpenSource, resolveFile)
                         }
-                        if (running != null) StepRow(running, onOpenSource, resolveFile)
+                        if (running != null) StepRow(running, imageStep, onOpenSource, resolveFile)
                     }
                     is TurnSection.Text -> if (section.block.text.isNotBlank()) {
                         androidx.compose.foundation.text.selection.SelectionContainer {
@@ -534,7 +542,7 @@ private fun StepsGroup(
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
             Column(Modifier.padding(top = 2.dp)) {
-                steps.forEach { StepRow(it, onOpenSource, resolveFile) }
+                steps.forEach { StepRow(it, null, onOpenSource, resolveFile) }
             }
         }
     }
@@ -546,7 +554,12 @@ private fun StepsGroup(
  * A running step carries the same moving gradient as a generating conversation title.
  */
 @Composable
-private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File? = { null }) {
+private fun StepRow(
+    step: Step,
+    imageStep: com.sebialex.agent.domain.tools.ImageGenStep?,
+    onOpenSource: (SourceRef) -> Unit,
+    resolveFile: (String) -> java.io.File? = { null },
+) {
     if (step.kind == StepKind.REASONING) {
         ThinkingSection(step)
         return
@@ -615,12 +628,23 @@ private fun StepRow(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: 
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
+        // The on-device engine reports each diffusion step while it draws a picture: the row
+        // itself only shimmers — this tiny line is the "it really is working" readout.
+        val drawing = running && imageStep != null && step.tool == "generate_image"
+        if (drawing) {
+            Text(
+                "step ${imageStep.step}/${imageStep.total}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                modifier = Modifier.padding(start = 34.dp, bottom = 6.dp),
+            )
+        }
         AnimatedVisibility(
             visible = open,
             enter = expandVertically(tween(200)) + fadeIn(tween(160)),
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
-            StepDetail(step, onOpenSource, resolveFile)
+            StepDetail(step, imageStep, onOpenSource, resolveFile)
         }
     }
 }
@@ -669,17 +693,25 @@ internal fun stepLabel(step: Step): String {
  * input/output, scrollable, with the exit code when there is one.
  */
 @Composable
-private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFile: (String) -> java.io.File?) {
+private fun StepDetail(
+    step: Step,
+    imageStep: com.sebialex.agent.domain.tools.ImageGenStep?,
+    onOpenSource: (SourceRef) -> Unit,
+    resolveFile: (String) -> java.io.File?,
+) {
     Column(Modifier.padding(start = 32.dp, end = 8.dp, top = 2.dp, bottom = 8.dp)) {
-        // A generated picture shows as a small squircle preview, like the search and thinking rows.
-        val made = if (step.tool == "generate_image" || step.tool == "generate_video") step.path?.let { resolveFile(it) } else null
+        // A generated video shows as a small squircle preview, like the search and thinking rows;
+        // a generated picture takes its whole place over (see [GeneratedImageBody]).
+        val made = if (step.tool == "generate_video") step.path?.let { resolveFile(it) } else null
         if (made != null) {
             Box(
                 Modifier.size(84.dp).clip(RoundedCornerShape(20.dp)).background(Palette.SurfaceHigh),
                 contentAlignment = Alignment.Center,
             ) { MediaThumb(made, 84.dp) }
         }
-        if (step.kind == StepKind.SEARCH && step.hits.isNotEmpty()) {
+        if (step.tool == "generate_image") {
+            GeneratedImageBody(step, imageStep, resolveFile)
+        } else if (step.kind == StepKind.SEARCH && step.hits.isNotEmpty()) {
             step.hits.forEach { hit ->
                 val host = com.sebialex.agent.data.web.hostOf(hit.url)
                 Row(
@@ -731,6 +763,81 @@ private fun StepDetail(step: Step, onOpenSource: (SourceRef) -> Unit, resolveFil
 
 /** Marker in the output of a shell step that was not run because a program is missing (see ToolCheck). */
 private const val MISSING_MARK = "so the command was not run"
+
+/**
+ * A generate_image step's expanded body, in place of the raw text: the picture itself — drawn
+ * live while the on-device engine works (the engine process rewrites its preview file with every
+ * diffusion step), the finished picture once done — until a tap switches to the output text and
+ * a tap on the text switches back. When there is no picture (a failure, or the file is gone) the
+ * text shows as usual.
+ */
+@Composable
+private fun GeneratedImageBody(
+    step: Step,
+    imageStep: com.sebialex.agent.domain.tools.ImageGenStep?,
+    resolveFile: (String) -> java.io.File?,
+) {
+    var showImage by rememberSaveable(step.id) { mutableStateOf(true) }
+    val running = step.status == StepStatus.RUNNING
+    val context = LocalContext.current
+    // The preview file lives next to the finished result, in this app's shared cache dir; it is
+    // rewritten (atomically) with every diffusion step while the engine draws.
+    val previewFile = remember {
+        java.io.File(context.cacheDir, com.sebialex.agent.data.local.ImageGenContract.RESULT_DIR + "/preview.jpg")
+    }
+    val bitmap: ImageBitmap? by androidx.compose.runtime.produceState<ImageBitmap?>(
+        initialValue = null,
+        // Re-decode per finished diffusion step while it runs, once more when the step completes.
+        key1 = imageStep?.step,
+        key2 = step.finishedAt,
+    ) {
+        value = null
+        val f = if (running) previewFile else step.path?.let { resolveFile(it) }
+        f?.takeIf { it.isFile }?.let {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { android.graphics.BitmapFactory.decodeFile(it.absolutePath)?.asImageBitmap() }.getOrNull()
+            }
+        }?.let { value = it }
+    }
+    if (showImage && bitmap != null) {
+        Image(
+            bitmap = bitmap!!,
+            contentDescription = "The generated image (tap to show the tool text instead)",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxWidth(0.75f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Palette.SurfaceHigh)
+                .clickable { showImage = false },
+        )
+        if (running && imageStep != null) {
+            Text(
+                "step ${imageStep.step}/${imageStep.total} \u00b7 drawing",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    } else {
+        // The raw text; tappable again when a picture exists, to go back to it.
+        val body = step.output.ifBlank { step.input }
+        if (body.isNotBlank()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (bitmap != null && !showImage) Modifier.clickable { showImage = true } else Modifier)
+                    .heightIn(max = 260.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Palette.CodeBackground)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(body, style = MonoSmall, color = Palette.TextTertiary)
+            }
+        }
+    }
+}
 
 /**
  * The quiet reasoning row, with no label in front. While the model is thinking, its raw reasoning streams into the row

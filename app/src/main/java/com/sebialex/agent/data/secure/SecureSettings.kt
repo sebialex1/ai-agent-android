@@ -538,6 +538,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun setLocalBackend(value: String) = edit { putString(KEY_LOCAL_BACKEND, if (value == BACKEND_CPU) BACKEND_CPU else BACKEND_GPU) }
     fun setLocalContext(value: Int) = edit { putInt(KEY_LOCAL_CONTEXT, value) }
     fun setLocalSpeculative(value: Boolean) = edit { putBoolean(KEY_LOCAL_SPECULATIVE, value) }
+
+    /** Steps per on-device picture; fewer steps finish sooner, the picture gets rougher. */
+    fun imageSteps(): Int = prefs.getInt(KEY_IMAGE_STEPS, DEFAULT_IMAGE_STEPS).takeIf { it in IMAGE_STEPS } ?: DEFAULT_IMAGE_STEPS
+    fun setImageSteps(value: Int) = edit { putInt(KEY_IMAGE_STEPS, value) }
     /**
      * Memory of earlier conversations, stored per conversation. New chats start with
      * [memoryForNewChats] (on until the user saves "off"); when on, the agent gets the read-only `conversation_memory` tool in
@@ -762,5 +766,10 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         const val DEFAULT_LOCAL_CONTEXT = 4096
         /** Context sizes offered in Settings. Larger windows need more memory and load slower. */
         val LOCAL_CONTEXTS = listOf(2048, 4096, 8192, 16384, 32000)
+
+        /** Diffusion steps offered for on-device pictures: a speed/quality pick. */
+        val IMAGE_STEPS = listOf(10, 15, 20, 30)
+        const val DEFAULT_IMAGE_STEPS = 20
+        private const val KEY_IMAGE_STEPS = "image_gen_steps"
     }
 }

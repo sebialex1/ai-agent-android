@@ -13,6 +13,12 @@ import java.util.zip.ZipOutputStream
 class GeneratedImage(val bytes: ByteArray, val mime: String)
 
 /** Text-to-image backend for the generate_image tool (the image model picked in Settings > Models). */
+/**
+ * How far a picture's generation has come while it happens: diffusion [step] of [total]. Only
+ * the on-device engine reports steps; cloud models have no per-step callback to read.
+ */
+data class ImageGenStep(val step: Int, val total: Int)
+
 fun interface ImageGenerator {
     suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage
 }
@@ -148,6 +154,7 @@ internal object ExtraTools {
             call.callId, true,
             "saved the generated image to ${a.path} (${human(f.length())}). It is not attached yet: if the user asked for this " +
                 "picture, call the attach_files tool with this path (and a short name) so it appears under your answer.",
+            savedPath = a.path,
         )
     }
 
@@ -174,6 +181,7 @@ internal object ExtraTools {
             call.callId, true,
             "saved the generated video to ${a.path} (${human(f.length())}). It is not attached yet: if the user asked for this " +
                 "video, call the attach_files tool with this path (and a short name) so it appears under your answer.",
+            savedPath = a.path,
         )
     }
 

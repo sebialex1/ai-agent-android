@@ -208,6 +208,8 @@ data class ToolResult(
     val exitCode: Int? = null,
     val sources: List<SourceRef> = emptyList(),
     val attachment: FileAttachment? = null,
+    /** The workspace path a generated image/video was saved to (attachable with attach_files). */
+    val savedPath: String? = null,
     /** Files attached to the answer as artifacts (attach_files). */
     val artifacts: List<FileAttachment> = emptyList(),
     val searchHits: List<SearchHit> = emptyList(),

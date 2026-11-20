@@ -17,12 +17,17 @@ object ImageGenContract {
     const val MSG_CLOSE = 2
     const val MSG_RESULT_OK = 3
     const val MSG_RESULT_ERROR = 4
+    /** An extra reply during MSG_GENERATE: one more diffusion step finished (KEY_STEP of KEY_TOTAL). */
+    const val MSG_STEP = 5
     const val KEY_PROMPT = "prompt"
     const val KEY_STEPS = "steps"
     const val KEY_SEED = "seed"
     const val KEY_MODEL_DIR = "model_dir"
     const val KEY_OUT = "out"
     const val KEY_ERROR = "error"
+    const val KEY_STEP = "step"
+    const val KEY_TOTAL = "total"
+    const val KEY_PREVIEW = "preview"
 
     /** The engine writes its PNG here in the client-visible cache dir (not over Binder limits). */
     const val RESULT_DIR = "imagegen"
@@ -90,12 +95,27 @@ class ImageGenService : Service() {
             val out = File(data.getString(ImageGenContract.KEY_OUT).orEmpty())
             out.parentFile?.mkdirs()
             out.delete()
+            val previewPath = data.getString(ImageGenContract.KEY_PREVIEW).orEmpty()
+            val preview = if (previewPath.isEmpty()) null else File(previewPath)
+            preview?.delete()
             val bytes = runtime.generate(
                 dir,
                 data.getString(ImageGenContract.KEY_PROMPT).orEmpty(),
                 data.getInt(ImageGenContract.KEY_STEPS, LocalImageGenerator.STEPS),
                 data.getInt(ImageGenContract.KEY_SEED),
-            )
+            ) { step, total, previewBytes ->
+                // Preview bytes land in the shared cache dir so the app's UI can show the
+                // picture while it is still being drawn; atomically, so a read never sees
+                // half a file. Then the step counter follows.
+                if (preview != null && previewBytes != null) {
+                    runCatching {
+                        val tmp = File(preview.parentFile, preview.name + ".tmp")
+                        tmp.writeBytes(previewBytes)
+                        if (!tmp.renameTo(preview)) preview.writeBytes(previewBytes)
+                    }
+                }
+                sendStep(msg, step, total)
+            }
             out.writeBytes(bytes)
             finish(msg, ImageGenContract.MSG_RESULT_OK) { Bundle().apply { putString(ImageGenContract.KEY_OUT, out.absolutePath) } }
         } catch (t: Throwable) {
@@ -111,6 +131,19 @@ class ImageGenService : Service() {
         val client = request.replyTo ?: return
         runCatching {
             Message.obtain(null, what).apply { this.data = data() }.let { client.send(it) }
+        }
+    }
+
+    /** One finished diffusion step, told to the client from the worker thread mid-generation. */
+    private fun sendStep(request: Message, step: Int, total: Int) {
+        val client = request.replyTo ?: return
+        runCatching {
+            Message.obtain(null, ImageGenContract.MSG_STEP).apply {
+                data = Bundle().apply {
+                    putInt(ImageGenContract.KEY_STEP, step)
+                    putInt(ImageGenContract.KEY_TOTAL, total)
+                }
+            }.let { client.send(it) }
         }
     }
 

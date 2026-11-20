@@ -12,8 +12,9 @@ import java.util.concurrent.ThreadLocalRandom
  * generate_image on this phone: the MediaPipe Image Generator runs a Stable-Diffusion-1.5 model
  * on the phone's GPU, nothing leaves the device. The picture always comes back square
  * (512x512-ish): the engine has no aspect-ratio control, so [ImageGenerator.aspectRatio] is
- * honestly ignored. Steps are fixed at a quality/speed middle ground; the seed is random per
- * request so the same prompt gives varied pictures.
+ * honestly ignored. [steps] is read per generation (Settings > On-device > Image: fewer steps
+ * finish sooner, the picture gets rougher); the seed is random per request so the same prompt
+ * gives varied pictures.
  */
 class LocalImageGenerator(
     /** The ready model directory, or null while the model is not on the phone. */
@@ -21,8 +22,10 @@ class LocalImageGenerator(
     /** The model's human name, for readable errors. */
     private val modelName: String,
     private val runtime: ImageGenRuntime,
-    private val steps: Int = STEPS,
+    private val steps: () -> Int = { STEPS },
     private val randomSeed: () -> Int = { ThreadLocalRandom.current().nextInt(1, Int.MAX_VALUE) },
+    /** Per-diffusion-step readout, (step, total); the app publishes it to the chat's tool row. */
+    private val onStep: ((step: Int, total: Int) -> Unit)? = null,
 ) : ImageGenerator {
 
     override suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage = withContext(Dispatchers.IO) {
@@ -31,8 +34,9 @@ class LocalImageGenerator(
                 "Get it in Settings > On-device > Image, or pick a cloud image model in Settings > Models. " +
                 "Nothing was generated.",
         )
+        val count = steps().coerceIn(1, 60)
         val bytes = try {
-            runtime.generate(dir, prompt, steps, randomSeed())
+            runtime.generate(dir, prompt, count, randomSeed()) { step, total, _ -> onStep?.invoke(step, total) }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: IOException) {

@@ -151,9 +151,22 @@ class RoutedImageGenerator(
     private val custom: (SecureSettings.CustomProvider, String) -> ImageGenerator = { p, m -> OpenAiCompatibleImages(settings, p, m) },
     /** On-device generators, one per image model id (built where its model files can be found). */
     private val device: (String) -> ImageGenerator,
+    /** diffusion-step readout of the running generation (null = none running), for the chat UI. */
+    private val onStep: (com.sebialex.agent.domain.tools.ImageGenStep?) -> Unit = {},
 ) : ImageGenerator {
 
     override suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage {
+        // A new generation first clears the last one's readout, whatever it was — the chat's
+        // step row never shows a stale "step 20/20" from an earlier picture.
+        onStep(null)
+        try {
+            return generateInner(prompt, aspectRatio)
+        } finally {
+            onStep(null)
+        }
+    }
+
+    private suspend fun generateInner(prompt: String, aspectRatio: String?): GeneratedImage {
         val ref = settings.mediaImageModel()
         if (ref.provider == MediaModels.PROVIDER_DEVICE) {
             // resolve() validates the id; here only the readable message matters.
