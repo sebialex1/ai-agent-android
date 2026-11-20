@@ -9,9 +9,12 @@ import android.graphics.Bitmap
  * The second on-device image engine: **ncnn** (Tencent, BSD-3), adapted from EdVince's
  * Stable-Diffusion-NCNN. This is the fallback engine for phones whose GPU drivers cannot run
  * the MediaPipe engine (Google deprecated that task and will not fix hardware-specific GPU
- * failures): ncnn here runs the Stable-Diffusion-v1.5 pipeline **on the CPU** with fp16-packed
- * arithmetic, so no GPU driver is involved at all and none of the OpenCL/Vulkan driver bugs
- * can strike. Resolution is 256x256; a picture takes roughly 30-90 s on a recent flagship.
+ * failures). It runs the Stable-Diffusion-v1.5 pipeline on the **GPU when the phone exposes a
+ * Vulkan compute device** (ncnn speaks Vulkan compute \u2014 a different driver path from the
+ * OpenCL one MediaPipe fails on), and on the CPU with fp16-packed arithmetic otherwise;
+ * a missing device or a failed weight load on the GPU falls back to the CPU inside the
+ * engine itself. Resolution is 256x256; a picture takes roughly 30-90 s on CPU on a recent
+ * flagship, faster where the GPU path works.
  *
  * Model directory layout (see the ncnn entries in [com.sebialex.agent.data.local.ImageModels]):
  * `unet.param` + `unet.bin`, `clip.param` + `clip.bin` (with `vocab.txt`), `vae.param` +
@@ -59,6 +62,7 @@ class NcnnImageGenRuntime(private val context: android.content.Context) : ImageG
             throw IOException("The model directory is missing or broken (unet/clip/vae param+bin, log_sigmas.bin, vocab.txt). Redownload it in Settings > On-device > Image.")
         }
         loaded = path
+        android.util.Log.i("sdncnn", "generating on the " + (if (SdNcnn.onGpu()) "GPU (Vulkan)" else "CPU"))
         val count = steps.coerceIn(1, 60)
         // The JNICallback's onStep returns true = continue; there is no cancel yet, like
         // MediaPipe. ncnn can report every step — with no preview (the VAE decode needed for a
@@ -112,6 +116,9 @@ object SdNcnn {
 
     /** True only when this exact directory's weights are in memory. */
     external fun isLoadedFor(modelDir: String): Boolean
+
+    /** True while the loaded weights run on the GPU (Vulkan); false on the CPU fallback. */
+    external fun onGpu(): Boolean
 
     /**
      * Runs txt2img. [onStep] is called with the number of finished diffusion steps (1-based,

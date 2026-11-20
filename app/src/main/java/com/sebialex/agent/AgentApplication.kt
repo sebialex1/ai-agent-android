@@ -92,7 +92,13 @@ class AppContainer(app: Application) {
      * to the text models, run by the MediaPipe Image Generator. The runtime loads at most one
      * model at a time and is constructed here (it needs a Context; once loaded it stays).
      */
-    val imageModels = com.sebialex.agent.data.local.ImageModelStore(app, appScope, java.io.File(modelStore.dir, com.sebialex.agent.data.local.ImageModelStore.DIR))
+    val imageModels = com.sebialex.agent.data.local.ImageModelStore(
+        app, appScope,
+        java.io.File(modelStore.dir, com.sebialex.agent.data.local.ImageModelStore.DIR),
+        // Image models added from Hugging Face search (Settings > On-device > Image) join the
+        // catalog: statuses, readyDir and the pickers must know them.
+        extraModels = { settings.hfImageModels() },
+    )
 
     /**
      * generate_image engine, in the `:imagegen` process (see [ProcessIsolatedImageGenRuntime]):
@@ -276,7 +282,7 @@ class AppContainer(app: Application) {
         device = { id ->
             com.sebialex.agent.data.local.LocalImageGenerator(
                 modelDir = { imageModels.readyDir(id) },
-                modelName = com.sebialex.agent.data.local.ImageModels.displayName(id),
+                modelName = com.sebialex.agent.data.local.ImageModels.displayName(id, imageModels.models()),
                 runtime = imageGenRuntime,
                 steps = { settings.imageSteps() },
                 onStep = { step, total -> imageGenStep.value = com.sebialex.agent.domain.tools.ImageGenStep(step, total) },

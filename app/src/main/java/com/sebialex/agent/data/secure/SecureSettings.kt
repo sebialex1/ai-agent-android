@@ -82,6 +82,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val theme: String = DEFAULT_THEME,
         /** Hugging Face models added from search, as on-device download entries. */
         val hfModels: List<com.sebialex.agent.data.local.HfModel> = emptyList(),
+        /** Hugging Face image models added from search, as on-device download entries. */
+        val hfImageModels: List<com.sebialex.agent.data.local.ImageModel> = emptyList(),
         /** Whether a Hugging Face token is stored (never shown). */
         val hasHfToken: Boolean = false,
         /** Local sampler overrides; null while the runtime's own defaults apply. */
@@ -189,6 +191,25 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun removeHfModel(id: String) = edit {
         val list = hfModels().filterNot { it.id == id }
         if (list.isEmpty()) remove(KEY_HF_MODELS) else putString(KEY_HF_MODELS, keyJson.encodeToString(list))
+    }
+
+    /** On-device image models added from Hugging Face search, oldest first. */
+    fun hfImageModels(): List<com.sebialex.agent.data.local.ImageModel> =
+        prefs.getString(KEY_HF_IMAGE_MODELS, null)?.let { raw ->
+            runCatching { keyJson.decodeFromString<List<com.sebialex.agent.data.local.ImageModel>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    /** Adds or replaces (same id) a Hugging Face image model entry. */
+    @Synchronized
+    fun addHfImageModel(model: com.sebialex.agent.data.local.ImageModel) {
+        val list = hfImageModels().filterNot { it.id == model.id } + model
+        edit { putString(KEY_HF_IMAGE_MODELS, keyJson.encodeToString(list)) }
+    }
+
+    @Synchronized
+    fun removeHfImageModel(id: String) = edit {
+        val list = hfImageModels().filterNot { it.id == id }
+        if (list.isEmpty()) remove(KEY_HF_IMAGE_MODELS) else putString(KEY_HF_IMAGE_MODELS, keyJson.encodeToString(list))
     }
 
     /** Local sampler overrides; null keeps the runtime's own defaults. */
@@ -665,6 +686,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         autoTitles = autoTitles(),
         theme = themeId(),
         hfModels = hfModels(),
+        hfImageModels = hfImageModels(),
         hasHfToken = hfToken().isNotEmpty(),
         localSampler = localSampler(),
         localActivation = localActivation(),
@@ -726,6 +748,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         /** The imported Gemini session cookie jar. A secret: never in a plain backup. */
         private const val KEY_GEMINI_ACCOUNT = "gemini_account"
         private const val KEY_HF_MODELS = "hf_models_v1"
+        private const val KEY_HF_IMAGE_MODELS = "hf_image_models_v1"
         private const val KEY_LOCAL_SAMPLER = "local_sampler_v1"
         /** Per-model runtime overrides, edited from the model's own card. */
         private const val KEY_MODEL_SAMPLER_PREFIX = "model_sampler::"

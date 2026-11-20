@@ -57,4 +57,19 @@ class UpdateCheckerTest {
     @Test(expected = java.io.IOException::class) fun notAListIsAnError() {
         UpdateChecker.parse("""{"message":"Not Found"}""")
     }
+
+    /** The release body is the versionCode of record; the v0.2.<run> tag parses as a fallback. */
+    @Test fun parsesThePointTwoSeriesTags() {
+        val rs = UpdateChecker.parse(
+            """[{"tag_name":"v0.2.102","name":"Agent v0.2.102","draft":false,"body":"versionCode: 102",
+                 "assets":[{"name":"agent-v0.2.102-signed.apk","size":58000000,"browser_download_url":"https://x/a.apk"}]}]""",
+        )
+        assertEquals(listOf("v0.2.102"), rs.map { it.tag })
+        assertEquals(102L, rs.first().versionCode)
+        val tagOnly = UpdateChecker.parse(
+            """[{"tag_name":"v0.2.105","name":"Agent v0.2.105","draft":false,"body":"",
+                 "assets":[{"name":"agent-v0.2.105-signed.apk","size":1,"browser_download_url":"https://x/b.apk"}]}]""",
+        )
+        assertEquals(105L, tagOnly.first().versionCode) // from the v0.2.<run> tag
+    }
 }

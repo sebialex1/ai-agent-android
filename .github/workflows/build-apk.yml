@@ -12,8 +12,8 @@ permissions:
   contents: write
 
 env:
-  # Tag pushes use the pushed tag; branch and manual runs get a generated v0.1.<run> tag.
-  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.1.{0}', github.run_number) }}
+  # Tag pushes use the pushed tag; branch and manual runs get a generated v0.2.<run> tag.
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.2.{0}', github.run_number) }}
 
 jobs:
   build:
@@ -67,7 +67,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           # Always higher than the previous run, so Android accepts the build as an update.
           VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('0.1.{0}', github.run_number) }}
+          VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('0.2.{0}', github.run_number) }}
         run: ./gradlew --no-daemon assembleRelease
 
       - name: Rename APK

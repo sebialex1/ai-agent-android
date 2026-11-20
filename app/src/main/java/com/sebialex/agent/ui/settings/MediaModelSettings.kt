@@ -34,6 +34,7 @@ import com.sebialex.agent.data.llm.MediaModelRef
 import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.RoutedImageGenerator
+import com.sebialex.agent.data.local.ImageEngine
 import com.sebialex.agent.data.local.ImageModelStore
 import com.sebialex.agent.data.local.ImageModels
 import com.sebialex.agent.data.local.ModelStatus
@@ -88,8 +89,13 @@ internal fun ImageModelGroup(
     val imageStatuses by imageStore.statuses.collectAsStateWithLifecycle()
     val imageImported by imageStore.imported.collectAsStateWithLifecycle()
     // Is the saved choice usable right now? Shown under the row instead of switching providers.
-    val problem = runCatching { RoutedImageGenerator.resolve(current, snap.customProviders, snap.imageOverrides) { snap.keys[it].orEmpty().size } }
-        .exceptionOrNull()?.message
+    val problem = runCatching {
+        RoutedImageGenerator.resolve(
+            current, snap.customProviders, snap.imageOverrides,
+            deviceModelExists = { id -> ImageModels.resolve(id) != null || snap.hfImageModels.any { it.id == id } },
+            keyCount = { snap.keys[it].orEmpty().size },
+        )
+    }.exceptionOrNull()?.message
     val providerName = when {
         current.provider == MediaModels.PROVIDER_DEVICE -> "On-device"
         else -> MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
@@ -142,8 +148,15 @@ internal fun ImageModelGroup(
                 },
                 onSelect = { tab = it },
             )
-            val deviceItems = (ImageModels.all + imageImported)
-                .map { m -> MediaModelOption(MediaModelRef(MediaModels.PROVIDER_DEVICE, m.id), "On-device", m.name, "MediaPipe on the phone") }
+            val deviceItems = (ImageModels.all + snap.hfImageModels + imageImported)
+                .map { m ->
+                    MediaModelOption(
+                        MediaModelRef(MediaModels.PROVIDER_DEVICE, m.id),
+                        "On-device",
+                        m.name,
+                        if (m.engine == ImageEngine.NCNN) "ncnn on the phone" else "MediaPipe on the phone",
+                    )
+                }
             val items: List<MediaModelOption>? = when (tab) {
                 MediaModels.PROVIDER_DEVICE -> deviceItems
                 MediaModels.PROVIDER_OPENROUTER -> openRouter

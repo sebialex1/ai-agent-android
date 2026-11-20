@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.data.local.HfHit
+import com.sebialex.agent.data.local.HfImageHit
 import com.sebialex.agent.data.local.HfSearch
 import com.sebialex.agent.data.local.LocalModels
 import com.sebialex.agent.data.local.ModelStore
@@ -198,6 +199,129 @@ private fun HfRow(hit: HfHit, added: Boolean, onAdd: () -> Unit) {
         when {
             added -> AppIcon(R.drawable.ic_check, "Added", tint = Palette.IconActive, size = 16.dp)
             else -> PillButton("Add", onClick = onAdd, primary = true)
+        }
+    }
+}
+
+/**
+ * The Hugging Face search of Settings > On-device with the **Image** tab selected. Searches
+ * `text-to-image` repos and checks each one for the ncnn-converted file set the vendored engine
+ * loads; hits without it say what is missing instead of offering a dead-end download.
+ */
+@Composable
+internal fun HfImageSection(settings: SecureSettings, snap: SecureSettings.Snapshot, onMessage: (String?) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var hits by remember { mutableStateOf<List<HfImageHit>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .softSurface(RoundedCornerShape(50), Palette.SurfaceHigh, elevation = 3.dp)
+                .padding(start = 16.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(R.drawable.ic_search, null, tint = Palette.IconMuted, size = 16.dp)
+            Spacer(Modifier.width(10.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = MonoSmall.copy(color = Palette.TextPrimary),
+                cursorBrush = SolidColor(Palette.TextPrimary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) Text("Search image models on Hugging Face", style = MonoSmall, color = Palette.TextTertiary)
+                    inner()
+                },
+            )
+            PillButton(
+                if (searching) "\u2026" else "Search",
+                onClick = {
+                    searching = true
+                    error = null
+                    scope.launch {
+                        hits = runCatching { HfSearch.searchImages(query, settings.hfToken()) }
+                            .onFailure { error = it.message ?: "Search failed" }
+                            .getOrNull()
+                        searching = false
+                    }
+                },
+                enabled = !searching,
+            )
+        }
+        error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Danger, modifier = Modifier.padding(top = 6.dp, start = 4.dp)) }
+        hits?.let { list ->
+            if (searching) return@let
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .softSurface(RoundedCornerShape(18.dp), Palette.SurfaceHigh, elevation = 3.dp)
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
+            ) {
+                if (list.isEmpty()) Text(
+                    "No image models found; try a different search (e.g. \"sd15 ncnn\")",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextTertiary,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                list.forEachIndexed { i, hit ->
+                    if (i > 0) RowDivider()
+                    HfImageRow(
+                        hit,
+                        added = snap.hfImageModels.any { it.id == hit.id },
+                        onAdd = { settings.addHfImageModel(hit.toImageModel()) },
+                        onMessage = onMessage,
+                    )
+                }
+            }
+        }
+        Text(
+            "Only repos converted for the phone's ncnn engine (unet/clip/vae .param + .bin, log_sigmas, vocab) can run on the device; the rest are listed for reference.",
+            style = MaterialTheme.typography.labelSmall,
+            color = Palette.TextTertiary,
+            modifier = Modifier.padding(top = 6.dp, start = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun HfImageRow(hit: HfImageHit, added: Boolean, onAdd: () -> Unit, onMessage: (String?) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(hit.repo.substringAfter('/'), style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary, maxLines = 1)
+            Text(
+                listOfNotNull(
+                    hit.repo.substringBefore('/'),
+                    if (hit.sizeBytes > 0) LocalModels.formatSize(hit.sizeBytes) else null,
+                    if (hit.downloads > 0) LocalModels.formatSize(hit.downloads) + " downloads" else null,
+                ).joinToString(" \u00b7 "),
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                maxLines = 1,
+            )
+            if (!hit.compatible) Text(
+                "Cannot run on the device \u2014 missing: " + hit.missing.joinToString(", "),
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.Warning,
+                maxLines = 1,
+            )
+        }
+        when {
+            !hit.compatible -> Unit
+            added -> AppIcon(R.drawable.ic_check, "Added", tint = Palette.IconActive, size = 16.dp)
+            else -> PillButton("Add", primary = true, onClick = {
+                onAdd()
+                onMessage("Added ${hit.name} \u2014 tap Get next to it in the Image list to download ${LocalModels.formatSize(hit.sizeBytes)}.")
+            })
         }
     }
 }

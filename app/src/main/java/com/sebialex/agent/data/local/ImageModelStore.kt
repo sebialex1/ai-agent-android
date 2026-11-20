@@ -32,6 +32,8 @@ class ImageModelStore(
     /** Base directory holding one folder per image model. */
     val root: File,
     private val hfToken: () -> String = { "" },
+    /** Dynamically added image models (Hugging Face search), kept as [SecureSettings] entries. */
+    private val extraModels: () -> List<ImageModel> = { emptyList() },
 ) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val dm: DownloadManager? = context.getSystemService(DownloadManager::class.java)
@@ -58,14 +60,14 @@ class ImageModelStore(
         refresh()
     }
 
-    /** Catalog models + the imported zips, for the settings page and the status refresh. */
-    fun models(): List<ImageModel> = ImageModels.all + _imported.value
+    /** Catalog + added-from-search + imported zips, for the settings page and the status refresh. */
+    fun models(): List<ImageModel> = ImageModels.all + extraModels() + _imported.value
 
     fun status(id: String): ModelStatus = _statuses.value[id] ?: ModelStatus.Missing
 
     /** The unpacked model directory for [id], or null while missing/incomplete/in progress. */
     fun readyDir(id: String): File? {
-        val model = ImageModels.resolve(id) ?: return null
+        val model = ImageModels.resolve(id, extraModels()) ?: return null
         val dir = modelDir(model)
         return if (ImageZip.looksLikeModelDir(dir) && !busy(model.id)) dir else null
     }
@@ -91,9 +93,10 @@ class ImageModelStore(
     /** Re-reads the disk and the download queue. Cheap; safe from any thread. */
     @Synchronized
     fun refresh() {
-        // Imports: unpacked model directories that are not a catalog slug. The directory name is
-        // the model of record (see [ImageModels.imported]), so the ids stay stable forever.
-        val known = ImageModels.all.map { it.slug }.toSet()
+        // Imports: unpacked model directories that are not a catalog or added-search slug. The
+        // directory name is the model of record (see [ImageModels.imported]), so the ids stay
+        // stable forever.
+        val known = models().map { it.slug }.toSet()
         val scanned = root.listFiles().orEmpty()
             .filter { it.isDirectory && it.name !in known }
             .sortedBy { it.name.lowercase() }

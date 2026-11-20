@@ -28,7 +28,7 @@ data class AppRelease(
     val apkUrl: String?,
     val apkName: String?,
     val apkSize: Long?,
-    /** From the release body (`versionCode: <n>`) or a `v0.1.<n>` tag; null when neither says. */
+    /** From the release body (`versionCode: <n>`) or a `v0.x.<n>` tag; null when neither says. */
     val versionCode: Long?,
     /** SHA-256 of the signing certificate, from the release body; null when not stated. */
     val certSha256: String?,
@@ -138,8 +138,8 @@ class UpdateChecker(
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
         private val CODE_IN_BODY = Regex("(?im)^\\s*versionCode:\\s*(\\d+)\\s*$")
         private val CERT_IN_BODY = Regex("(?im)certificate SHA-256:\\s*([0-9a-f:]{64,95})")
-        /** Manual runs are tagged v0.1.<run number>, and the run number is the versionCode. */
-        private val RUN_TAG = Regex("^v?0\\.1\\.(\\d+)$")
+        /** Manual runs are tagged v0.2.<run number> (v0.1 for older releases); run number = versionCode. */
+        private val RUN_TAG = Regex("^v?0\\.\\d+\\.(\\d+)$")
 
         /** Releases from the GitHub API answer (drafts skipped). Throws on a body that is not a list. */
         fun parse(body: String): List<AppRelease> {

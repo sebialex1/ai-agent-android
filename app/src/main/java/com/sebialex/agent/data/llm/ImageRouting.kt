@@ -177,7 +177,7 @@ class RoutedImageGenerator(
                 throw IOException("Image generation with On-device \u00b7 $name failed: ${e.message}", e)
             }
         }
-        val (name, provider) = resolve(ref, settings.customProviders(), settings.imageOverrides(), settings::keyCount)
+        val (name, provider) = resolve(ref, settings.customProviders(), settings.imageOverrides(), keyCount = settings::keyCount)
         return try {
             if (provider == null) openRouter(ref.model).generate(prompt, aspectRatio)
             else custom(provider, ref.model).generate(prompt, aspectRatio)
@@ -195,10 +195,12 @@ class RoutedImageGenerator(
             ref: MediaModelRef,
             providers: List<SecureSettings.CustomProvider>,
             manualImage: Set<String> = emptySet(),
+            /** Device model ids beyond the static catalog (added from Hugging Face search). */
+            deviceModelExists: (String) -> Boolean = { com.sebialex.agent.data.local.ImageModels.resolve(it) != null },
             keyCount: (String) -> Int,
         ): Pair<String, SecureSettings.CustomProvider?> {
             if (ref.provider == MediaModels.PROVIDER_DEVICE) {
-                com.sebialex.agent.data.local.ImageModels.resolve(ref.model) ?: throw IOException(
+                if (com.sebialex.agent.data.local.ImageModels.resolve(ref.model) == null && !deviceModelExists(ref.model)) throw IOException(
                     "The saved on-device image model (${ref.model}) does not exist. Pick one in Settings > On-device > Image. Nothing was generated.",
                 )
                 return "On-device" to null

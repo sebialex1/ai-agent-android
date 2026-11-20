@@ -1,14 +1,18 @@
 package com.sebialex.agent.data.local
 
+import kotlinx.serialization.Serializable
+
 /** Which on-device engine a model runs on ([ImageGenRuntime]'s two implementations). */
 enum class ImageEngine {
     /** Google's MediaPipe Image Generator, GPU only (deprecated upstream, driver-dependent). */
     MEDIAPIPE,
-    /** ncnn on the CPU; no GPU driver involved, so it also works where MediaPipe cannot. */
+    /** ncnn: Vulkan compute when the phone's GPU allows it, CPU fallback otherwise \u2014
+     *  works where MediaPipe cannot (it never touches OpenCL). */
     NCNN,
 }
 
 /** One file of a [ImageModel.parts]-based model: downloaded straight into the model directory. */
+@Serializable
 data class ImageModelPart(
     /** File name inside the model directory. */
     val name: String,
@@ -18,7 +22,7 @@ data class ImageModelPart(
 
 /**
  * An image model that runs on this phone, with the MediaPipe Image Generator (pinned `.zip`
- * downloads unpacked by [ImageModelStore]) or with the ncnn CPU engine (multi-file
+ * downloads unpacked by [ImageModelStore]) or with the ncnn engine (multi-file
  * [parts] downloads). Like the text catalog in [LocalModels], catalog entries are pinned to an
  * exact Hugging Face commit so the downloaded file never changes underneath the app.
  *
@@ -26,6 +30,7 @@ data class ImageModelPart(
  * ncnn's converted-from-HF file set below is SD 1.5 as well. A model is a directory of converted
  * files rather than one file in both cases.
  */
+@Serializable
 data class ImageModel(
     /** Settings model id, always starting with [ImageModels.PREFIX]. */
     val id: String,
@@ -102,9 +107,10 @@ object ImageModels {
         ),
         ImageModel(
             id = PREFIX + "sd15-ncnn",
-            name = "SD 1.5 (CPU)",
-            tagline = "Runs on the CPU, not the GPU: the engine that works on phones whose " +
-                "graphics driver cannot run the MediaPipe engine. 256x256, \u224840 s+ per picture.",
+            name = "SD 1.5 (on-device)",
+            tagline = "The engine that works on phones whose graphics driver cannot run the " +
+                "MediaPipe engine: GPU-accelerated (Vulkan) where the phone allows it, CPU " +
+                "otherwise. 256x256, \u224840 s+ per picture.",
             slug = "sd15-ncnn",
             zipName = "sd15-ncnn.zip", // unused: parts download one file at a time
             sizeBytes = 2_066_400_569,
@@ -143,15 +149,16 @@ object ImageModels {
 
     fun isDeviceImageModel(id: String): Boolean = id.startsWith(PREFIX)
 
-    /** Resolves any device image model id, including imported zips, without touching the disk. */
-    fun resolve(id: String): ImageModel? = when {
+    /** Resolves any device image model id, including imported zips, without touching the disk.
+     *  [extra] carries dynamically added entries (Hugging Face search) beyond the catalog. */
+    fun resolve(id: String, extra: List<ImageModel> = emptyList()): ImageModel? = when {
         !isDeviceImageModel(id) -> null
         id.startsWith(IMPORTED_PREFIX) -> id.removePrefix(IMPORTED_PREFIX).takeIf { it.isNotBlank() }?.let(::imported)
-        else -> catalog.firstOrNull { it.id == id }
+        else -> (catalog + extra).firstOrNull { it.id == id }
     }
 
     /** Human name for a device image model id, otherwise the id itself. */
-    fun displayName(id: String): String = resolve(id)?.name ?: id
+    fun displayName(id: String, extra: List<ImageModel> = emptyList()): String = resolve(id, extra)?.name ?: id
 
     /** MediaModelRef model value for a device image model (provider is [com.sebialex.agent.data.llm.MediaModels.PROVIDER_DEVICE]). */
     fun refModel(image: ImageModel): String = image.id

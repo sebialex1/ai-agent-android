@@ -110,7 +110,13 @@ internal fun OnDeviceSettings(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        HfSection(settings, snap, store) { message = it }
+        // The search above the tab bar follows the tab: text models for Text, image models for
+        // Image (a .litertlm search on the Image tab found nothing usable), none for Video.
+        when (tab) {
+            Modality.IMAGE -> HfImageSection(settings, snap) { message = it }
+            Modality.TEXT -> HfSection(settings, snap, store) { message = it }
+            Modality.VIDEO -> Unit
+        }
 
         // What is loaded, plus one collapsed row for the device-level knobs. Per-model context
         // and sampling live on the model's own card, not here.
@@ -197,6 +203,7 @@ internal fun OnDeviceSettings(
                     settings = settings,
                     store = imageStore,
                     statuses = imageStatuses,
+                    hfModels = snap.hfImageModels,
                     importedModels = imageImported,
                     ramGb = ramGb,
                     onImport = { imagePicker.launch(arrayOf("application/zip", "*/*")) },
@@ -533,6 +540,8 @@ private fun ImageSection(
     settings: SecureSettings,
     store: ImageModelStore,
     statuses: Map<String, ModelStatus>,
+    /** Entries added from the Hugging Face image search above; deleted with the trash button. */
+    hfModels: List<ImageModel>,
     importedModels: List<ImageModel>,
     ramGb: Int,
     onImport: () -> Unit,
@@ -577,6 +586,30 @@ private fun ImageSection(
             },
             onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
         )
+    }
+    if (hfModels.isNotEmpty()) {
+        MiniLabel("From Hugging Face")
+        hfModels.forEachIndexed { i, m ->
+            if (i > 0) RowDivider()
+            ImageRow(
+                model = m,
+                status = statuses[m.id] ?: ModelStatus.Missing,
+                ramGb = ramGb,
+                selected = selected.provider == MediaModels.PROVIDER_DEVICE && selected.model == m.id,
+                onDownload = { onMessage(store.download(m)) },
+                onCancel = { store.cancel(m) },
+                onUse = { choose(m) },
+                onDelete = {
+                    if (selected.provider == MediaModels.PROVIDER_DEVICE && selected.model == m.id) {
+                        onMessage("This model is currently used for image generation. Pick another image model first, then delete it.")
+                    } else {
+                        store.delete(m)
+                        settings.removeHfImageModel(m.id)
+                    }
+                },
+                onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+            )
+        }
     }
     if (importedModels.isNotEmpty()) {
         MiniLabel("Imported")
@@ -670,8 +703,8 @@ private fun ImageRow(
                 is ModelStatus.Downloading -> PillButton("Cancel", onClick = onCancel)
                 is ModelStatus.Importing -> Unit
                 is ModelStatus.Ready -> if (!selected) PillButton("Use", onClick = onUse, primary = true)
-                is ModelStatus.Failed -> if (model.url != null) PillButton("Retry", onClick = onDownload)
-                ModelStatus.Missing -> if (model.url != null) PillButton("Get", onClick = onDownload, primary = true)
+                is ModelStatus.Failed -> if (model.url != null || model.parts.isNotEmpty()) PillButton("Retry", onClick = onDownload)
+                ModelStatus.Missing -> if (model.url != null || model.parts.isNotEmpty()) PillButton("Get", onClick = onDownload, primary = true)
             }
         }
         when (status) {

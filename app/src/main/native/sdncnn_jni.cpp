@@ -7,9 +7,14 @@
  * Adaptations from the original: loads weights from a folder on disk (no AAssetManager), no
  * OpenCV (the normal-distribution sampler initializer uses C++ <random>; pixels go out as a
  * plain RGBA byte array instead of an android.graphics.Bitmap), and a per-diffusion-step JNI
- * progress callback so the app can show "step n/N" while it draws. Runs on the CPU
- * (use_vulkan_compute = false), which is how the original Android sample ran: fp16-packed
- * ncnn CPU arithmetic is fast enough on recent flagships and needs no GPU driver at all.
+ * progress callback so the app can show "step n/N" while it draws.
+ *
+ * Compute path: the original Android sample ran ncnn on the CPU (use_vulkan_compute = false;
+ * fp16-packed arithmetic is fast enough on recent flagships). We additionally try the GPU
+ * first when the phone exposes a Vulkan compute device: ncnn speaks Vulkan compute, a
+ * completely different driver path from the OpenCL one MediaPipe's engine fails on
+ * (Xclipse 920 clCreateImage). If the Vulkan device is missing or the weights fail to load
+ * on it, init falls back to the exact CPU path of the original; nothing else changes.
  */
 
 #include <jni.h>
@@ -29,6 +34,8 @@
 #include "net.h"
 #include "cpu.h"
 #include "benchmark.h"
+// platform.h (included through net.h) defines NCNN_VULKAN for the vulkan prebuilt and pulls
+// in gpu.h with it; keep an explicit include out so a cpu-only build compiles unchanged.
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "sdncnn", __VA_ARGS__)
 
@@ -38,9 +45,9 @@ using namespace std;
 
 class PromptSlover {
 public:
-    int load(const string& dir) {
+    int load(const string& dir, bool useGpu = false) {
         net.opt.lightmode = true;
-        net.opt.use_vulkan_compute = false;
+        net.opt.use_vulkan_compute = useGpu;
         net.opt.use_winograd_convolution = false;
         net.opt.use_sgemm_convolution = false;
         net.opt.use_fp16_packed = true;
@@ -48,6 +55,12 @@ public:
         net.opt.use_fp16_arithmetic = true;
         net.opt.use_packing_layout = true;
         net.opt.num_threads = ncnn::get_big_cpu_count();
+        if (useGpu)
+        {
+#if NCNN_VULKAN
+            net.set_vulkan_device(ncnn::get_default_gpu_index());
+#endif
+        }
 
         if (net.load_param((dir + "/clip.param").c_str()) < 0) return -1;
         if (net.load_model((dir + "/clip.bin").c_str()) < 0) return -1;
@@ -308,12 +321,12 @@ ncnn::Mat PromptSlover::get_conditioning(string& prompt)
 
 class DiffusionSlover {
 public:
-    int load(const string& dir) {
+    int load(const string& dir, bool useGpu = false) {
         ncnn::set_cpu_powersave(2);
         ncnn::set_omp_num_threads(ncnn::get_big_cpu_count());
 
         net.opt.lightmode = true;
-        net.opt.use_vulkan_compute = false;
+        net.opt.use_vulkan_compute = useGpu;
         net.opt.use_winograd_convolution = false;
         net.opt.use_sgemm_convolution = false;
         net.opt.use_fp16_packed = true;
@@ -321,6 +334,12 @@ public:
         net.opt.use_fp16_arithmetic = true;
         net.opt.use_packing_layout = true;
         net.opt.num_threads = ncnn::get_big_cpu_count();
+        if (useGpu)
+        {
+#if NCNN_VULKAN
+            net.set_vulkan_device(ncnn::get_default_gpu_index());
+#endif
+        }
 
         if (net.load_param((dir + "/unet.param").c_str()) < 0) return -1;
         if (net.load_model((dir + "/unet.bin").c_str()) < 0) return -1;
@@ -560,12 +579,12 @@ ncnn::Mat DiffusionSlover::sampler_txt2img(int seed, int step, ncnn::Mat& c, ncn
 
 class DecodeSlover {
 public:
-    int load(const string& dir) {
+    int load(const string& dir, bool useGpu = false) {
         ncnn::set_cpu_powersave(0);
         ncnn::set_omp_num_threads(ncnn::get_big_cpu_count());
 
         net.opt.lightmode = true;
-        net.opt.use_vulkan_compute = false;
+        net.opt.use_vulkan_compute = useGpu;
         net.opt.use_winograd_convolution = false;
         net.opt.use_sgemm_convolution = false;
         net.opt.use_fp16_packed = true;
@@ -573,6 +592,12 @@ public:
         net.opt.use_fp16_arithmetic = true;
         net.opt.use_packing_layout = true;
         net.opt.num_threads = ncnn::get_big_cpu_count();
+        if (useGpu)
+        {
+#if NCNN_VULKAN
+            net.set_vulkan_device(ncnn::get_default_gpu_index());
+#endif
+        }
 
         if (net.load_param((dir + "/vae.param").c_str()) < 0) return -1;
         if (net.load_model((dir + "/vae.bin").c_str()) < 0) return -1;
@@ -610,12 +635,55 @@ static PromptSlover prompt_slover;
 static DiffusionSlover diffusion_slover;
 static DecodeSlover decode_slover;
 static string loaded_dir;
+static bool gpu_instance_created = false;
+static bool loaded_on_gpu = false;
+
+// True when this ncnn build has Vulkan compute and the phone exposes a device.
+static bool gpu_available()
+{
+#if NCNN_VULKAN
+    return ncnn::get_gpu_count() > 0;
+#else
+    return false;
+#endif
+}
+
+// Loads all three networks on one compute path; on any failure leaves them unloaded.
+static int load_all(const string& d, bool useGpu)
+{
+    if (prompt_slover.load(d, useGpu) != 0) { prompt_slover.unload(); return -1; }
+    if (diffusion_slover.load(d, useGpu) != 0)
+    {
+        decode_slover.unload();
+        diffusion_slover.unload();
+        prompt_slover.unload();
+        return -1;
+    }
+    if (decode_slover.load(d, useGpu) != 0)
+    {
+        decode_slover.unload();
+        diffusion_slover.unload();
+        prompt_slover.unload();
+        return -1;
+    }
+    return 0;
+}
+
+static void unload_all()
+{
+    decode_slover.unload();
+    diffusion_slover.unload();
+    prompt_slover.unload();
+    loaded_dir.clear();
+}
 
 // --------------------------------------------------------------------------- JNI layer ---
 
 extern "C" {
 
 // Loads the CLIP + UNet + VAE weights from [modelDir] (about 2 GB of RAM once loaded).
+// Tries the GPU (Vulkan compute) first; a missing device or a failed weight load there
+// falls back to the CPU path of the original engine. [onGpu()] reports which one won.
 JNIEXPORT jboolean JNICALL
 Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir)
 {
@@ -624,42 +692,66 @@ Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir)
     env->ReleaseStringUTFChars(jdir, dir);
 
     // Re-init for another directory starts from scratch (weights do not fit twice).
-    if (!loaded_dir.empty()) {
-        decode_slover.unload();
-        diffusion_slover.unload();
-        prompt_slover.unload();
-        loaded_dir.clear();
-    }
+    if (!loaded_dir.empty()) unload_all();
 
-    if (prompt_slover.load(d) != 0) {
-        prompt_slover.unload();
-        return JNI_FALSE;
+    bool ok = false;
+    if (gpu_available())
+    {
+        if (ncnn::create_gpu_instance() == 0)
+        {
+            gpu_instance_created = true;
+            ok = load_all(d, true) == 0;
+            if (!ok)
+            {
+                LOG("GPU init failed, falling back to the CPU");
+                ncnn::destroy_gpu_instance();
+                gpu_instance_created = false;
+            }
+        }
+        else
+        {
+            LOG("Vulkan instance creation failed, staying on the CPU");
+        }
     }
-    if (diffusion_slover.load(d) != 0) {
-        decode_slover.unload();
-        diffusion_slover.unload();
-        prompt_slover.unload();
-        return JNI_FALSE;
+    if (ok)
+    {
+        loaded_on_gpu = true;
+        LOG("initialized from %s on the GPU", d.c_str());
     }
-    if (decode_slover.load(d) != 0) {
-        decode_slover.unload();
-        diffusion_slover.unload();
-        prompt_slover.unload();
-        return JNI_FALSE;
+    else
+    {
+        loaded_on_gpu = false;
+        if (load_all(d, false) != 0)
+        {
+            unload_all();
+            return JNI_FALSE;
+        }
+        LOG("initialized from %s on the CPU", d.c_str());
     }
     loaded_dir = d;
-    LOG("initialized from %s", d.c_str());
     return JNI_TRUE;
 }
 
 JNIEXPORT void JNICALL
 Java_com_sebialex_agent_sdncnn_SdNcnn_close(JNIEnv*, jclass)
 {
-    decode_slover.unload();
-    diffusion_slover.unload();
-    prompt_slover.unload();
-    loaded_dir.clear();
+    unload_all();
+    loaded_on_gpu = false;
+#if NCNN_VULKAN
+    if (gpu_instance_created)
+    {
+        ncnn::destroy_gpu_instance();
+        gpu_instance_created = false;
+    }
+#endif
     LOG("closed");
+}
+
+// True while the loaded weights run on the GPU (Vulkan) rather than the CPU.
+JNIEXPORT jboolean JNICALL
+Java_com_sebialex_agent_sdncnn_SdNcnn_onGpu(JNIEnv*, jclass)
+{
+    return loaded_on_gpu ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
@@ -714,6 +806,11 @@ Java_com_sebialex_agent_sdncnn_SdNcnn_txt2img(JNIEnv* env, jclass,
     if (sample.empty()) return nullptr;
 
     ncnn::Mat x_samples_ddim = decode_slover.decode(sample);
+    if (x_samples_ddim.empty() || x_samples_ddim.w <= 0 || x_samples_ddim.h <= 0)
+    {
+        LOG("decoding produced no pixels");
+        return nullptr;
+    }
 
     // [0, 255] RGBA bytes.
     int w = x_samples_ddim.w, h = x_samples_ddim.h;
