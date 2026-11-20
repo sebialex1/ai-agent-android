@@ -204,4 +204,17 @@ class TurnSectionsTest {
     private val allow = object : ApprovalGate {
         override suspend fun request(request: ApprovalRequest) = true
     }
+
+    @Test
+    fun stepReadoutNamesTheEngineStartBeforeTheFirstStep() {
+        assertTrue(
+            "step 0 shows starting the engine readout",
+            com.sebialex.agent.ui.chat.stepReadout(com.sebialex.agent.domain.tools.ImageGenStep(0, 20)) == "starting the engine\u2026",
+        )
+        assertTrue(
+            "real steps show the counter",
+            com.sebialex.agent.ui.chat.stepReadout(com.sebialex.agent.domain.tools.ImageGenStep(3, 20)) == "step 3/20",
+        )
+        assertTrue("no progress reads as nothing", com.sebialex.agent.ui.chat.stepReadout(null).isEmpty())
+    }
 }

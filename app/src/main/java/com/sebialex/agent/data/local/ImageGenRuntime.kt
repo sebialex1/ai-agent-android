@@ -57,25 +57,7 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
         // abort that cannot be caught: refuse readable first, from [MemoryInfo].
         lowMemory()?.let { throw IOException(it) }
         try {
-            val generator = loadedOrOpen(modelDir)
-            // The step loop is MediaPipe's own one-shot generate() written out: setInputs() then
-            // exactly `steps` calls to execute() — its documented contract (visible in the AAR's
-            // bytecode: execute() advances a per-inputs step counter and, after the final one,
-            // resets it), with the last call returning the final image. Same packets, same
-            // picture as before; only now each step reports itself, so the chat can show
-            // "step n/20" while it works.
-            generator.setInputs(prompt, steps, seed)
-            var result: com.google.mediapipe.tasks.vision.imagegenerator.ImageGeneratorResult? = null
-            for (step in 1..steps) {
-                // Intermediate steps ask the engine for the half-drawn picture (showResult) so
-                // the chat can show it growing; the final step returns the finished image either
-                // way — MediaPipe's own one-shot generate() runs every step with showResult
-                // false, so the last call here is exactly its last step.
-                val isLast = step == steps
-                result = generator.execute(!isLast)
-                if (!isLast) onStep(step, steps, preview(result)) else onStep(step, steps, null)
-            }
-            val final = result ?: throw IOException("the image engine returned no image")
+            val final = generated(modelDir, prompt, steps, seed, onStep)
             png(final.generatedImage())
         } catch (e: IOException) {
             throw e
@@ -86,7 +68,51 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
         }
     }
 
-    /** The step's half-drawn picture as JPEG bytes, or null when the engine gave none this step. */
+    /**
+     * The step loop: MediaPipe's own one-shot generate() written out — setInputs() then exactly
+     * `steps` calls to execute() (its documented contract, verified in the AAR's bytecode:
+     * execute() advances a per-inputs step counter and, after the final one, resets it), with
+     * the last call returning the final image. Every third step also asks for the half-drawn
+     * picture (showResult) — the chat shows it growing. If the iteration API itself fails
+     * before the first step finished, a fresh engine falls back to the one-shot generate():
+     * the picture still happens, just without the step readout.
+     */
+    private fun generated(
+        modelDir: File,
+        prompt: String,
+        steps: Int,
+        seed: Int,
+        onStep: (step: Int, total: Int, preview: ByteArray?) -> Unit,
+    ): com.google.mediapipe.tasks.vision.imagegenerator.ImageGeneratorResult {
+        var generator = loadedOrOpen(modelDir)
+        var stepsDone = 0
+        try {
+            generator.setInputs(prompt, steps, seed)
+            var result: com.google.mediapipe.tasks.vision.imagegenerator.ImageGeneratorResult? = null
+            for (step in 1..steps) {
+                // MediaPipe's own one-shot generate() runs every step with showResult false, so
+                // the last call here — and the step counter it advances — is exactly its last
+                // step.
+                val isLast = step == steps
+                result = generator.execute(!isLast && step % PREVIEW_EVERY == 0)
+                stepsDone = step
+                if (!isLast) onStep(step, steps, preview(result)) else onStep(step, steps, null)
+            }
+            return result ?: throw IOException("the image engine returned no image")
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Throwable) {
+            if (stepsDone == 0 && generator !== loaded?.second) throw e
+            if (stepsDone == 0) {
+                // The engine state after a failed first step is not known safe: rebuild it.
+                runCatching { generator.close() }
+                loaded = null
+                generator = loadedOrOpen(modelDir)
+                return generator.generate(prompt, steps, seed)
+            }
+            throw e
+        }
+    }
     private fun preview(result: com.google.mediapipe.tasks.vision.imagegenerator.ImageGeneratorResult?): ByteArray? {
         val image = result?.generatedImage() ?: return null
         return try {
@@ -148,5 +174,8 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
     private companion object {
         /** Weights + activations + the OS's idea of a working phone; a floor, not a guarantee. */
         val MIN_AVAIL_BYTES = 2_800L * 1024 * 1024
+
+        /** A half-drawn picture is asked for every Nth step (Google's own sample does every 5th). */
+        const val PREVIEW_EVERY = 3
     }
 }

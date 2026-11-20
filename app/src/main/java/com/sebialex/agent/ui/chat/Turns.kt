@@ -633,7 +633,7 @@ private fun StepRow(
         val drawing = running && imageStep != null && step.tool == "generate_image"
         if (drawing) {
             Text(
-                "step ${imageStep.step}/${imageStep.total}",
+                stepReadout(imageStep),
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
                 modifier = Modifier.padding(start = 34.dp, bottom = 6.dp),
@@ -648,6 +648,15 @@ private fun StepRow(
         }
     }
 }
+
+/**
+ * The live on-device image-engine readout: "starting the engine…" while the weights load and the
+ * GPU graph compiles (step 0), then "step n/N" once diffusion steps actually flow.
+ */
+internal fun stepReadout(imageStep: com.sebialex.agent.domain.tools.ImageGenStep?): String =
+    if (imageStep == null) ""
+    else if (imageStep.step <= 0) "starting the engine\u2026"
+    else "step ${imageStep.step}/${imageStep.total}"
 
 /** What a step did, in words: "Generating image" while it runs, "Generated image" once it is done. */
 internal fun stepLabel(step: Step): String {
@@ -813,7 +822,7 @@ private fun GeneratedImageBody(
         )
         if (running && imageStep != null) {
             Text(
-                "step ${imageStep.step}/${imageStep.total} \u00b7 drawing",
+                "${stepReadout(imageStep)} \u00b7 drawing",
                 style = MaterialTheme.typography.labelSmall,
                 color = Palette.TextTertiary,
                 modifier = Modifier.padding(top = 4.dp),
