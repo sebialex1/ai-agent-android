@@ -82,7 +82,13 @@ class AgentOrchestrator(
     private val userProfile: () -> String = { "" },
     /** Learning about the user is on for this conversation: the user_memory tool is offered. */
     private val userMemoryTool: () -> Boolean = { false },
-    private val maxSteps: Int = 30,
+    /**
+     * Tool-call budget for one turn; 0 (the default) means none — the main agent runs as long
+     * as it makes progress and the model is told nothing about a budget. Only bounded callers
+     * (subagent children, [SubagentRuns.CHILD_MAX_STEPS]) pass a number, so a spawned run can
+     * never spin away without a parent watching.
+     */
+    private val maxSteps: Int = 0,
     /** Where spawn_subagent gets its children; null when this orchestrator cannot start any. */
     private val subagents: Subagents? = null,
 ) {
@@ -149,7 +155,7 @@ class AgentOrchestrator(
                 )
             }
 
-            while (executed < maxSteps) {
+            while (maxSteps <= 0 || executed < maxSteps) {
                 val memory = memoryEnabled()
                 // One text block per model call: the narration streamed before this call's tool
                 // calls stays where it happened, and the next call writes below it.
@@ -168,6 +174,7 @@ class AgentOrchestrator(
                     subagentModels = if (isChild) emptyList() else subagents?.models().orEmpty(),
                     runId = runId,
                     stepsUsed = executed,
+                    // 0 = no limit: the prompt then carries no step-budget line at all.
                     stepBudget = maxSteps,
                     customPrompt = customPrompt(),
                     userProfile = userProfile(),
