@@ -136,7 +136,7 @@ class LocalBrain(
             usage = built.promptChars
         }
         val reply = try {
-            stream(conversation, message, mapOf(ENABLE_THINKING to (loaded.thinking && thinking())), onReasoning, ctx.onContent, ctx.onProgress, budget.answerTokens * 4)
+            stream(conversation, message, mapOf(ENABLE_THINKING to (loaded.thinking && thinking())), onReasoning, ctx.onContent)
         } catch (t: Throwable) {
             // An error or Stop ends the turn's use of the conversation.
             session.closeRun(run)
@@ -169,11 +169,10 @@ class LocalBrain(
 
     /**
      * Sends [message] and collects the streamed answer. Thought-channel deltas go to
-     * [onReasoning] live, answer-text deltas to [onContent] (fragments, like every other brain)
-     * so the chat shows the answer as it is generated, and [onProgress] a percent of the reply
-     * budget [answerBudgetChars] the text has used so far. When the caller is cancelled (Stop),
-     * the native decode is cancelled and awaited before the conversation is closed, so no native
-     * work outlives it.
+     * [onReasoning] live and answer-text deltas to [onContent] (fragments, like every other
+     * brain) so the chat shows the answer as it is generated. When the caller is cancelled
+     * (Stop), the native decode is cancelled and awaited before the conversation is closed, so
+     * no native work outlives it.
      */
     private suspend fun stream(
         conversation: LmConversation,
@@ -181,8 +180,6 @@ class LocalBrain(
         extraContext: Map<String, Any>,
         onReasoning: (String) -> Unit,
         onContent: (String) -> Unit,
-        onProgress: (Int) -> Unit,
-        answerBudgetChars: Int,
     ): Reply {
         val lock = Any()
         val text = StringBuilder()
@@ -202,9 +199,6 @@ class LocalBrain(
                             if (content is Content.Text && content.text.isNotEmpty()) {
                                 text.append(content.text)
                                 runCatching { onContent(content.text) }
-                                // A rough percent of the reply budget this text already uses
-                                // (about 4 characters per token), never quite full.
-                                runCatching { onProgress((text.length * 100 / answerBudgetChars).coerceIn(0, 99)) }
                             }
                         }
                         calls.addAll(message.toolCalls)

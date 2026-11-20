@@ -319,6 +319,31 @@ fun ChatScreen(
         androidx.compose.runtime.LaunchedEffect(turns, state.queued) {
             if (pinned && !listState.isScrollInProgress) listState.scrollToItem(0)
         }
+        // And when the user scrolled away to read, the growing newest item must not move their
+        // reading position either: each frame, an older (never-changing) visible item is the
+        // reference; if the new lines below it pushed it up/down, the exact shift is scrolled
+        // straight back. At the newest message, the newest item IS the reference point here and
+        // its own growth (its top stays, lines append below) is a no-op for visible offsets.
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            var refIndex = Int.MIN_VALUE
+            var refOffset = 0
+            androidx.compose.runtime.snapshotFlow { listState.layoutInfo }.collect { info ->
+                val oldest = info.visibleItemsInfo.maxByOrNull { it.index }
+                val ref = if (listState.canScrollBackward && oldest != null && !listState.isScrollInProgress) {
+                    oldest.index to oldest.offset
+                } else null
+                if (ref != null && !listState.isScrollInProgress) {
+                    if (ref.first == refIndex) {
+                        val shift = refOffset - ref.second // >0: content was pushed up
+                        if (kotlin.math.abs(shift) > 1) listState.dispatchRawDelta(shift.toFloat())
+                    }
+                    refIndex = ref.first
+                    refOffset = ref.second
+                } else {
+                    refIndex = Int.MIN_VALUE
+                }
+            }
+        }
         // Jump back to the newest message when the user scrolled up reading history. The list is
         // reverse-laid out (newest at the bottom), so content toward the newest is "backward".
         // Far back the animated fly-through is just slow: jump straight there instead.
@@ -357,9 +382,8 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
             )
         }
-        // What the on-device model is doing right now (loading/answering), as small gray text
-        // above the input; a cloud turn shows nothing.
-        EngineStatusLine(state.running, state.progress, engineState, engine::lastLoadMillis)
+        // The on-device model loading, as small gray text above the input; a cloud turn shows nothing.
+        EngineStatusLine(state.running, engineState, engine::lastLoadMillis)
         // Discord-style `:code` suggestions: a tall one-line bubble above the input while a
         // code is being typed; picking one inserts the emoji, a closed `:code:` parses itself.
         val emoji = activeEmoji(input)

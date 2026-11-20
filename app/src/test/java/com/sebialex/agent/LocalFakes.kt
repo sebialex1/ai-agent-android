@@ -154,6 +154,9 @@ class FakeLmConversation(
                 val channels = if (i == 0 && script.thought.isNotEmpty()) mapOf("thought" to script.thought) else emptyMap()
                 callback.onMessage(Message.model(contents = Contents.of(chunk), channels = channels))
             }
+            if (script.calls.isNotEmpty()) {
+                callback.onMessage(Message.model(toolCalls = script.calls.map { (name, args) -> ToolCall(name, args) }))
+            }
             callback.onDone()
             return
         }

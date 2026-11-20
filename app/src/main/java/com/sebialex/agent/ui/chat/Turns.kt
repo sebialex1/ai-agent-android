@@ -1019,25 +1019,19 @@ private fun SourceCluster(sources: List<SourceRef>, onOpen: (SourceRef) -> Unit,
 }
 
 /**
- * The on-device model working, as small gray text right where the send happens: "loading Gemma 2B
- * · 43%" while the engine loads, "processing message · 27%" while it answers. The loading percent
- * is an honest estimate — LiteRT-LM exposes no load progress, so it is elapsed time against the
- * model's own last successful load (or no percent at all for a model's first load today); the
- * processing percent is the share of the reply budget the streamed text already uses. Only the
- * on-device model has either; cloud turns simply never show this line.
+ * The on-device model loading, as small gray text right where the send happens: "loading Gemma
+ * 2B · 43%". The loading percent is an honest estimate — LiteRT-LM exposes no load progress, so
+ * it is elapsed time against the model's own last successful load (or no percent at all for a
+ * model's first load today). Only the on-device model loads anything; cloud turns never show
+ * this line. The generated answer itself needs no status: it streams into the chat live.
  */
 @Composable
 fun EngineStatusLine(
     running: Boolean,
-    progress: Int?,
     engineState: com.sebialex.agent.data.local.EngineState,
     lastLoadMillis: (modelId: String) -> Long?,
 ) {
     if (!running) return
-    if (progress != null) {
-        StatusText("processing message · $progress%")
-        return
-    }
     val loading = engineState as? com.sebialex.agent.data.local.EngineState.Loading ?: return
     // Ticking recomposition while this load lasts, so the percent/elapsed advances; keyed by the
     // load's start, so it never runs for a finished load.

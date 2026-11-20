@@ -16,10 +16,10 @@ import java.io.File
 
 /**
  * The on-device brain streams its answer live: text deltas reach the chat while the decode runs
- * (BrainContext.onContent, fragment semantics like every other brain) and each callback also
- * reports a rough percent of the reply budget the text has used so far (BrainContext.onProgress).
- * Everything runs against [FakeLmRuntime]; the fake's chunked script delivers the answer delta by
- * delta, exactly what the native MessageCallback does during a real decode.
+ * (BrainContext.onContent, fragment semantics like every other brain) instead of appearing only
+ * when the whole answer is done. Everything runs against [FakeLmRuntime]; the fake's chunked
+ * script delivers the answer delta by delta, exactly what the native MessageCallback does during
+ * a real decode.
  */
 class LocalStreamingTest {
 
@@ -45,38 +45,45 @@ class LocalStreamingTest {
         fun brain() = com.sebialex.agent.data.local.LocalBrain(engine, model.id, { model }, { false })
     }
 
-    private fun ctx(
-        fragments: MutableList<String> = mutableListOf(),
-        pcts: MutableList<Int> = mutableListOf(),
-    ) = BrainContext(
-        "say hello", emptyList(), emptyList(), emptyList(),
-        onContent = { fragments += it },
-        onProgress = { pcts += it },
-    )
-
     @Test
     fun localAnswersArriveLiveDeltaByDeltaNotOnlyAtTheEnd() = runBlocking {
         val f = Fixture { _, _ -> LocalFakes.Script(chunks = listOf("Hel", "lo ", "world!")) }
         val fragments = mutableListOf<String>()
-        val pcts = mutableListOf<Int>()
-        val decision = f.brain().next(ctx(fragments, pcts))
+        val decision = f.brain().next(BrainContext("say hello", emptyList(), emptyList(), emptyList(), runId = "run-1", onContent = { fragments += it }))
         // The full answer was streamed out as fragments while the decode ran, in order.
         assertEquals(listOf("Hel", "lo ", "world!"), fragments)
         // The final decision matches what was streamed: the chat is never told twice.
         val answer = decision as BrainDecision.Answer
         assertEquals("Hello world!", answer.text)
         assertTrue(answer.thought == null)
-        // And nothing is left over in the fake's pending state.
+        // And only one send ever reached the fake conversation.
         assertEquals(1, f.runtime.conversations.single().sent.size)
     }
 
     @Test
-    fun streamingAlsoReportsARoughPercentOfTheReplyBudget() = runBlocking {
-        val f = Fixture { _, _ -> LocalFakes.Script(chunks = listOf("a".repeat(1024), "b".repeat(1024), "c".repeat(300))) }
-        val pcts = mutableListOf<Int>()
-        f.brain().next(ctx(pcts = pcts))
-        // The context is 4096, so the reply budget is (4096/8)*4 = 2048 characters: 1024 chars is
-        // 50%, 2048 caps near-full. Never 100 — the text can always keep growing.
-        assertEquals(listOf(50, 99, 99), pcts)
+    fun streamingAlsoCoversToolCallStepsBetweenTheTexts() = runBlocking {
+        // A turn that calls a tool between two texts still streams each text live.
+        val f = Fixture { conversation, send ->
+            if (conversation == 0 && send == 0) LocalFakes.Script(chunks = listOf("let me check", " the files "), calls = listOf("list_files" to mapOf("path" to "/")))
+            else LocalFakes.Script(chunks = listOf("two", " files"))
+        }
+        val fragments = mutableListOf<String>()
+        val first = f.brain().next(BrainContext("list them", emptyList(), emptyList(), emptyList(), runId = "run-1", onContent = { fragments += it }))
+        assertTrue(first is BrainDecision.Act)
+        assertEquals(listOf("let me check", " the files "), fragments)
+        fragments.clear()
+        val second = f.brain().next(
+            BrainContext(
+                "list them", emptyList(),
+                listOf(com.sebialex.agent.domain.agent.Observation(
+                    com.sebialex.agent.domain.model.ToolCall.ListFiles("local_1", "/"),
+                    com.sebialex.agent.domain.model.ToolResult("local_1", true, "2 files"), 0,
+                )),
+                emptyList(), runId = "run-1", onContent = { fragments += it },
+            ),
+        )
+        val answer = second as BrainDecision.Answer
+        assertEquals("two files", answer.text)
+        assertEquals(listOf("two", " files"), fragments)
     }
 }

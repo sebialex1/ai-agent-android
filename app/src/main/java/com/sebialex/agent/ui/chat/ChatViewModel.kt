@@ -42,11 +42,6 @@ data class ChatUiState(
     val queued: List<QueuedMessage> = emptyList(),
     /** The agent asked a question (ask_user) and waits: its id. The input bar then answers it. */
     val askingId: String? = null,
-    /**
-     * An on-device answer in flight: a rough percent of its reply budget already generated.
-     * Null for cloud models (they have no such signal) and whenever nothing runs.
-     */
-    val progress: Int? = null,
 )
 
 /** A workspace file offered by the @-mention popup. [path] is relative to /workspace. */
@@ -92,8 +87,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     private var revealing: Set<String> = emptySet()
     /** Turns whose answer streamed in live, so they are never typewritten afterwards. */
     private val streamed = HashSet<String>()
-    /** Live decode progress of the running on-device turn, per conversation; cleared when the turn ends. */
-    private val progressBySession = HashMap<String, Int>()
 
     private val _state = MutableStateFlow(ChatUiState(Session(currentId, "", emptyList(), 0)))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -430,12 +423,7 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                 streamed += turnId
                 mutateTurn(sessionId, turnId) { it.copy(text = event.text, blocks = upsertBlock(it.blocks, event.block, event.text, event.at)) }
             }
-            is AgentEvent.Progress -> {
-                progressBySession[sessionId] = event.percent.coerceIn(0, 99)
-                if (sessionId == currentId) publish()
-            }
             is AgentEvent.Finished -> {
-                progressBySession.remove(sessionId)
                 onAnswerReceived(sessionId, turnId)
                 mutateTurn(sessionId, turnId) {
                     // The final answer becomes (or overwrites) its call's block, so even a
@@ -471,7 +459,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
      * the second call finds nothing left to do, and never touches a newer run of the chat.
      */
     private fun finishIfIncomplete(sessionId: String, run: Run) {
-        progressBySession.remove(sessionId)
         val turn = cache[sessionId]?.turns?.firstOrNull { it.id == run.turnId }
         if (turn != null && !turn.complete) {
             mutateTurn(sessionId, run.turnId) { TurnStop.stopped(it, System.currentTimeMillis()) }
@@ -739,7 +726,6 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             revealing = revealing,
             queued = queues[currentId].orEmpty(),
             askingId = run?.takeIf { !it.stopped }?.questionId,
-            progress = progressBySession[currentId]?.takeIf { run != null && !run.stopped },
         )
         cache.values.filter { it.turns.isNotEmpty() }.forEach { s ->
             summaries[s.id] = SessionSummary(s.id, s.title, s.updatedAt, s.turns.size, s.pinned)

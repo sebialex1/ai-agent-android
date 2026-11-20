@@ -43,12 +43,6 @@ sealed interface AgentEvent {
         val at: Long = 0,
     ) : AgentEvent
 
-    /**
-     * The on-device model is answering: a rough percent (0..99) of its reply budget consumed by
-     * the text so far. Never sent for cloud models, so the chat only shows it where it exists.
-     */
-    data class Progress(val percent: Int) : AgentEvent
-
     /** preview_webapp: a web app is ready to preview (a card in the answer). */
     data class PreviewReady(val preview: com.sebialex.agent.domain.model.WebPreview) : AgentEvent
 
@@ -167,7 +161,6 @@ class AgentOrchestrator(
                 val answer = StringBuilder()
                 var lastContent = 0L
                 var contentSent = false
-                var lastProgress = 0L
                 val ctx = BrainContext(
                     modelTask, history, observations.toList(), workspaceFiles(), thoughts.toMap(), memoryTool = memory, images = images,
                     todos = chat.todos(),
@@ -188,15 +181,6 @@ class AgentOrchestrator(
                                 lastContent = t
                                 trySend(AgentEvent.ContentDelta(answer.toString(), blockId, requestedAt))
                             }
-                        }
-                    },
-                    onProgress = { pct ->
-                        // Throttled like the content deltas; the finished answer always arrives,
-                        // so a dropped intermediate percent is harmless.
-                        val t = now()
-                        if (t - lastProgress >= LIVE_THROTTLE_MS) {
-                            lastProgress = t
-                            trySend(AgentEvent.Progress(pct))
                         }
                     },
                 )
