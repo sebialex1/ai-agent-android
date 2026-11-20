@@ -33,6 +33,11 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
 
     @Volatile
     private var crashed = false
+
+    /** True when the failure this [ask] is about was a process death, not a reply. */
+    @Volatile
+    private var crashedHere = false
+
     private var replyLatch: CountDownLatch? = null
 
     @Volatile
@@ -87,6 +92,19 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
         // Which engine the service will pick (same rule it applies, see [ImageGenService]):
         // the watchdog's error texts name the right culprit for each.
         val ncnn = File(modelDir, "unet.param").isFile
+        return try {
+            runLocked(ncnn, modelDir, prompt, steps, seed)
+        } catch (e: IOException) {
+            // A first native death is almost always the engine's first Vulkan attempt (GPU
+            // drivers on some phones abort right in the load). One retry against the restarted
+            // process — it reads the crash memo ([NcnnGpuMemo], written below by [ask]) and
+            // loads on the CPU straight away; only a second failure surfaces as an error.
+            if (!ncnn || !crashedHere) throw e
+            runLocked(ncnn, modelDir, prompt, steps, seed)
+        }
+    }
+
+    private fun runLocked(ncnn: Boolean, modelDir: File, prompt: String, steps: Int, seed: Int): ByteArray {
         bind()
         val out = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/result.png")
         val preview = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/preview.jpg")
@@ -159,6 +177,7 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
         lastStep = 0
         lastStepAt = 0L
         reply = null
+        crashedHere = false
         val latch = CountDownLatch(1)
         synchronized(this) { replyLatch = latch }
         try {
@@ -170,9 +189,15 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
                 throw IOException("Could not reach the image engine: ${it.message ?: it.javaClass.simpleName}")
             }
             while (true) {
-                // onServiceDisconnected counts the same latch down; a crash shows up here.
-                if (latch.await(WATCHDOG_SLICE_MS, TimeUnit.MILLISECONDS)) break
+                // onServiceDisconnected counts the same latch down; check [crashed] BEFORE
+                // the break, or a native death would end the wait like a successful reply and
+                // come back as "answered with nothing" instead of the readable crash error.
+                val wokeUp = latch.await(WATCHDOG_SLICE_MS, TimeUnit.MILLISECONDS)
                 if (crashed) {
+                    if (ncnn) {
+                        NcnnGpuMemo.mark(context)
+                        crashedHere = true
+                    }
                     throw IOException(
                         if (ncnn) "The on-device image engine crashed — this phone cannot run it " +
                             "(its GPU driver refused, and the CPU fallback did not finish either). " +
@@ -180,6 +205,7 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
                         else "The image engine crashed — this phone's GPU probably cannot run it (MediaPipe ships no CPU mode for it). Pick a cloud image model in Settings > Models.",
                     )
                 }
+                if (wokeUp) break
                 // Any event (a step, or the engine's "still starting" heartbeat) proves life:
                 // the silence clock restarts from the last one, not from the request.
                 val silentFor = System.currentTimeMillis() - (if (lastStep > 0) lastStepAt else maxOf(startedAt, lastStepAt))

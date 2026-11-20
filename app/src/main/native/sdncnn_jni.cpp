@@ -13,8 +13,9 @@
  * fp16-packed arithmetic is fast enough on recent flagships). We additionally try the GPU
  * first when the phone exposes a Vulkan compute device: ncnn speaks Vulkan compute, a
  * completely different driver path from the OpenCL one MediaPipe's engine fails on
- * (Xclipse 920 clCreateImage). If the Vulkan device is missing or the weights fail to load
- * on it, init falls back to the exact CPU path of the original; nothing else changes.
+ * (Xclipse 920 clCreateImage). The GPU attempt is bounded: some drivers hang forever inside
+ * device/pipeline setup, so it runs on a worker thread and init waits at most [gpuTimeoutMs]
+ * before detaching it and taking the exact CPU path of the original; nothing else changes.
  */
 
 #include <jni.h>
@@ -30,6 +31,11 @@
 #include <fstream>
 #include <algorithm>
 #include <regex>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 
 #include "net.h"
 #include "cpu.h"
@@ -631,12 +637,23 @@ private:
 
 // ------------------------------------------------------------------------------- state ---
 
-static PromptSlover prompt_slover;
-static DiffusionSlover diffusion_slover;
-static DecodeSlover decode_slover;
+// The three networks live behind pointers so a bounded GPU attempt can load its own private
+// copies on its worker thread; only a completed attempt moves them into view (see below).
+static std::unique_ptr<PromptSlover> prompt_slover;
+static std::unique_ptr<DiffusionSlover> diffusion_slover;
+static std::unique_ptr<DecodeSlover> decode_slover;
 static string loaded_dir;
 static bool gpu_instance_created = false;
 static bool loaded_on_gpu = false;
+
+// Once a Vulkan attempt failed or timed out in this process, later inits skip it.
+static bool gpu_failed = false;
+
+// init() result codes, mirrored by SdNcnn.INIT_* on the Kotlin side.
+static const int SD_INIT_ON_GPU = 0;
+static const int SD_INIT_ON_CPU = 1;
+static const int SD_INIT_GPU_TIMED_OUT = 2;
+static const int SD_INIT_FAILED = 3;
 
 // True when this ncnn build has Vulkan compute and the phone exposes a device.
 static bool gpu_available()
@@ -648,32 +665,78 @@ static bool gpu_available()
 #endif
 }
 
-// Loads all three networks on one compute path; on any failure leaves them unloaded.
-static int load_all(const string& d, bool useGpu)
+// Loads all three networks on one compute path into fresh instances handed out through
+// [p]/[df]/[dec]; on any failure leaves them empty again (the already-loaded ones are freed).
+static int load_all(const string& d, bool useGpu,
+                    std::unique_ptr<PromptSlover>& p,
+                    std::unique_ptr<DiffusionSlover>& df,
+                    std::unique_ptr<DecodeSlover>& dec)
 {
-    if (prompt_slover.load(d, useGpu) != 0) { prompt_slover.unload(); return -1; }
-    if (diffusion_slover.load(d, useGpu) != 0)
-    {
-        decode_slover.unload();
-        diffusion_slover.unload();
-        prompt_slover.unload();
-        return -1;
-    }
-    if (decode_slover.load(d, useGpu) != 0)
-    {
-        decode_slover.unload();
-        diffusion_slover.unload();
-        prompt_slover.unload();
-        return -1;
-    }
+    p = std::make_unique<PromptSlover>();
+    df = std::make_unique<DiffusionSlover>();
+    dec = std::make_unique<DecodeSlover>();
+    if (p->load(d, useGpu) != 0) { p.reset(); df.reset(); dec.reset(); return -1; }
+    if (df->load(d, useGpu) != 0) { p.reset(); df.reset(); dec.reset(); return -1; }
+    if (dec->load(d, useGpu) != 0) { p.reset(); df.reset(); dec.reset(); return -1; }
     return 0;
+}
+
+// Chases the GPU path inside a worker thread for at most [timeoutMs]; the driver's setup can
+// hang forever on phones with broken Vulkan and must cost less than the generation itself.
+// Returns 1 on success (the three loaded networks were moved into the static singletons),
+// 0 when the attempt failed on its own, -1 when the wait timed out (the worker is detached,
+// still loading into its private copy — it never touches what the CPU path will load).
+static int try_gpu_load(const string& d, int timeoutMs)
+{
+    struct Attempt
+    {
+        std::unique_ptr<PromptSlover> p;
+        std::unique_ptr<DiffusionSlover> df;
+        std::unique_ptr<DecodeSlover> dec;
+        int result = -1;
+        bool done = false;
+        std::mutex m;
+        std::condition_variable cv;
+    };
+    // shared_ptr: a detached worker may outlive this call entirely.
+    auto attempt = std::make_shared<Attempt>();
+
+    std::thread worker([attempt, d]() {
+        attempt->result = load_all(d, true, attempt->p, attempt->df, attempt->dec);
+        {
+            std::lock_guard<std::mutex> lk(attempt->m);
+            attempt->done = true;
+        }
+        attempt->cv.notify_one();
+        // On the timed-out path the caller went on without us; the private copies are freed
+        // right here when the thread ends.
+    });
+
+    bool finished = false;
+    int wait = timeoutMs < 5000 ? 5000 : timeoutMs;
+    {
+        std::unique_lock<std::mutex> lk(attempt->m);
+        finished = attempt->cv.wait_for(lk, std::chrono::milliseconds(wait),
+                                        [&] { return attempt->done; });
+    }
+    if (finished && attempt->result == 0)
+    {
+        worker.join();
+        prompt_slover = std::move(attempt->p);
+        diffusion_slover = std::move(attempt->df);
+        decode_slover = std::move(attempt->dec);
+        return 1;
+    }
+    LOG("GPU load %s after %d ms", finished ? "failed" : "timed out", wait);
+    worker.detach();
+    return finished ? 0 : -1;
 }
 
 static void unload_all()
 {
-    decode_slover.unload();
-    diffusion_slover.unload();
-    prompt_slover.unload();
+    decode_slover.reset();
+    diffusion_slover.reset();
+    prompt_slover.reset();
     loaded_dir.clear();
 }
 
@@ -682,10 +745,13 @@ static void unload_all()
 extern "C" {
 
 // Loads the CLIP + UNet + VAE weights from [modelDir] (about 2 GB of RAM once loaded).
-// Tries the GPU (Vulkan compute) first; a missing device or a failed weight load there
-// falls back to the CPU path of the original engine. [onGpu()] reports which one won.
-JNIEXPORT jboolean JNICALL
-Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir)
+// Tries the GPU (Vulkan compute) first when [preferGpu]; the attempt is bounded by
+// [gpuTimeoutMs] (the driver can hang) and a missing device, failed load, or timeout there
+// falls back to the CPU path of the original engine. Returns one of the SD_INIT_* codes;
+// [onGpu()] reports which path won afterwards.
+JNIEXPORT jint JNICALL
+Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir,
+                                           jboolean preferGpu, jint gpuTimeoutMs)
 {
     const char* dir = env->GetStringUTFChars(jdir, nullptr);
     string d = dir ? dir : "";
@@ -694,18 +760,24 @@ Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir)
     // Re-init for another directory starts from scratch (weights do not fit twice).
     if (!loaded_dir.empty()) unload_all();
 
-    bool ok = false;
-    if (gpu_available())
+    bool onGpu = false;
+    // -2 = never attempted (no preference, no device, or already failed once here);
+    // 1 = loaded, 0 = failed, -1 = timed out (see try_gpu_load).
+    int gpu = -2;
+    if (preferGpu == JNI_TRUE && !gpu_failed && gpu_available())
     {
         if (ncnn::create_gpu_instance() == 0)
         {
             gpu_instance_created = true;
-            ok = load_all(d, true) == 0;
-            if (!ok)
+            gpu = try_gpu_load(d, gpuTimeoutMs);
+            if (gpu == 1)
             {
-                LOG("GPU init failed, falling back to the CPU");
-                ncnn::destroy_gpu_instance();
-                gpu_instance_created = false;
+                onGpu = true;
+            }
+            else
+            {
+                gpu_failed = true;
+                LOG("GPU init %s, falling back to the CPU", gpu == -1 ? "timed out" : "failed");
             }
         }
         else
@@ -713,23 +785,32 @@ Java_com_sebialex_agent_sdncnn_SdNcnn_init(JNIEnv* env, jclass, jstring jdir)
             LOG("Vulkan instance creation failed, staying on the CPU");
         }
     }
-    if (ok)
+    if (onGpu)
     {
         loaded_on_gpu = true;
         LOG("initialized from %s on the GPU", d.c_str());
+        loaded_dir = d;
+        return SD_INIT_ON_GPU;
     }
-    else
+
+    loaded_on_gpu = false;
+    if (gpu_instance_created && gpu != -1)
     {
-        loaded_on_gpu = false;
-        if (load_all(d, false) != 0)
-        {
-            unload_all();
-            return JNI_FALSE;
-        }
-        LOG("initialized from %s on the CPU", d.c_str());
+        // After a plain failure the worker is gone; after a timeout it is still loading from
+        // its private copies and may still touch the instance — destroying it here would pull
+        // the ground from under that thread, so close() does it later instead.
+        ncnn::destroy_gpu_instance();
+        gpu_instance_created = false;
     }
+    if (load_all(d, false, prompt_slover, diffusion_slover, decode_slover) != 0)
+    {
+        unload_all();
+        return SD_INIT_FAILED;
+    }
+    LOG("initialized from %s on the CPU%s", d.c_str(),
+        gpu == -2 ? "" : (gpu == -1 ? " after a timed-out GPU attempt" : " after a failed GPU attempt"));
     loaded_dir = d;
-    return JNI_TRUE;
+    return (gpu == -1) ? SD_INIT_GPU_TIMED_OUT : SD_INIT_ON_CPU;
 }
 
 JNIEXPORT void JNICALL
@@ -791,21 +872,21 @@ Java_com_sebialex_agent_sdncnn_SdNcnn_txt2img(JNIEnv* env, jclass,
     string negative = n ? n : "";
     env->ReleaseStringUTFChars(jnegative, n);
 
-    if (loaded_dir.empty()) return nullptr;
+    if (loaded_dir.empty() || !prompt_slover || !diffusion_slover || !decode_slover) return nullptr;
     int step = jstep < 1 ? 1 : (jstep > 60 ? 60 : jstep);
 
-    ncnn::Mat cond = prompt_slover.get_conditioning(positive);
-    ncnn::Mat uncond = prompt_slover.get_conditioning(negative);
+    ncnn::Mat cond = prompt_slover->get_conditioning(positive);
+    ncnn::Mat uncond = prompt_slover->get_conditioning(negative);
 
     auto progress = [&](int done) -> bool {
         if (mid == nullptr) return true;
         return env->CallBooleanMethod(jprogress, mid, (jint)done) == JNI_TRUE;
     };
 
-    ncnn::Mat sample = diffusion_slover.sampler_txt2img(jseed, step, cond, uncond, mid ? progress : std::function<bool(int)>([](int) { return true; }));
+    ncnn::Mat sample = diffusion_slover->sampler_txt2img(jseed, step, cond, uncond, mid ? progress : std::function<bool(int)>([](int) { return true; }));
     if (sample.empty()) return nullptr;
 
-    ncnn::Mat x_samples_ddim = decode_slover.decode(sample);
+    ncnn::Mat x_samples_ddim = decode_slover->decode(sample);
     if (x_samples_ddim.empty() || x_samples_ddim.w <= 0 || x_samples_ddim.h <= 0)
     {
         LOG("decoding produced no pixels");

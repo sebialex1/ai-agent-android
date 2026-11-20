@@ -2,7 +2,9 @@ package com.sebialex.agent
 
 import com.sebialex.agent.data.local.ImageEngine
 import com.sebialex.agent.data.local.ImageModels
+import com.sebialex.agent.data.local.NcnnGpuMemo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -70,6 +72,37 @@ class ImageNcnnTest {
             }
         } finally {
             dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun gpuMemoExpiresAfterTwoDaysAndSkipsEverywhereBeforeThat() {
+        val memo = File.createTempFile("gpumemo", "tmp")
+        try {
+            val now = System.currentTimeMillis()
+            // The engine just wrote "the GPU attempt timed out": every generation for 48 h
+            // goes straight to the CPU instead of chasing the hung driver again.
+            memo.writeText(now.toString())
+            assertTrue("a fresh memo makes the GPU skipped", NcnnGpuMemo.broken(memo, now))
+            assertTrue("still skipped the day after", NcnnGpuMemo.broken(memo, now + 24L * 60 * 60 * 1000))
+            // 48 h later the memo disappears and the GPU gets another chance.
+            assertFalse("an expired memo restores the GPU attempt", NcnnGpuMemo.broken(memo, now + 48L * 60 * 60 * 1000 + 1))
+            assertFalse("the expired memo was deleted", memo.isFile)
+        } finally {
+            memo.delete()
+        }
+    }
+
+    @Test
+    fun gpuMemoTreatsMissingOrNonsenseMarkersAsFresh() {
+        val noMemo = File.createTempFile("gpumemo2", "tmp").let { it.delete(); it }
+        assertFalse("no memo means try the GPU", NcnnGpuMemo.broken(noMemo, 0))
+        val junk = File.createTempFile("gpumemo3", "tmp")
+        try {
+            junk.writeText("not-a-timestamp")
+            assertFalse("junk content means try the GPU", NcnnGpuMemo.broken(junk, 0))
+        } finally {
+            junk.delete()
         }
     }
 }
