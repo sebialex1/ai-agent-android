@@ -64,10 +64,29 @@ class NcnnImageGenRuntime(private val context: android.content.Context) : ImageG
         loaded = path
         android.util.Log.i("sdncnn", "generating on the " + (if (SdNcnn.onGpu()) "GPU (Vulkan)" else "CPU"))
         val count = steps.coerceIn(1, 60)
-        // The JNICallback's onStep returns true = continue; there is no cancel yet, like
-        // MediaPipe. ncnn can report every step — with no preview (the VAE decode needed for a
-        // half-drawn picture would slow every step down), so the chat shows the counter only.
-        val rgba = SdNcnn.txt2img(prompt, DEFAULT_NEGATIVE, count, seed) { done -> onStep(done, count, null); true }
+        // While the ~2 GB of weights load (up to a couple of minutes on slow flash) or the GPU
+        // builds its compute pipelines, nothing comes out of the engine and the chat looked
+        // stuck. A heartbeat every 15 s ("still starting") keeps the readout honest and restarts
+        // the runtime's silence clock; it stops before sampling begins, so it never overrides a
+        // real step, and after 8 minutes it gives up so a hung init still trips the watchdog.
+        val alive = java.util.concurrent.atomic.AtomicBoolean(true)
+        val ticker = Thread {
+            var waited = 0
+            while (alive.get() && waited < 8 * 60_000) {
+                runCatching { Thread.sleep(15_000); waited += 15_000 }
+                if (alive.get() && waited < 8 * 60_000) runCatching { onStep(0, count, null) }
+            }
+        }.apply { isDaemon = true; start() }
+        val rgba = try {
+            // The JNI callback's onStep returns true = continue; there is no cancel yet, like
+            // MediaPipe. ncnn reports every finished step — with no preview (the VAE decode
+            // needed for a half-drawn picture would slow every step down), so the chat shows the
+            // counter only.
+            SdNcnn.txt2img(prompt, DEFAULT_NEGATIVE, count, seed) { done -> onStep(done, count, null); true }
+        } finally {
+            alive.set(false)
+            runCatching { ticker.join(2_000) }
+        }
         if (rgba == null) throw IOException("the image engine returned no image")
         if (rgba.size != NCNN_IMAGE_WIDTH * NCNN_IMAGE_WIDTH * 4) {
             throw IOException("the image engine returned a broken picture (${rgba.size} bytes)")

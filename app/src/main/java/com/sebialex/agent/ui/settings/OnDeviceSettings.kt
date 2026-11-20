@@ -68,7 +68,7 @@ internal fun OnDeviceSettings(
     settings: SecureSettings,
     store: ModelStore,
     engine: LocalEngine,
-    /** Image models for the MediaPipe Image Generator (the Image tab). */
+    /** On-device image models (the Image tab). */
     imageStore: ImageModelStore,
     /** Opens the image-model picker: the Image tab leads to real generation, not a dead end. */
     onOpenImageModels: () -> Unit = {},
@@ -531,9 +531,10 @@ private fun totalRamGb(context: Context): Int = runCatching {
 }.getOrDefault(0)
 
 /**
- * The Image tab: Stable-Diffusion-1.5 models for the phone's own MediaPipe Image Generator.
- * A model is a zip that unpacks into a directory of weight bins + the tokenizer; when ready it
- * can be made the generate_image target (Settings > Models stays the place for cloud pickers).
+ * The Image tab: Stable-Diffusion-1.5 models that generate on the phone (ncnn: Vulkan compute
+ * where the GPU allows it, CPU otherwise). Hugging Face search imports join the catalog here;
+ * when ready a model can be made the generate_image target (Settings > Models keeps the cloud
+ * pickers).
  */
 @Composable
 private fun ImageSection(
@@ -553,9 +554,9 @@ private fun ImageSection(
 
     Text(
         "Runs the picture entirely on this phone: model weights stay on the device, nothing is sent anywhere. " +
-            "The engine only fits Stable Diffusion 1.5 architecture models, the picture comes out square, and " +
-            "generating takes a while (\u2248 30\u201360 s) on \u2265 8 GB RAM phones. The engine runs in its own process: " +
-            "if this phone's GPU cannot run it, the app reports the failure instead of crashing.",
+            "The engine only fits Stable Diffusion 1.5 architecture models (256x256 square), and " +
+            "generating takes a while (\u2248 40\u201390 s on the CPU, faster where the phone's GPU can help) " +
+            "on \u2265 8 GB RAM phones. The engine runs in its own process: a failure is reported, never a crash.",
         style = MaterialTheme.typography.labelSmall,
         color = Palette.TextTertiary,
         modifier = Modifier.padding(bottom = 4.dp),

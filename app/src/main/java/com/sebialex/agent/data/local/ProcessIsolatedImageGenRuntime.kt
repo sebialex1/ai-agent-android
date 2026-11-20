@@ -84,6 +84,9 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
     }
 
     private fun generateLocked(modelDir: File, prompt: String, steps: Int, seed: Int): ByteArray {
+        // Which engine the service will pick (same rule it applies, see [ImageGenService]):
+        // the watchdog's error texts name the right culprit for each.
+        val ncnn = File(modelDir, "unet.param").isFile
         bind()
         val out = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/result.png")
         val preview = File(context.cacheDir, ImageGenContract.RESULT_DIR + "/preview.jpg")
@@ -96,7 +99,7 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
             putString(ImageGenContract.KEY_OUT, out.absolutePath)
             putString(ImageGenContract.KEY_PREVIEW, preview.absolutePath)
         }
-        val answer = ask(ImageGenContract.MSG_GENERATE, data, GENERATE_TIMEOUT_MS)
+        val answer = ask(ImageGenContract.MSG_GENERATE, data, GENERATE_TIMEOUT_MS, ncnn)
         return when (answer.what) {
             ImageGenContract.MSG_RESULT_OK ->
                 out.takeIf { it.isFile && it.length() > 0 }?.readBytes()
@@ -150,7 +153,7 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
      * hanging forever inside the driver), turns into a readable error in minutes instead of
      * sitting out the full timeout quietly.
      */
-    private fun ask(what: Int, data: Bundle?, timeoutMs: Long): Message {
+    private fun ask(what: Int, data: Bundle?, timeoutMs: Long, ncnn: Boolean = false): Message {
         val target = service ?: throw IOException("The image engine is not available. Try again.")
         val startedAt = System.currentTimeMillis()
         lastStep = 0
@@ -170,14 +173,31 @@ class ProcessIsolatedImageGenRuntime(private val context: Context) : ImageGenRun
                 // onServiceDisconnected counts the same latch down; a crash shows up here.
                 if (latch.await(WATCHDOG_SLICE_MS, TimeUnit.MILLISECONDS)) break
                 if (crashed) {
-                    throw IOException("The image engine crashed — this phone's GPU probably cannot run it (MediaPipe ships no CPU mode for it). Pick a cloud image model in Settings > Models.")
+                    throw IOException(
+                        if (ncnn) "The on-device image engine crashed — this phone cannot run it " +
+                            "(its GPU driver refused, and the CPU fallback did not finish either). " +
+                            "Free some RAM (the weights need ~2 GB) and try again, or pick a cloud image model in Settings > Models."
+                        else "The image engine crashed — this phone's GPU probably cannot run it (MediaPipe ships no CPU mode for it). Pick a cloud image model in Settings > Models.",
+                    )
                 }
-                val silentFor = System.currentTimeMillis() - (if (lastStep > 0) lastStepAt else startedAt)
+                // Any event (a step, or the engine's "still starting" heartbeat) proves life:
+                // the silence clock restarts from the last one, not from the request.
+                val silentFor = System.currentTimeMillis() - (if (lastStep > 0) lastStepAt else maxOf(startedAt, lastStepAt))
                 if (lastStep <= 0 && silentFor > INIT_STALL_MS) {
-                    throw IOException("The image engine did not start — nothing came back in ${INIT_STALL_MS / 1000 / 60} minutes. This phone's GPU driver probably cannot run it (MediaPipe ships no CPU mode for it). Pick a cloud image model in Settings > Models.")
+                    throw IOException(
+                        if (ncnn) "The image engine did not start — nothing came back in " +
+                            "${INIT_STALL_MS / 1000 / 60} minutes. Loading the ~2 GB of weights is " +
+                            "stuck on this phone (not enough free memory, or the GPU setup hung). " +
+                            "Close other apps and try again, or pick a cloud image model in Settings > Models."
+                        else "The image engine did not start — nothing came back in ${INIT_STALL_MS / 1000 / 60} minutes. This phone's GPU driver probably cannot run it (MediaPipe ships no CPU mode for it). Pick a cloud image model in Settings > Models.",
+                    )
                 }
                 if (lastStep > 0 && silentFor > STEP_STALL_MS) {
-                    throw IOException("The image engine stopped responding at step $lastStep — the GPU driver probably cannot finish the picture. Pick a cloud image model in Settings > Models.")
+                    throw IOException(
+                        if (ncnn) "The image engine stopped responding at step $lastStep — try fewer " +
+                            "steps in Settings > On-device > Image, or pick a cloud image model in Settings > Models."
+                        else "The image engine stopped responding at step $lastStep — the GPU driver probably cannot finish the picture. Pick a cloud image model in Settings > Models.",
+                    )
                 }
                 val waited = System.currentTimeMillis() - startedAt
                 if (waited > timeoutMs) {

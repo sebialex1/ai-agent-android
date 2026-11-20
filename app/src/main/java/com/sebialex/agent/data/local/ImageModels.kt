@@ -73,44 +73,18 @@ object ImageModels {
     private const val NCNN_COMMIT = "51e07806e4b3e69f1b455ef5e1f50e0f465ad434"
 
     /**
-     * Stable Diffusion v1.5 converted for the MediaPipe Image Generator: one fp16 `.bin` per
-     * weight tensor plus the CLIP tokenizer vocab, in a single `sd15_bins/` folder the zip
-     * unpacks to. The VAE encoder is left out (text-to-image does not use it). Pinned to the
-     * Hugging Face commit of `cuesetac/sd15-mediapipe`.
+     * One catalog model, one engine: ncnn (Vulkan compute where the GPU allows it, CPU
+     * otherwise). The MediaPipe Image Generator is deprecated upstream and its GPU-only engine
+     * fails outright on several phones' drivers (Xclipse and friends), so the MediaPipe zip
+     * entries (`sd15`, `dreamshaper-8`) left the catalog; imported MediaPipe zips still run
+     * (the engine is picked by the model directory's shape).
      */
     val catalog: List<ImageModel> = listOf(
         ImageModel(
-            id = PREFIX + "sd15",
-            name = "SD 1.5",
-            tagline = "Stable Diffusion 1.5 on the phone: no network, no key, ~30-60 s per picture.",
-            slug = "sd15",
-            zipName = "sd15-mediapipe.zip",
-            url = hf("cuesetac/sd15-mediapipe", "b7022b79ea70ba767582abb5527e4902e60b290c", "sd15-mediapipe.zip"),
-            sizeBytes = 2_067_658_596,
-            minRamGb = 8,
-            ramTiersGb = listOf(8, 12),
-            license = "CreativeML OpenRAIL-M",
-            pageUrl = "https://huggingface.co/cuesetac/sd15-mediapipe",
-        ),
-        ImageModel(
-            id = PREFIX + "dreamshaper-8",
-            name = "DreamShaper 8",
-            tagline = "SD 1.5 fine-tune with a strong illustrated/dreamy look; same engine, ~1.9 GB.",
-            slug = "dreamshaper-8",
-            zipName = "dreamshaper8-mediapipe.zip",
-            url = hf("l3utterfly/sd-mediapipe", "d1d3148a949fce8c226f20e733c7061e641c7b45", "dreamshaper8-mediapipe.zip"),
-            sizeBytes = 1_910_649_028,
-            minRamGb = 8,
-            ramTiersGb = listOf(8, 12),
-            license = "CreativeML OpenRAIL-M (mixed, see the repo)",
-            pageUrl = "https://huggingface.co/l3utterfly/sd-mediapipe",
-        ),
-        ImageModel(
             id = PREFIX + "sd15-ncnn",
-            name = "SD 1.5 (on-device)",
-            tagline = "The engine that works on phones whose graphics driver cannot run the " +
-                "MediaPipe engine: GPU-accelerated (Vulkan) where the phone allows it, CPU " +
-                "otherwise. 256x256, \u224840 s+ per picture.",
+            name = "SD 1.5",
+            tagline = "Stable Diffusion 1.5 on the phone: GPU-accelerated (Vulkan) where the " +
+                "phone allows it, CPU otherwise. 256x256, \u224840 s+ per picture on CPU.",
             slug = "sd15-ncnn",
             zipName = "sd15-ncnn.zip", // unused: parts download one file at a time
             sizeBytes = 2_066_400_569,

@@ -44,13 +44,16 @@ class ImageNcnnTest {
     }
 
     @Test
-    fun mediapipeEntriesStayZipBased() {
-        val mp = ImageModels.all.filter { it.engine == ImageEngine.MEDIAPIPE }
-        assertTrue("the catalog still ships MediaPipe entries", mp.isNotEmpty())
-        for (m in mp) {
-            assertTrue("zip models have no parts", m.parts.isEmpty())
-            assertTrue("zip models carry a zip URL", !m.url.isNullOrBlank())
-        }
+    fun theCatalogIsNcnnOnlyButImportedZipsStillDefaultToMediapipe() {
+        // One catalog model, on the engine that works everywhere (MediaPipe's task is
+        // deprecated upstream and its GPU-only start fails on several drivers).
+        assertTrue(ImageModels.all.isNotEmpty())
+        assertTrue(ImageModels.all.all { it.engine == ImageEngine.NCNN })
+        // An imported MediaPipe zip keeps running: the engine is picked by dir shape, and the
+        // reconstructed imported model carries the MEDIAPIPE engine as before.
+        val imp = ImageModels.imported("some-mediapipe-pack.zip")
+        assertEquals(ImageEngine.MEDIAPIPE, imp.engine)
+        assertTrue(imp.parts.isEmpty())
     }
 
     @Test

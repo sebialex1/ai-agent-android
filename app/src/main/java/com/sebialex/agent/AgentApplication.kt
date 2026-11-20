@@ -88,9 +88,10 @@ class AppContainer(app: Application) {
     )
 
     /**
-     * On-device image models ([com.sebialex.agent.data.local.ImageModels]): zips unpacked next
-     * to the text models, run by the MediaPipe Image Generator. The runtime loads at most one
-     * model at a time and is constructed here (it needs a Context; once loaded it stays).
+     * On-device image models ([com.sebialex.agent.data.local.ImageModels]): the catalog model
+     * and imports unpacked next to the text models, run by the ncnn engine (Vulkan compute,
+     * CPU fallback) or MediaPipe for imported zips. The runtime loads at most one model at a
+     * time and is constructed here (it needs a Context; once loaded it stays).
      */
     val imageModels = com.sebialex.agent.data.local.ImageModelStore(
         app, appScope,

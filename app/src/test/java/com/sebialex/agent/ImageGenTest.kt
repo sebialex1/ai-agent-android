@@ -110,13 +110,13 @@ class ImageZipTest {
 class DeviceImageRoutingTest {
 
     @Test fun theDeviceProviderResolvesToNoProviderAtAll() {
-        val sd = ImageModels.resolve("local/image/sd15")
+        val sd = ImageModels.resolve("local/image/sd15-ncnn")
         requireNotNull(sd)
-        assertEquals("local/image/sd15", sd.id)
-        assertEquals("sd15", sd.slug)
+        assertEquals("local/image/sd15-ncnn", sd.id)
+        assertEquals("sd15-ncnn", sd.slug)
         assertEquals(
             "On-device" to null,
-            RoutedImageGenerator.resolve(MediaModelRef(MediaModels.PROVIDER_DEVICE, "local/image/sd15"), emptyList()) { 0 },
+            RoutedImageGenerator.resolve(MediaModelRef(MediaModels.PROVIDER_DEVICE, "local/image/sd15-ncnn"), emptyList()) { 0 },
         )
     }
 
@@ -150,17 +150,18 @@ class DeviceImageRoutingTest {
     }
 
     @Test fun theDeviceRefModelIsTheCatalogId() {
-        val sd = ImageModels.resolve("local/image/sd15")!!
+        val sd = ImageModels.resolve("local/image/sd15-ncnn")!!
         assertEquals(sd.id, ImageModels.refModel(sd))
         // Imported models keep their own id (the zip file name), so two models never collide.
         assertEquals(ImageModels.imported("imported.zip").id, ImageModels.refModel(ImageModels.imported("imported.zip")))
     }
 
-    @Test fun dreamshaperShipsInTheCatalogWithAPinnedZip() {
-        val ds = ImageModels.resolve("local/image/dreamshaper-8")!!
-        assertEquals("dreamshaper-8", ds.slug)
-        assertEquals("dreamshaper8-mediapipe.zip", ds.zipName)
-        assertTrue(ds.url!!.contains("l3utterfly/sd-mediapipe/resolve/d1d3148a"))
+    /** The catalog keeps exactly one model, on the engine that works everywhere. */
+    @Test fun theCatalogIsOneNcnnModelWithAPinnedZip() {
+        assertEquals(1, ImageModels.all.size)
+        val ds = ImageModels.resolve("local/image/sd15-ncnn")!!
+        assertEquals("sd15-ncnn", ds.slug)
+        assertEquals(com.sebialex.agent.data.local.ImageEngine.NCNN, ds.engine)
         assertTrue(ds.sizeBytes in 1_500_000_000..2_500_000_000)
         // Catalog ids and slugs must not collide: each unpacks into its own folder.
         assertEquals(catalogSlugs().size, catalogSlugs().distinct().size)
