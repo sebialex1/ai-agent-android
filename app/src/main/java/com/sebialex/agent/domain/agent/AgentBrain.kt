@@ -82,6 +82,12 @@ data class BrainContext(
      * brain and fake keeps compiling; a brain that cannot stream simply never calls it.
      */
     val onContent: (String) -> Unit = {},
+    /**
+     * Progress of the current model call as a rough percent (0..99) of the reply budget its
+     * text has used so far. Only a brain that knows the budget calls it (the on-device one); a
+     * cloud brain never does, and the chat simply shows nothing.
+     */
+    val onProgress: (Int) -> Unit = {},
 ) {
     /** True when this request carries any picture (with the message or from view_image). */
     val hasImages: Boolean get() = images.isNotEmpty() || observations.any { it.result.images.isNotEmpty() }

@@ -31,6 +31,8 @@ object LocalFakes {
         val error: Throwable? = null,
         /** The model never answers: the caller is cancelled (Stop). */
         val hang: Boolean = false,
+        /** Text sent as successive deltas instead of one whole answer; empty means one message. */
+        val chunks: List<String> = emptyList(),
     )
 
     /** A model that answers with one tool call. */
@@ -61,6 +63,9 @@ class FakeLmRuntime(
     /** The reply to the nth send of the nth conversation created. */
     val script: (conversation: Int, send: Int) -> LocalFakes.Script = { _, _ -> LocalFakes.answer() },
 ) : LmRuntime {
+    /** The cpuThreads the CPU engine was last opened with (the app's thread cap), or null. */
+    @Volatile
+    var lastCpuThreads: Int? = null
     val conversations = Collections.synchronizedList(mutableListOf<FakeLmConversation>())
     val engines = Collections.synchronizedList(mutableListOf<FakeLmEngine>())
     /** "conversation" and "engine" in the order closes ran. */
@@ -83,6 +88,7 @@ class FakeLmRuntime(
         cacheDir: String,
         sampler: SamplerSpec?,
         activation: String,
+        cpuThreads: Int?,
     ): LmEngine {
         if (openDelayMs > 0) Thread.sleep(openDelayMs)
         if (gpu) {
@@ -90,6 +96,7 @@ class FakeLmRuntime(
             gpuFailure?.let { throw it }
         } else {
             cpuOpens.incrementAndGet()
+            lastCpuThreads = cpuThreads
             cpuFailure?.let { throw it }
         }
         return FakeLmEngine(this).also { engines += it }
@@ -138,6 +145,16 @@ class FakeLmConversation(
         if (script.hang) return
         script.error?.let { e ->
             callback.onError(e)
+            return
+        }
+        // A chunked script delivers the text delta by delta, like a real decode; each fragment
+        // is one onMessage, the channels riding on the first one.
+        if (script.chunks.isNotEmpty()) {
+            script.chunks.forEachIndexed { i, chunk ->
+                val channels = if (i == 0 && script.thought.isNotEmpty()) mapOf("thought" to script.thought) else emptyMap()
+                callback.onMessage(Message.model(contents = Contents.of(chunk), channels = channels))
+            }
+            callback.onDone()
             return
         }
         callback.onMessage(

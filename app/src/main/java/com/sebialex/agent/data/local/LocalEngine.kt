@@ -45,7 +45,7 @@ data class LoadedModel(
 
 sealed interface EngineState {
     data object Idle : EngineState
-    data class Loading(val modelId: String, val name: String, val backend: String) : EngineState
+    data class Loading(val modelId: String, val name: String, val backend: String, val startedAt: Long = 0) : EngineState
     data class Ready(val model: LoadedModel) : EngineState
     data class Failed(val modelId: String, val name: String, val message: String) : EngineState
 }
@@ -95,6 +95,9 @@ class LocalEngine(
     private var loaded: LoadedModel? = null
     private val caps = HashMap<String, ModelCapabilities>()
 
+    /** Wall-clock load duration of the last successful load of each model, for a progress estimate. */
+    private val lastLoads = HashMap<String, Long>()
+
     private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
@@ -125,6 +128,12 @@ class LocalEngine(
 
     /** Capabilities read from the file at the last load, used for imported models. */
     fun capabilities(modelId: String): ModelCapabilities? = synchronized(caps) { caps[modelId] }
+
+    /**
+     * How long this model took to load last time, in ms, or null when it never loaded. Used to
+     * estimate a loading percent: LiteRT-LM exposes no load progress, only this reference point.
+     */
+    fun lastLoadMillis(modelId: String): Long? = synchronized(caps) { lastLoads[modelId] }
 
     /** Loads [model] (if it is not already loaded with the current settings) and returns it. */
     suspend fun load(model: LocalModel): LoadedModel = mutex.withLock { ensureLoaded(model) }
@@ -268,7 +277,7 @@ class LocalEngine(
         if (engine != null && key == requested && current != null && current.modelId == model.id) return current
 
         closeLocked()
-        _state.value = EngineState.Loading(model.id, model.name, if (wantGpu) "GPU" else "CPU")
+        _state.value = EngineState.Loading(model.id, model.name, if (wantGpu) "GPU" else "CPU", System.currentTimeMillis())
         // Loading is a long blocking native call. It is never abandoned halfway: a cancelled
         // caller still waits for it, so the engine is either kept or closed, never leaked.
         return try {
@@ -283,6 +292,9 @@ class LocalEngine(
     private fun create(model: LocalModel, file: File, requested: Key, wantGpu: Boolean): LoadedModel {
         // The whole load is timed: metadata, the GPU attempt and the CPU fallback.
         val started = System.currentTimeMillis()
+        // CPU loads and decodes get a fixed thread cap (see [cpuThreadCap]) so the phone stays
+        // responsive while the model loads; the GPU path passes null, it is ignored there.
+        val cpuThreads = cpuThreadCap(Runtime.getRuntime().availableProcessors())
         val info = readCapabilities(file)
         synchronized(caps) { if (info != null) caps[model.id] = info }
         val maxFromFile = info?.maxContext?.takeIf { it > 0 }
@@ -291,10 +303,10 @@ class LocalEngine(
         val speculative = requested.speculative && info?.speculativeDecoding == true
         var fallback: String? = null
         val (created, backendName) = when {
-            !wantGpu -> openCpu(requested.path, context, requested) to "CPU"
+            !wantGpu -> openCpu(requested.path, context, requested, cpuThreads) to "CPU"
             gpuBroken -> {
                 fallback = "the GPU stays off for this app run: it failed to start before"
-                openCpu(requested.path, context, requested) to "CPU"
+                openCpu(requested.path, context, requested, cpuThreads) to "CPU"
             }
             else -> {
                 try {
@@ -309,13 +321,13 @@ class LocalEngine(
                             // The GPU environment is clearly missing: fall back and stop trying.
                             gpuBroken = true
                             fallback = describe(t)
-                            openCpu(requested.path, context, requested) to "CPU"
+                            openCpu(requested.path, context, requested, cpuThreads) to "CPU"
                         }
                         GpuFailure.TRANSIENT -> {
                             // Unsupported operation, kernel compilation, anything unclear: fall
                             // back for this load only; the next load tries the GPU again.
                             fallback = describe(t)
-                            openCpu(requested.path, context, requested) to "CPU"
+                            openCpu(requested.path, context, requested, cpuThreads) to "CPU"
                         }
                     }
                 }
@@ -336,12 +348,13 @@ class LocalEngine(
         key = requested
         loaded = result
         generation++
+        synchronized(caps) { lastLoads[model.id] = result.loadMillis }
         _state.value = EngineState.Ready(result)
         return result
     }
 
-    private fun openCpu(path: String, context: Int, key: Key): LmEngine =
-        runtime.openEngine(path, gpu = false, context, speculative = false, cacheDir.absolutePath, key.sampler, key.activation)
+    private fun openCpu(path: String, context: Int, key: Key, cpuThreads: Int?): LmEngine =
+        runtime.openEngine(path, gpu = false, context, speculative = false, cacheDir.absolutePath, key.sampler, key.activation, cpuThreads)
 
     /**
      * Closes the live conversation (first) and the engine (second). Both always run, even when

@@ -36,6 +36,13 @@ internal fun activationDataType(id: String): ActivationDataType? = when (id) {
 }
 
 /**
+ * The CPU thread cap for engine loads: half the cores, clamped, so the native loader and a CPU
+ * decode never grab every core and starve the UI (the phone lagging during a 2B load). Only the
+ * CPU backend is capped — the GPU offloads on its own and needs no threads from the app.
+ */
+internal fun cpuThreadCap(cores: Int): Int = (cores / 2).coerceIn(2, 6)
+
+/**
  * The fakeable boundary to LiteRT-LM. Everything that touches the native runtime — opening an
  * engine, reading a model file's self-description, sending a message, cancelling or closing —
  * goes through these interfaces, so plain-JVM tests can stand in for the native layer with
@@ -51,8 +58,10 @@ interface LmRuntime {
     /**
      * Opens an engine for the model at [path]. [gpu] selects the OpenCL backend; [speculative]
      * is multi-token prediction (only requested when the file says it has it); [sampler] and
-     * [activation] are the user's runtime overrides (null: the runtime's own defaults). Throws
-     * when the backend cannot start; the caller classifies the failure.
+     * [activation] are the user's runtime overrides (null: the runtime's own defaults); [cpuThreads]
+     * caps the CPU backend's threads so a load or CPU decode leaves cores for the UI (null: the
+     * runtime's own default, all cores). Throws when the backend cannot start; the caller
+     * classifies the failure.
      */
     fun openEngine(
         path: String,
@@ -62,6 +71,7 @@ interface LmRuntime {
         cacheDir: String,
         sampler: SamplerSpec? = null,
         activation: String = "",
+        cpuThreads: Int? = null,
     ): LmEngine
 }
 
@@ -105,6 +115,7 @@ object LiteRtLmRuntime : LmRuntime {
         cacheDir: String,
         sampler: SamplerSpec?,
         activation: String,
+        cpuThreads: Int?,
     ): LmEngine {
         if (!quietLogs) {
             quietLogs = true
@@ -116,7 +127,7 @@ object LiteRtLmRuntime : LmRuntime {
             val e = Engine(
                 EngineConfig(
                     modelPath = path,
-                    backend = if (gpu) Backend.GPU() else Backend.CPU(),
+                    backend = if (gpu) Backend.GPU() else Backend.CPU(threadCount = cpuThreads),
                     maxNumTokens = contextTokens,
                     cacheDir = cacheDir,
                     activationDataType = activationDataType(activation),

@@ -1017,3 +1017,52 @@ private fun SourceCluster(sources: List<SourceRef>, onOpen: (SourceRef) -> Unit,
         }
     }
 }
+
+/**
+ * The on-device model working, as small gray text right where the send happens: "loading Gemma 2B
+ * · 43%" while the engine loads, "processing message · 27%" while it answers. The loading percent
+ * is an honest estimate — LiteRT-LM exposes no load progress, so it is elapsed time against the
+ * model's own last successful load (or no percent at all for a model's first load today); the
+ * processing percent is the share of the reply budget the streamed text already uses. Only the
+ * on-device model has either; cloud turns simply never show this line.
+ */
+@Composable
+fun EngineStatusLine(
+    running: Boolean,
+    progress: Int?,
+    engineState: com.sebialex.agent.data.local.EngineState,
+    lastLoadMillis: (modelId: String) -> Long?,
+) {
+    if (!running) return
+    if (progress != null) {
+        StatusText("processing message · $progress%")
+        return
+    }
+    val loading = engineState as? com.sebialex.agent.data.local.EngineState.Loading ?: return
+    // Ticking recomposition while this load lasts, so the percent/elapsed advances; keyed by the
+    // load's start, so it never runs for a finished load.
+    val tick = androidx.compose.runtime.produceState(0, loading.startedAt) {
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            value += 1
+        }
+    }
+    val prefix = "loading ${loading.name}"
+    val target = lastLoadMillis(loading.modelId)
+    val percent = if (target != null && target > 0 && loading.startedAt > 0) {
+        (((System.currentTimeMillis() - loading.startedAt) * 100) / target).coerceIn(0, 99)
+    } else null
+    StatusText(if (percent != null) "$prefix · $percent%" else prefix)
+    // [tick] exists only to keep the text advancing; reading it suppresses the unused warning.
+    @Suppress("UNUSED_EXPRESSION") tick.value
+}
+
+@Composable
+private fun StatusText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.TextTertiary,
+        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 2.dp),
+    )
+}

@@ -67,6 +67,8 @@ fun ChatScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snap by settings.state.collectAsStateWithLifecycle()
+    // The on-device engine's life (loading/ready) drives the small status line above the input.
+    val engineState by engine.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // The draft belongs to its conversation: restored from the view model when the chat screen
@@ -298,8 +300,28 @@ fun ChatScreen(
                 }
             }
         }
+        // Follow a streaming answer like chat apps do: stay pinned to the newest message while
+        // read there, but never fight a user who scrolled up into history — their scroll stops
+        // the following, and the jump-back button (bottom right) takes them back down. The
+        // growth itself would flip canScrollBackward (newest content below the anchor), so
+        // "pinned" is tracked from the user's actual scroll gestures, not from the content size.
+        var pinned by remember { mutableStateOf(true) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow {
+                listState.canScrollBackward to listState.isScrollInProgress
+            }.collect { (away, scrolling) ->
+                when {
+                    scrolling && away -> pinned = false
+                    !scrolling && !away -> pinned = true
+                }
+            }
+        }
+        androidx.compose.runtime.LaunchedEffect(turns, state.queued) {
+            if (pinned && !listState.isScrollInProgress) listState.scrollToItem(0)
+        }
         // Jump back to the newest message when the user scrolled up reading history. The list is
         // reverse-laid out (newest at the bottom), so content toward the newest is "backward".
+        // Far back the animated fly-through is just slow: jump straight there instead.
         androidx.compose.animation.AnimatedVisibility(
             visible = listState.canScrollBackward,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140)) +
@@ -310,7 +332,7 @@ fun ChatScreen(
                 .padding(end = 16.dp, bottom = 10.dp),
         ) {
             SurfaceIconButton(R.drawable.ic_arrow_down, "Scroll to latest", onClick = {
-                scope.launch { listState.animateScrollToItem(0) }
+                scope.launch { listState.scrollToItem(0) }
             })
         }
         MentionOverlay(visible = mention != null, modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
@@ -335,6 +357,9 @@ fun ChatScreen(
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
             )
         }
+        // What the on-device model is doing right now (loading/answering), as small gray text
+        // above the input; a cloud turn shows nothing.
+        EngineStatusLine(state.running, state.progress, engineState, engine::lastLoadMillis)
         // Discord-style `:code` suggestions: a tall one-line bubble above the input while a
         // code is being typed; picking one inserts the emoji, a closed `:code:` parses itself.
         val emoji = activeEmoji(input)

@@ -6,6 +6,7 @@ import com.sebialex.agent.data.local.EngineState
 import com.sebialex.agent.data.local.LocalEngine.GpuFailure
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModel
+import com.sebialex.agent.data.local.cpuThreadCap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,6 +76,36 @@ class LocalEngineLoadTest {
         assertEquals("GPU", loaded.backend)
         assertEquals(2, runtime.gpuOpens.get())
         assertEquals(0, runtime.cpuOpens.get())
+    }
+
+    @Test
+    fun aCpuLoadOpensTheEngineWithACappedThreadCount() = runBlocking {
+        val runtime = FakeLmRuntime()
+        val engine = engine(runtime, backend = { "cpu" })
+        engine.load(model)
+        assertEquals(cpuThreadCap(Runtime.getRuntime().availableProcessors()), runtime.lastCpuThreads)
+    }
+
+    @Test
+    fun aGpuLoadNeverPassesCpuThreadNumbers() = runBlocking {
+        val runtime = FakeLmRuntime()
+        val engine = engine(runtime)
+        assertEquals("GPU", engine.load(model).backend)
+        assertEquals(null, runtime.lastCpuThreads)
+    }
+
+    @Test
+    fun aLoadReportsWhenItStartedAndRemembersHowLongItTook() = runBlocking {
+        val runtime = FakeLmRuntime(openDelayMs = 120)
+        val engine = engine(runtime)
+        val job = launch { engine.load(model) }
+        withTimeout(5000) {
+            while (engine.state.value !is EngineState.Loading) kotlinx.coroutines.delay(10)
+        }
+        assertTrue((engine.state.value as EngineState.Loading).startedAt > 0)
+        job.join()
+        val took = engine.lastLoadMillis(model.id)
+        assertTrue("expected the remembered load duration, got $took", took != null && took >= 100)
     }
 
     @Test
