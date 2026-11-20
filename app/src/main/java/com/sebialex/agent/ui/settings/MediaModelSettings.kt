@@ -30,17 +30,25 @@ import androidx.compose.ui.unit.dp
 import com.sebialex.agent.R
 import com.sebialex.agent.data.llm.CustomProviders
 import com.sebialex.agent.data.llm.MediaModelOption
+import com.sebialex.agent.data.llm.MediaModelRef
 import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.OpenRouterModels
 import com.sebialex.agent.data.llm.RoutedImageGenerator
+import com.sebialex.agent.data.local.ImageModelStore
+import com.sebialex.agent.data.local.ImageModels
+import com.sebialex.agent.data.local.ModelStatus
 import com.sebialex.agent.data.secure.SecureSettings
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** One line for the Models page row: the image model generate_image uses and its provider. */
 internal fun imageModelLine(snap: SecureSettings.Snapshot): String {
     val ref = snap.mediaImage ?: MediaModels.DEFAULT
+    if (ref.provider == MediaModels.PROVIDER_DEVICE) {
+        return "On-device \u00b7 ${ImageModels.displayName(ref.model)}"
+    }
     val provider = MediaModels.customProviderId(ref)?.let { id ->
         snap.customProviders.firstOrNull { it.id == id }?.name ?: "Custom provider"
     } ?: "OpenRouter"
@@ -53,7 +61,12 @@ internal fun imageModelLine(snap: SecureSettings.Snapshot): String {
  * provider's image models only (OpenRouter's Image API catalog, custom providers' image models).
  */
 @Composable
-internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snapshot, models: OpenRouterModels) {
+internal fun ImageModelGroup(
+    settings: SecureSettings,
+    snap: SecureSettings.Snapshot,
+    models: OpenRouterModels,
+    imageStore: ImageModelStore,
+) {
     val current = snap.mediaImage ?: MediaModels.DEFAULT
     var open by remember { mutableStateOf(false) }
     var attempt by remember { mutableIntStateOf(0) }
@@ -72,11 +85,19 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
     }
     val custom = snap.customProviders.associate { p -> p.id to MediaModels.customImageModels(p, snap.imageOverrides) }
     val markable = snap.customProviders.associate { p -> p.id to MediaModels.markableModels(p) }
+    val imageStatuses by imageStore.statuses.collectAsStateWithLifecycle()
+    val imageImported by imageStore.imported.collectAsStateWithLifecycle()
     // Is the saved choice usable right now? Shown under the row instead of switching providers.
     val problem = runCatching { RoutedImageGenerator.resolve(current, snap.customProviders, snap.imageOverrides) { snap.keys[it].orEmpty().size } }
         .exceptionOrNull()?.message
-    val providerName = MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
-    val currentName = (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
+    val providerName = when {
+        current.provider == MediaModels.PROVIDER_DEVICE -> "On-device"
+        else -> MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
+    }
+    val currentName = when {
+        current.provider == MediaModels.PROVIDER_DEVICE -> ImageModels.displayName(current.model)
+        else -> (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
+    }
 
     SettingsGroup("Image generation") {
         Row(
@@ -100,20 +121,52 @@ internal fun ImageModelGroup(settings: SecureSettings, snap: SecureSettings.Snap
         }
         if (problem != null) Text(problem, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
         if (open) {
-            // Custom providers with image models, or with models that may be marked as image models by hand.
-            val tabs = listOf(MediaModels.PROVIDER_OPENROUTER) +
+            // On-device first (free, private, slower); then the cloud providers.
+            val tabs = listOf(MediaModels.PROVIDER_DEVICE, MediaModels.PROVIDER_OPENROUTER) +
                 snap.customProviders.filter { custom[it.id].orEmpty().isNotEmpty() || markable[it.id].orEmpty().isNotEmpty() }.map { it.id }
             var tab by remember(current.provider) {
-                mutableStateOf(MediaModels.customProviderId(current)?.takeIf { it in tabs } ?: MediaModels.PROVIDER_OPENROUTER)
+                mutableStateOf(
+                    if (current.provider == MediaModels.PROVIDER_DEVICE) MediaModels.PROVIDER_DEVICE
+                    else MediaModels.customProviderId(current)?.takeIf { it in tabs } ?: MediaModels.PROVIDER_OPENROUTER,
+                )
             }
             if (tabs.size > 1) ChoiceChips(
                 options = tabs,
                 selected = tab,
-                label = { id -> if (id == MediaModels.PROVIDER_OPENROUTER) "OpenRouter" else snap.customProviders.firstOrNull { it.id == id }?.name ?: id },
+                label = { id ->
+                    when (id) {
+                        MediaModels.PROVIDER_DEVICE -> "On-device"
+                        MediaModels.PROVIDER_OPENROUTER -> "OpenRouter"
+                        else -> snap.customProviders.firstOrNull { it.id == id }?.name ?: id
+                    }
+                },
                 onSelect = { tab = it },
             )
-            val items: List<MediaModelOption>? = if (tab == MediaModels.PROVIDER_OPENROUTER) openRouter else custom[tab]
+            val deviceItems = (ImageModels.all + imageImported)
+                .map { m -> MediaModelOption(MediaModelRef(MediaModels.PROVIDER_DEVICE, m.id), "On-device", m.name, "MediaPipe on the phone") }
+            val items: List<MediaModelOption>? = when (tab) {
+                MediaModels.PROVIDER_DEVICE -> deviceItems
+                MediaModels.PROVIDER_OPENROUTER -> openRouter
+                else -> custom[tab]
+            }
             when {
+                tab == MediaModels.PROVIDER_DEVICE -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp).keepScrollInside()) {
+                    items(deviceItems, key = { it.ref.provider + "|" + it.ref.model }) { o ->
+                        val st = imageStatuses[o.ref.model] ?: ModelStatus.Missing
+                        PickRow(
+                            title = o.name,
+                            subtitle = when (st) {
+                                is ModelStatus.Ready -> "downloaded \u00b7 generates on the phone"
+                                is ModelStatus.Downloading -> "downloading\u2026"
+                                is ModelStatus.Importing -> "unpacking\u2026"
+                                is ModelStatus.Failed -> "download failed"
+                                ModelStatus.Missing -> "not downloaded \u2014 get it in Settings > On-device > Image"
+                            },
+                            selected = o.ref == current,
+                            onClick = { settings.setMediaImageModel(o.ref); open = false },
+                        )
+                    }
+                }
                 tab == MediaModels.PROVIDER_OPENROUTER && openRouterError != null -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(openRouterError.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.weight(1f))
                     QuietIconButton(R.drawable.ic_refresh, "Try again", onClick = { attempt++ }, tint = Palette.IconMuted, size = 40.dp, iconSize = 18.dp)

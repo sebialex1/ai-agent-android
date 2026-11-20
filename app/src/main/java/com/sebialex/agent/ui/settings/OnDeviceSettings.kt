@@ -545,7 +545,8 @@ private fun ImageSection(
     Text(
         "Runs the picture entirely on this phone: model weights stay on the device, nothing is sent anywhere. " +
             "The engine only fits Stable Diffusion 1.5 architecture models, the picture comes out square, and " +
-            "generating takes a while (\u2248 30\u201360 s) on \u2265 8 GB RAM phones.",
+            "generating takes a while (\u2248 30\u201360 s) on \u2265 8 GB RAM phones. The engine runs in its own process: " +
+            "if this phone's GPU cannot run it, the app reports the failure instead of crashing.",
         style = MaterialTheme.typography.labelSmall,
         color = Palette.TextTertiary,
         modifier = Modifier.padding(bottom = 4.dp),
