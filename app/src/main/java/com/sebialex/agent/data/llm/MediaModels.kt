@@ -49,6 +49,8 @@ enum class ImageApi {
  */
 object MediaModels {
     const val PROVIDER_OPENROUTER = KeyPool.OPENROUTER
+    /** generate_image runs on the phone itself (Settings > On-device > Image), no provider. */
+    const val PROVIDER_DEVICE = "device"
     const val IMAGES_ENDPOINT_OPENROUTER = "https://openrouter.ai/api/v1/images/models"
 
     /** What generate_image used before the picker existed; shown as the default until the user picks. */
@@ -58,7 +60,6 @@ object MediaModels {
     val LIMITATIONS = listOf(
         "Ollama Cloud" to "its image models run only in the local Ollama app, not through ollama.com",
         "Anthropic" to "Claude models do not generate images",
-        "On-device" to "the LiteRT-LM models are text models",
     )
 
     fun customRef(providerId: String, model: String) = MediaModelRef(KeyPool.CUSTOM_PREFIX + providerId, model)

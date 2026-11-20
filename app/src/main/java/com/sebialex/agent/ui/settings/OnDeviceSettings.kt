@@ -39,13 +39,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sebialex.agent.R
 import com.sebialex.agent.data.local.ACTIVATION_TYPES
 import com.sebialex.agent.data.local.EngineState
+import com.sebialex.agent.data.local.ImageModel
+import com.sebialex.agent.data.local.ImageModelStore
+import com.sebialex.agent.data.local.ImageModels
 import com.sebialex.agent.data.local.LocalEngine
 import com.sebialex.agent.data.local.LocalModel
 import com.sebialex.agent.data.local.LocalModels
 import com.sebialex.agent.data.local.Modality
 import com.sebialex.agent.data.local.ModelStatus
 import com.sebialex.agent.data.local.ModelStore
+import com.sebialex.agent.data.llm.MediaModelRef
+import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.secure.SecureSettings
+import java.io.File
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Palette
@@ -62,6 +68,8 @@ internal fun OnDeviceSettings(
     settings: SecureSettings,
     store: ModelStore,
     engine: LocalEngine,
+    /** Image models for the MediaPipe Image Generator (the Image tab). */
+    imageStore: ImageModelStore,
     /** Opens the image-model picker: the Image tab leads to real generation, not a dead end. */
     onOpenImageModels: () -> Unit = {},
 ) {
@@ -70,11 +78,13 @@ internal fun OnDeviceSettings(
     val imported by store.imported.collectAsStateWithLifecycle()
     val engineState by engine.state.collectAsStateWithLifecycle()
     val shared by store.sharedState.collectAsStateWithLifecycle()
+    val imageStatuses by imageStore.statuses.collectAsStateWithLifecycle()
+    val imageImported by imageStore.imported.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     // Downloads finish in the background; pick up their result whenever the page is shown.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { store.refresh() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { store.refresh(); imageStore.refresh() }
     val ramGb = remember { totalRamGb(context) }
     val freeBytes = remember(statuses) { store.freeBytes() }
     // Android 8-10: Downloads needs the storage permission; granting it moves models there.
@@ -90,6 +100,14 @@ internal fun OnDeviceSettings(
 
     var tab by rememberSaveable { mutableStateOf(Modality.TEXT) }
     var detail by remember { mutableStateOf<LocalModel?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            message = imageStore.import(uri).fold(
+                onSuccess = { "Imported ${it.name}." },
+                onFailure = { "Import failed: ${it.message ?: it.javaClass.simpleName}" },
+            )
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         HfSection(settings, snap, store) { message = it }
@@ -175,10 +193,14 @@ internal fun OnDeviceSettings(
                     RowDivider()
                     NavRow("Import a .litertlm file", icon = com.sebialex.agent.R.drawable.ic_plus, onClick = { picker.launch(arrayOf("*/*")) }, chevron = false)
                 }
-                Modality.IMAGE -> ModalityNote(
-                    "No on-device image models",
-                    "The on-device runtime runs text models only. Pictures are made by an image model you pick.",
-                    action = "Choose image model" to onOpenImageModels,
+                Modality.IMAGE -> ImageSection(
+                    settings = settings,
+                    store = imageStore,
+                    statuses = imageStatuses,
+                    importedModels = imageImported,
+                    ramGb = ramGb,
+                    onImport = { imagePicker.launch(arrayOf("application/zip", "*/*")) },
+                    onMessage = { message = it },
                 )
                 Modality.VIDEO -> ModalityNote(
                     "No on-device video models",
@@ -500,3 +522,166 @@ private fun totalRamGb(context: Context): Int = runCatching {
     // Phones report a little less than their nominal RAM (e.g. 7.4 GB for 8 GB), so round up.
     kotlin.math.ceil(info.totalMem / 1_073_741_824.0).toInt()
 }.getOrDefault(0)
+
+/**
+ * The Image tab: Stable-Diffusion-1.5 models for the phone's own MediaPipe Image Generator.
+ * A model is a zip that unpacks into a directory of weight bins + the tokenizer; when ready it
+ * can be made the generate_image target (Settings > Models stays the place for cloud pickers).
+ */
+@Composable
+private fun ImageSection(
+    settings: SecureSettings,
+    store: ImageModelStore,
+    statuses: Map<String, ModelStatus>,
+    importedModels: List<ImageModel>,
+    ramGb: Int,
+    onImport: () -> Unit,
+    onMessage: (String?) -> Unit,
+) {
+    // Fresh on every entry into the tab; picking anywhere else (Settings > Models) shows up too.
+    var selected by remember { mutableStateOf(settings.mediaImageModel()) }
+    val context = LocalContext.current
+
+    Text(
+        "Runs the picture entirely on this phone: model weights stay on the device, nothing is sent anywhere. " +
+            "The engine only fits Stable Diffusion 1.5 architecture models, the picture comes out square, and " +
+            "generating takes a while (\u2248 30\u201360 s) on \u2265 8 GB RAM phones.",
+        style = MaterialTheme.typography.labelSmall,
+        color = Palette.TextTertiary,
+        modifier = Modifier.padding(bottom = 4.dp),
+    )
+
+    fun choose(m: ImageModel) {
+        selected = MediaModelRef(MediaModels.PROVIDER_DEVICE, m.id)
+        settings.setMediaImageModel(selected)
+    }
+
+    ImageModels.all.forEachIndexed { i, m ->
+        if (i > 0) RowDivider()
+        ImageRow(
+            model = m,
+            status = statuses[m.id] ?: ModelStatus.Missing,
+            ramGb = ramGb,
+            selected = selected.provider == MediaModels.PROVIDER_DEVICE && selected.model == m.id,
+            onDownload = { onMessage(store.download(m)) },
+            onCancel = { store.cancel(m) },
+            onUse = { choose(m) },
+            onDelete = {
+                if (selected.provider == MediaModels.PROVIDER_DEVICE && selected.model == m.id) {
+                    // Deleting the model in use would leave generate_image pointing at nothing.
+                    onMessage("This model is currently used for image generation. Pick another image model first, then delete it.")
+                } else {
+                    store.delete(m)
+                }
+            },
+            onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+        )
+    }
+    if (importedModels.isNotEmpty()) {
+        MiniLabel("Imported")
+        importedModels.forEachIndexed { i, m ->
+            if (i > 0) RowDivider()
+            ImageRow(
+                model = m,
+                status = statuses[m.id] ?: ModelStatus.Missing,
+                ramGb = ramGb,
+                selected = selected.provider == MediaModels.PROVIDER_DEVICE && selected.model == m.id,
+                onDownload = {},
+                onCancel = { store.cancel(m) },
+                onUse = { choose(m) },
+                onDelete = { store.delete(m) },
+                onOpenPage = {},
+            )
+        }
+    }
+    RowDivider()
+    NavRow("Import an image model .zip", icon = R.drawable.ic_plus, onClick = onImport, chevron = false)
+    val free = runCatching { store.freeBytes() }.getOrDefault(0L)
+    if (free > 0) MiniLabel("Saved in ${store.root.parentFile?.name}/${store.root.name} \u00b7 ${LocalModels.formatSize(free)} free")
+}
+
+/** One image model as a dense row: name + facts left, at most one action right, progress below. */
+@Composable
+private fun ImageRow(
+    model: ImageModel,
+    status: ModelStatus,
+    ramGb: Int,
+    selected: Boolean,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onUse: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenPage: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 34.dp), verticalAlignment = Alignment.CenterVertically) {
+            val page = model.pageUrl
+            Row(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(if (page != null) Modifier.clickable(onClickLabel = "Open the model card") { onOpenPage(page) } else Modifier)
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(model.name, style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary, maxLines = 1)
+                        if (page != null) {
+                            Spacer(Modifier.width(4.dp))
+                            AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 12.dp)
+                        }
+                    }
+                    Text(model.tagline, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 2)
+                    val facts = buildList {
+                        if (model.sizeBytes > 0) add(LocalModels.formatSize(model.sizeBytes))
+                        if (model.ramTiersGb.isNotEmpty()) add(tierText(model.ramTiersGb) + " RAM")
+                        if (model.license.isNotEmpty()) add(model.license)
+                    }
+                    if (facts.isNotEmpty()) Text(facts.joinToString(" \u00b7 "), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
+                }
+            }
+            if (selected) AppIcon(R.drawable.ic_check, "Used by generate_image", tint = Palette.IconActive, size = 15.dp)
+            if (status is ModelStatus.Ready) QuietIconButton(
+                R.drawable.ic_trash, "Delete ${model.name}", onClick = onDelete,
+                tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,
+            )
+            when (status) {
+                is ModelStatus.Downloading -> PillButton("Cancel", onClick = onCancel)
+                is ModelStatus.Importing -> Unit
+                is ModelStatus.Ready -> if (!selected) PillButton("Use", onClick = onUse, primary = true)
+                is ModelStatus.Failed -> if (model.url != null) PillButton("Retry", onClick = onDownload)
+                ModelStatus.Missing -> if (model.url != null) PillButton("Get", onClick = onDownload, primary = true)
+            }
+        }
+        when (status) {
+            is ModelStatus.Downloading -> {
+                LinearProgressIndicator(
+                    progress = { status.fraction },
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    color = Palette.Accent,
+                    trackColor = Palette.SurfaceHigh,
+                )
+                val progress = if (status.total > 0) "${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Starting\u2026"
+                Text(status.waiting ?: progress, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp, bottom = 2.dp))
+            }
+            is ModelStatus.Importing -> {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    color = Palette.Accent,
+                    trackColor = Palette.SurfaceHigh,
+                )
+                Text("Unpacking the model\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp, bottom = 2.dp))
+            }
+            is ModelStatus.Failed -> Text(status.message, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
+            else -> Unit
+        }
+        if (model.minRamGb > 0 && ramGb in 1 until model.minRamGb) {
+            Text(
+                "Needs ${model.minRamGb}+ GB RAM (this phone has $ramGb GB)",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.Warning,
+            )
+        }
+    }
+}

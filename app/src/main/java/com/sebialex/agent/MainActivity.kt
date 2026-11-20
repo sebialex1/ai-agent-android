@@ -162,6 +162,7 @@ fun AppRoot(container: AppContainer) {
                     termux = container.termux,
                     modelStore = container.modelStore,
                     localEngine = container.localEngine,
+                    imageStore = container.imageModels,
                     ollama = container.ollama,
                     backup = container.backup,
                     updates = container.updates,

@@ -139,20 +139,31 @@ internal fun modelImageName(model: String): String {
 }
 
 /**
- * The generator behind generate_image: the provider and model picked in Settings > Models >
- * Image generation, read on every call. It never falls back to another provider: when the chosen
- * provider was removed, has no key, or no longer lists the model as an image model (nor is it
- * marked as one by hand), the tool
- * fails with a message that says so.
+ * The generator behind generate_image: the provider and model picked in Settings (cloud models in
+ * Models > Image generation, or an on-device Stable-Diffusion model in On-device > Image), read on
+ * every call. It never falls back to another provider: when the chosen provider was removed, has
+ * no key, or no longer lists the model as an image model (nor is it marked as one by hand),
+ * the tool fails with a message that says so.
  */
 class RoutedImageGenerator(
     private val settings: SecureSettings,
     private val openRouter: (String) -> ImageGenerator = { model -> OpenRouterImages(settings, model = { model }) },
     private val custom: (SecureSettings.CustomProvider, String) -> ImageGenerator = { p, m -> OpenAiCompatibleImages(settings, p, m) },
+    /** On-device generators, one per image model id (built where its model files can be found). */
+    private val device: (String) -> ImageGenerator,
 ) : ImageGenerator {
 
     override suspend fun generate(prompt: String, aspectRatio: String?): GeneratedImage {
         val ref = settings.mediaImageModel()
+        if (ref.provider == MediaModels.PROVIDER_DEVICE) {
+            // resolve() validates the id; here only the readable message matters.
+            val name = com.sebialex.agent.data.local.ImageModels.displayName(ref.model)
+            return try {
+                device(ref.model).generate(prompt, aspectRatio)
+            } catch (e: IOException) {
+                throw IOException("Image generation with On-device \u00b7 $name failed: ${e.message}", e)
+            }
+        }
         val (name, provider) = resolve(ref, settings.customProviders(), settings.imageOverrides(), settings::keyCount)
         return try {
             if (provider == null) openRouter(ref.model).generate(prompt, aspectRatio)
@@ -173,6 +184,12 @@ class RoutedImageGenerator(
             manualImage: Set<String> = emptySet(),
             keyCount: (String) -> Int,
         ): Pair<String, SecureSettings.CustomProvider?> {
+            if (ref.provider == MediaModels.PROVIDER_DEVICE) {
+                com.sebialex.agent.data.local.ImageModels.resolve(ref.model) ?: throw IOException(
+                    "The saved on-device image model (${ref.model}) does not exist. Pick one in Settings > On-device > Image. Nothing was generated.",
+                )
+                return "On-device" to null
+            }
             if (ref.provider == MediaModels.PROVIDER_OPENROUTER) {
                 if (keyCount(KeyPool.OPENROUTER) == 0) throw IOException(
                     "The image model is OpenRouter \u00b7 ${ref.model}, but no OpenRouter key is saved. " +

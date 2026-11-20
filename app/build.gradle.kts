@@ -89,6 +89,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.litertlm.android)
+    // On-device image generation (the MediaPipe Image Generator task; its transitive
+    // tasks-core brings the MPImage + BitmapExtractor classes the generator's API uses).
+    implementation("com.google.mediapipe:tasks-vision-image-generator:0.10.26.1")
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     implementation(libs.pdfbox.android)

@@ -98,6 +98,7 @@ fun SettingsScreen(
     termux: com.sebialex.agent.data.shell.TermuxBridge,
     modelStore: ModelStore,
     localEngine: LocalEngine,
+    imageStore: com.sebialex.agent.data.local.ImageModelStore,
     ollama: OllamaCloud,
     backup: com.sebialex.agent.data.backup.BackupManager,
     updates: com.sebialex.agent.data.update.UpdateFlow,
@@ -260,7 +261,7 @@ fun SettingsScreen(
                             onDismiss = { picking = false },
                         )
                     }
-                    SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine, onOpenImageModels = { section = SettingsSection.IMAGE })
+                    SettingsSection.ON_DEVICE -> OnDeviceSettings(settings, modelStore, localEngine, imageStore, onOpenImageModels = { section = SettingsSection.IMAGE })
                     SettingsSection.IMAGE -> ImageModelGroup(settings, snap, models)
                     SettingsSection.THINKING -> ThinkingGroup(settings, snap, models)
                     SettingsSection.CHATS -> {

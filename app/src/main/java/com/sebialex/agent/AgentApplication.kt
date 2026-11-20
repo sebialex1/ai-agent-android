@@ -87,6 +87,14 @@ class AppContainer(app: Application) {
         hfToken = settings::hfToken,
     )
 
+    /**
+     * On-device image models ([com.sebialex.agent.data.local.ImageModels]): zips unpacked next
+     * to the text models, run by the MediaPipe Image Generator. The runtime loads at most one
+     * model at a time and is constructed here (it needs a Context; once loaded it stays).
+     */
+    val imageModels = com.sebialex.agent.data.local.ImageModelStore(app, appScope, java.io.File(modelStore.dir, com.sebialex.agent.data.local.ImageModelStore.DIR))
+    val imageGenRuntime = com.sebialex.agent.data.local.MediaPipeImageGenRuntime(app)
+
     /** Backup folder + Auto Backup copy; restores the Auto Backup copy on the first start of a reinstall. */
     val backup = com.sebialex.agent.data.backup.BackupManager(app, settings, sessions, appScope)
 
@@ -249,10 +257,19 @@ class AppContainer(app: Application) {
         }
 
     /**
-     * generate_image: the provider and model picked in Settings > Models > Image generation
-     * (OpenRouter's Image API or a custom provider's /images/generations), never a silent fallback.
+     * generate_image: the provider and model picked in Settings (OpenRouter's Image API, a
+     * custom provider's /images/generations, or an on-device model), never a silent fallback.
      */
-    private val images = com.sebialex.agent.data.llm.RoutedImageGenerator(settings)
+    private val images = com.sebialex.agent.data.llm.RoutedImageGenerator(
+        settings,
+        device = { id ->
+            com.sebialex.agent.data.local.LocalImageGenerator(
+                modelDir = { imageModels.readyDir(id) },
+                modelName = com.sebialex.agent.data.local.ImageModels.displayName(id),
+                runtime = imageGenRuntime,
+            )
+        },
+    )
 
     /** generate_video: the Google Gemini provider the user added, with its own key. Never a silent fallback. */
     private val videos = com.sebialex.agent.data.llm.RoutedVideoGenerator(settings)
