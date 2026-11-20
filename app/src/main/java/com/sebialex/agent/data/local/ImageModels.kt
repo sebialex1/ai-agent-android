@@ -1,13 +1,30 @@
 package com.sebialex.agent.data.local
 
+/** Which on-device engine a model runs on ([ImageGenRuntime]'s two implementations). */
+enum class ImageEngine {
+    /** Google's MediaPipe Image Generator, GPU only (deprecated upstream, driver-dependent). */
+    MEDIAPIPE,
+    /** ncnn on the CPU; no GPU driver involved, so it also works where MediaPipe cannot. */
+    NCNN,
+}
+
+/** One file of a [ImageModel.parts]-based model: downloaded straight into the model directory. */
+data class ImageModelPart(
+    /** File name inside the model directory. */
+    val name: String,
+    val url: String,
+    val sizeBytes: Long,
+)
+
 /**
- * An image model that runs on this phone with the MediaPipe Image Generator (see
- * [ImageGenRuntime]). Like the text catalog in [LocalModels], catalog entries are pinned to an
+ * An image model that runs on this phone, with the MediaPipe Image Generator (pinned `.zip`
+ * downloads unpacked by [ImageModelStore]) or with the ncnn CPU engine (multi-file
+ * [parts] downloads). Like the text catalog in [LocalModels], catalog entries are pinned to an
  * exact Hugging Face commit so the downloaded file never changes underneath the app.
  *
- * The engine only runs models whose architecture matches Stable Diffusion v1.5 exactly, and a
- * model is a directory of converted files rather than one file, so downloads ship as a `.zip`
- * that [ImageModelStore] unpacks (see [ImageZip]).
+ * MediaPipe's engine only runs models whose architecture matches Stable Diffusion v1.5 exactly;
+ * ncnn's converted-from-HF file set below is SD 1.5 as well. A model is a directory of converted
+ * files rather than one file in both cases.
  */
 data class ImageModel(
     /** Settings model id, always starting with [ImageModels.PREFIX]. */
@@ -31,6 +48,13 @@ data class ImageModel(
     /** Model card for the user, opened from the On-device tab. */
     val pageUrl: String? = null,
     val imported: Boolean = false,
+    /** The engine this model runs on; [ImageEngine.MEDIAPIPE] for the catalog's zip models. */
+    val engine: ImageEngine = ImageEngine.MEDIAPIPE,
+    /**
+     * Individual files downloaded into the model directory (ncnn models); empty for the
+     * MediaPipe models, which download one pinned `.zip` instead.
+     */
+    val parts: List<ImageModelPart> = emptyList(),
 )
 
 object ImageModels {
@@ -39,6 +63,9 @@ object ImageModels {
     private const val IMPORTED_PREFIX = PREFIX + "file/"
 
     private fun hf(repo: String, commit: String, file: String) = "https://huggingface.co/$repo/resolve/$commit/$file"
+
+    /** Hugging Face commit of the ncnn-converted Stable Diffusion files ([ImageEngine.NCNN]). */
+    private const val NCNN_COMMIT = "51e07806e4b3e69f1b455ef5e1f50e0f465ad434"
 
     /**
      * Stable Diffusion v1.5 converted for the MediaPipe Image Generator: one fp16 `.bin` per
@@ -72,6 +99,30 @@ object ImageModels {
             ramTiersGb = listOf(8, 12),
             license = "CreativeML OpenRAIL-M (mixed, see the repo)",
             pageUrl = "https://huggingface.co/l3utterfly/sd-mediapipe",
+        ),
+        ImageModel(
+            id = PREFIX + "sd15-ncnn",
+            name = "SD 1.5 (CPU)",
+            tagline = "Runs on the CPU, not the GPU: the engine that works on phones whose " +
+                "graphics driver cannot run the MediaPipe engine. 256x256, \u224840 s+ per picture.",
+            slug = "sd15-ncnn",
+            zipName = "sd15-ncnn.zip", // unused: parts download one file at a time
+            sizeBytes = 2_066_400_569,
+            minRamGb = 8,
+            ramTiersGb = listOf(8, 12),
+            license = "CreativeML OpenRAIL-M",
+            pageUrl = "https://huggingface.co/yui0/stable_diffusion",
+            engine = ImageEngine.NCNN,
+            parts = listOf(
+                ImageModelPart("unet.bin", hf("yui0/stable_diffusion", NCNN_COMMIT, "UNetModel-MHA-fp16.bin"), 1_720_230_904),
+                ImageModelPart("unet.param", hf("yui0/stable_diffusion", NCNN_COMMIT, "UNetModel-256-256-MHA-fp16-opt.param"), 75_185),
+                ImageModelPart("clip.bin", hf("yui0/stable_diffusion", NCNN_COMMIT, "FrozenCLIPEmbedder-fp16.bin"), 246_505_928),
+                ImageModelPart("clip.param", hf("yui0/stable_diffusion", NCNN_COMMIT, "FrozenCLIPEmbedder-fp16.param"), 33_252),
+                ImageModelPart("vae.bin", hf("yui0/stable_diffusion", NCNN_COMMIT, "AutoencoderKL-fp16.bin"), 99_056_092),
+                ImageModelPart("vae.param", hf("yui0/stable_diffusion", NCNN_COMMIT, "AutoencoderKL-256-256-fp16-opt.param"), 17_095),
+                ImageModelPart("log_sigmas.bin", hf("yui0/stable_diffusion", NCNN_COMMIT, "log_sigmas.bin"), 4_000),
+                ImageModelPart("vocab.txt", hf("yui0/stable_diffusion", NCNN_COMMIT, "vocab.txt"), 478_113),
+            ),
         ),
     )
 

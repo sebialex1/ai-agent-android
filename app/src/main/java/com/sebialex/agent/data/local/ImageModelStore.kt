@@ -47,6 +47,10 @@ class ImageModelStore(
     private val failures = HashMap<String, String>()
     /** Model ids being unpacked (or copied in for an import), with bytes written so far. */
     private val unpacking = HashMap<String, Long>()
+
+    /** Model ids downloading their [ImageModel.parts], with bytes written so far. */
+    private val partsProgress = HashMap<String, Long>()
+    private val partsJobs = HashMap<String, Job>()
     private var poller: Job? = null
 
     init {
@@ -74,8 +78,15 @@ class ImageModelStore(
 
     private fun zipFile(model: ImageModel) = File(zipsDir(), model.zipName)
 
+    /** Holds finished parts of a [ImageModel.parts] model until the last one arrived. */
+    private fun partsStagingDir(model: ImageModel) = File(root, model.slug + ".parts")
+
+    /** A parts download's in-flight file, kept between runs so it can resume. */
+    private fun partFile(model: ImageModel, part: ImageModelPart) =
+        File(zipsDir(), "${model.slug}-${part.name}.part")
+
     private fun busy(id: String): Boolean =
-        prefs.getLong(id, -1L) >= 0 || synchronized(this) { unpacking.containsKey(id) }
+        prefs.getLong(id, -1L) >= 0 || synchronized(this) { unpacking.containsKey(id) || partsProgress.containsKey(id) }
 
     /** Re-reads the disk and the download queue. Cheap; safe from any thread. */
     @Synchronized
@@ -97,6 +108,11 @@ class ImageModelStore(
                 active = true
                 continue
             }
+            synchronized(this) { partsProgress[m.id] }?.let { done ->
+                out[m.id] = ModelStatus.Downloading(done, m.sizeBytes)
+                active = true
+                continue
+            }
             val download = downloadStatus(m)
             if (download != null) {
                 out[m.id] = download
@@ -115,8 +131,9 @@ class ImageModelStore(
 
     private fun dirBytes(dir: File): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
-    /** Starts the zip download. Returns an error message instead when it cannot start. */
+    /** Starts the zip download (or the ncnn models' own file downloads). */
     fun download(model: ImageModel): String? {
+        if (model.parts.isNotEmpty()) return downloadParts(model)
         val url = model.url ?: return "This model has no download link."
         val manager = dm ?: return "This phone has no download service."
         if (ImageZip.looksLikeModelDir(modelDir(model))) return null
@@ -154,9 +171,106 @@ class ImageModelStore(
             prefs.getLong(model.id, -1L).takeIf { it >= 0 }?.let { id -> runCatching { dm?.remove(id) } }
             prefs.edit().remove(model.id).apply()
             zipFile(model).delete()
+            partsJobs.remove(model.id)?.cancel()
+            partsProgress.remove(model.id)
+            partsStagingDir(model).deleteRecursively()
+            model.parts.forEach { partFile(model, it).delete() }
             failures.remove(model.id)
         }
         refresh()
+    }
+
+    /**
+     * The ncnn models' download: their files live on Hugging Face as individual files, so each
+     * [ImageModelPart] is fetched directly (with resume support) into a staging directory,
+     * and the finished set is moved into the model directory. Progress keeps parts-based models
+     * in ModelStatus.Downloading through [refresh]; a failed part leaves the part files on disk
+     * so "Try again" continues where it stopped.
+     */
+    private fun downloadParts(model: ImageModel): String? {
+        val needed = model.sizeBytes + SPACE_MARGIN
+        if (model.sizeBytes > 0 && freeBytes() < needed) {
+            return "Not enough free space: ${LocalModels.formatSize(model.sizeBytes)} needed, ${LocalModels.formatSize(freeBytes())} free."
+        }
+        synchronized(this) {
+            failures.remove(model.id)
+            if (partsJobs.containsKey(model.id)) return null
+            partsProgress[model.id] = 0L
+        }
+        partsJobs[model.id] = scope.launch(Dispatchers.IO) {
+            try {
+                val staging = partsStagingDir(model)
+                staging.mkdirs()
+                for (part in model.parts) {
+                    val done = File(staging, part.name)
+                    if (done.isFile && done.length() == part.sizeBytes) continue
+                    val partial = partFile(model, part)
+                    var written = partial.takeIf { it.isFile }?.length() ?: 0L
+                    if (written > part.sizeBytes) written = 0L
+                    val connection = java.net.URL(part.url).openConnection() as java.net.HttpURLConnection
+                    try {
+                        connection.instanceFollowRedirects = true
+                        connection.connectTimeout = 15_000
+                        connection.readTimeout = 60_000
+                        if (written > 0) connection.setRequestProperty("Range", "bytes=$written-")
+                        if (hfToken().isNotBlank()) connection.setRequestProperty("Authorization", "Bearer " + hfToken())
+                        connection.connect()
+                        val code = connection.responseCode
+                        if (code !in 200..299) throw IOException("HTTP $code for ${part.name}")
+                        connection.inputStream.use { input ->
+                            java.io.FileOutputStream(partial, written > 0 && code == 206).use { out ->
+                                if (written > 0 && code == 206) out.getChannel().position(written)
+                                val buf = ByteArray(1 shl 20)
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    out.write(buf, 0, n)
+                                    synchronized(this@ImageModelStore) {
+                                        partsProgress[model.id] = partsDoneBefore(model, part) + partial.length()
+                                    }
+                                }
+                            }
+                        }
+                        if (partial.length() != part.sizeBytes) {
+                            throw IOException("${part.name}: downloaded ${LocalModels.formatSize(partial.length())} of ${LocalModels.formatSize(part.sizeBytes)}.")
+                        }
+                        moveInto(partial, done)
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+                // All parts present: move them into the model directory proper.
+                val dir = modelDir(model)
+                dir.mkdirs()
+                staging.listFiles().orEmpty().forEach { moveInto(it, File(dir, it.name)) }
+                staging.deleteRecursively()
+                model.parts.forEach { partFile(model, it).delete() }
+                failures.remove(model.id)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures[model.id] = e.message ?: "Download failed."
+            } finally {
+                synchronized(this) { partsProgress.remove(model.id) }
+                synchronized(this) { partsJobs.remove(model.id) }
+                refresh()
+            }
+        }
+        refresh()
+        return null
+    }
+
+    /** Bytes of [model]'s parts that come before [part] and are already in the staging dir. */
+    private fun partsDoneBefore(model: ImageModel, part: ImageModelPart): Long =
+        model.parts.takeWhile { it !== part }.sumOf { p ->
+            File(partsStagingDir(model), p.name).takeIf { it.isFile }?.length() ?: 0L
+        }
+
+    /** renameTo across directories, or copy + delete. */
+    private fun moveInto(from: File, to: File) {
+        if (from.renameTo(to)) return
+        from.copyTo(to, overwrite = true)
+        from.delete()
     }
 
     /** Deletes the unpacked model directory (and any partial download). */

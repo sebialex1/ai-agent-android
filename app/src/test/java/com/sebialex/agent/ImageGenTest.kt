@@ -168,7 +168,15 @@ class DeviceImageRoutingTest {
 
     @Test fun everyCatalogImageModelPinsACommitAndASizeOnItsOwnSlug() {
         ImageModels.all.forEach { m ->
-            assertTrue(m.id, m.url!!.contains("/resolve/") && m.url!!.length > m.url!!.indexOf("/resolve/") + 41)
+            if (m.parts.isEmpty()) {
+                assertTrue(m.id, m.url!!.contains("/resolve/") && m.url!!.length > m.url!!.indexOf("/resolve/") + 41)
+            } else {
+                // Parts-based models (ncnn): every file is pinned individually.
+                m.parts.forEach { p ->
+                    assertTrue(p.name, p.url.contains("/resolve/") && p.url.length > p.url.indexOf("/resolve/") + 41)
+                    assertTrue(p.name, p.sizeBytes > 0)
+                }
+            }
             assertTrue(m.id, m.sizeBytes > 0)
             assertEquals(m.id, m.id, ImageModels.resolve(m.id)!!.id)
         }

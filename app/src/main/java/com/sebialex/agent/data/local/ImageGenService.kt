@@ -48,7 +48,11 @@ class ImageGenService : Service() {
     private lateinit var worker: HandlerThread
     private lateinit var work: Handler
     private val runtime by lazy { MediaPipeImageGenRuntime(applicationContext) }
-    private val idle = Runnable { runCatching { runtime.close() } }
+    private val ncnn by lazy { NcnnImageGenRuntime(applicationContext) }
+    private val idle = Runnable {
+        runCatching { runtime.close() }
+        runCatching { ncnn.close() }
+    }
 
     private val receiver = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
@@ -98,7 +102,11 @@ class ImageGenService : Service() {
             val previewPath = data.getString(ImageGenContract.KEY_PREVIEW).orEmpty()
             val preview = if (previewPath.isEmpty()) null else File(previewPath)
             preview?.delete()
-            val bytes = runtime.generate(
+            // Engines are picked by the model directory's shape: MediaPipe model dirs hold
+            // per-tensor weight bins, ncnn model dirs hold unet.param (see ImageModels).
+            val engine: ImageGenRuntime =
+                if (File(dir, "unet.param").isFile) ncnn else runtime
+            val bytes = engine.generate(
                 dir,
                 data.getString(ImageGenContract.KEY_PROMPT).orEmpty(),
                 data.getInt(ImageGenContract.KEY_STEPS, LocalImageGenerator.STEPS),

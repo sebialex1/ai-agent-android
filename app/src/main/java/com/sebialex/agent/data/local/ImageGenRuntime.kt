@@ -55,7 +55,7 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
     ): ByteArray = synchronized(lock) {
         // A load of ~2 GB of weights on a phone without enough free memory ends in a native
         // abort that cannot be caught: refuse readable first, from [MemoryInfo].
-        lowMemory()?.let { throw IOException(it) }
+        ImageGenMemory.check(context)?.let { throw IOException(it) }
         try {
             val final = generated(modelDir, prompt, steps, seed, onStep)
             png(final.generatedImage())
@@ -141,17 +141,6 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
         return bytes
     }
 
-    /** A readable refusal when free RAM is too small to load the weights, else null. */
-    private fun lowMemory(): String? {
-        val am = context.getSystemService(android.app.ActivityManager::class.java) ?: return null
-        val info = android.app.ActivityManager.MemoryInfo()
-        am.getMemoryInfo(info)
-        if (info.availMem >= MIN_AVAIL_BYTES) return null
-        return "Not enough free memory for the image model (needs " +
-            "\u2248 ${LocalModels.formatSize(MIN_AVAIL_BYTES)} free; the phone has " +
-            "${LocalModels.formatSize(info.availMem)}). Close other apps and try again."
-    }
-
     /** The generator for [modelDir], opening (and freeing) engines when the directory changes. */
     private fun loadedOrOpen(modelDir: File): com.google.mediapipe.tasks.vision.imagegenerator.ImageGenerator {
         loaded?.let { (dir, generator) ->
@@ -172,9 +161,6 @@ class MediaPipeImageGenRuntime(private val context: android.content.Context) : I
     }
 
     private companion object {
-        /** Weights + activations + the OS's idea of a working phone; a floor, not a guarantee. */
-        val MIN_AVAIL_BYTES = 2_800L * 1024 * 1024
-
         /** A half-drawn picture is asked for every Nth step (Google's own sample does every 5th). */
         const val PREVIEW_EVERY = 3
     }
