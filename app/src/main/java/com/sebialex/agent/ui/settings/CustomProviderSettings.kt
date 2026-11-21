@@ -77,25 +77,21 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
                 },
                 footer = {
                     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (p.api == CustomProviders.API_CHAT) "Chat API" else "Responses API",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Palette.TextTertiary,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("\u00b7", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary)
-                            Spacer(Modifier.width(8.dp))
-                            Text(p.baseUrl, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        // What this provider can do, by modality.
+                        // One quiet line for what the provider can do, one for the endpoint.
                         val images = com.sebialex.agent.data.llm.MediaModels.customImageModels(p, snap.imageOverrides).size
-                        ModalityLine("Text", if (p.models.isEmpty()) "No models listed" else "${p.models.size} models")
-                        ModalityLine("Image", if (images > 0) "$images models" else "None listed")
-                        ModalityLine(
-                            "Video",
-                            if (p.preset == CustomProviders.GEMINI_ACCOUNT_PRESET) "Supported" else "Not supported",
+                        Text(
+                            listOfNotNull(
+                                if (p.api == CustomProviders.API_CHAT) "Chat API" else "Responses API",
+                                if (CustomProviders.isLocalAddress(p.baseUrl)) "local" else null,
+                                if (p.models.isEmpty()) null else "${p.models.size} text",
+                                if (images > 0) "$images image" else null,
+                            ).joinToString(" \u00b7 ").ifEmpty { "No models listed" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.TextTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        Text(p.baseUrl, style = MonoSmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (confirmRemove == p.id) {
                             com.sebialex.agent.ui.components.SheetConfirm(
                                 message = "Remove ${p.name} and its keys?",
@@ -114,15 +110,6 @@ internal fun CustomProvidersGroup(settings: SecureSettings, snap: SecureSettings
     editing?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.let { p ->
         EditProviderSheet(settings, p, onDismiss = { editing = null })
     } }
-}
-
-/** One modality of a provider: what it is called and what it can do, on one quiet line. */
-@Composable
-private fun ModalityLine(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.width(56.dp))
-        Text(value, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
-    }
 }
 
 /** Which wire API a provider speaks, offered as two choices when adding or editing one. */
@@ -168,7 +155,11 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
         if (d.compatible) {
             url = d.baseUrl
             if (name.isBlank()) name = d.name
-            if (presetId == CustomProviders.CUSTOM_PRESET && d.presetId != CustomProviders.CUSTOM_PRESET) presetId = d.presetId
+            if (presetId == CustomProviders.CUSTOM_PRESET && d.presetId != CustomProviders.CUSTOM_PRESET) {
+                presetId = d.presetId
+                // A detected local server (Ollama's /api/tags) has no /responses route.
+                if (CustomProviders.preset(d.presetId)?.local == true) api = CustomProviders.API_CHAT
+            }
         }
         return d
     }
@@ -222,8 +213,11 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                     items(CustomProviders.PRESETS, key = { it.id }) { p ->
                         PresetRow(p.name, p.baseUrl.substringAfter("://"), selected = p.id == presetId) {
                             presetId = p.id
-                            url = p.baseUrl
+                            url = if (p.local) "" else p.baseUrl
                             name = p.name
+                            // Local servers (Ollama, LM Studio, llama.cpp, ...) speak chat
+                            // completions; only OpenAI-scale hosts serve /responses.
+                            if (p.local) api = CustomProviders.API_CHAT
                             choosing = false
                             result = null
                         }
@@ -231,7 +225,12 @@ private fun AddProviderSheet(settings: SecureSettings, onDismiss: () -> Unit) {
                 }
             }
             Field("Name", name, "e.g. Groq", onChange = { name = it })
-            Field("Base URL", url, "https://api.example.com/v1", onChange = { url = it.trim(); result = null }, mono = true)
+            Field(
+                "Base URL", url,
+                // A LAN Ollama is the local case people actually type by hand.
+                if (preset?.local == true) "http://192.168.1.30:11434/v1" else "https://api.example.com/v1",
+                onChange = { url = it.trim(); result = null }, mono = true,
+            )
             Field("API key", key, if (preset?.local == true) "Optional for local servers" else "Paste key", onChange = { key = it.trim() }, secret = true)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("API", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 4.dp))
@@ -322,7 +321,11 @@ private fun EditProviderSheet(settings: SecureSettings, provider: SecureSettings
     AppSheet(onDismiss = onDismiss, title = "Edit ${provider.name}") {
         Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Field("Name", name, provider.name, onChange = { name = it })
-            Field("Base URL", url, "https://api.example.com/v1", onChange = { url = it.trim(); result = null }, mono = true)
+            Field(
+                "Base URL", url,
+                if (CustomProviders.isLocalAddress(provider.baseUrl)) "http://192.168.1.30:11434/v1" else "https://api.example.com/v1",
+                onChange = { url = it.trim(); result = null }, mono = true,
+            )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("API", style = MaterialTheme.typography.labelMedium, color = Palette.TextSecondary, modifier = Modifier.padding(start = 4.dp))
                 ApiStyleChoice(api) { api = it }

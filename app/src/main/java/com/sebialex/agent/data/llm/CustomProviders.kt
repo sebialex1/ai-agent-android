@@ -223,8 +223,10 @@ object CustomProviders {
             return@withContext Detection(false, base, "", CUSTOM_PRESET, emptyList(), "That does not look like a URL.")
         }
         var refused: String? = null
+        var answeredAny = false
         for (root in candidates(base)) {
             val r = request("$root/models", key) ?: continue
+            answeredAny = true
             when {
                 r.code in 200..299 -> {
                     val parsed = modelIds(r.body) ?: continue
@@ -242,12 +244,15 @@ object CustomProviders {
         }
         // Ollama's native API: the OpenAI-compatible routes live under /v1.
         val origin = base.replace(Regex("/(v1|api|api/v1)$"), "")
-        request("$origin/api/tags", key)?.takeIf { it.code in 200..299 }?.let { r ->
-            val ids = modelIds(r.body)?.first.orEmpty()
-            if (r.body.contains("\"models\"")) return@withContext Detection(
-                true, "$origin/v1", "Ollama", presetFor("$origin/v1")?.id ?: CUSTOM_PRESET, ids.sorted(),
-                "Ollama server \u00b7 ${ids.size} model${if (ids.size == 1) "" else "s"} \u00b7 using its OpenAI-compatible /v1",
-            )
+        request("$origin/api/tags", key)?.let { r ->
+            answeredAny = answeredAny || r.code in 200..299
+            r.takeIf { it.code in 200..299 }?.let {
+                val ids = modelIds(it.body)?.first.orEmpty()
+                if (it.body.contains("\"models\"")) return@withContext Detection(
+                    true, "$origin/v1", "Ollama", presetFor("$origin/v1")?.id ?: CUSTOM_PRESET, ids.sorted(),
+                    "Ollama server \u00b7 ${ids.size} model${if (ids.size == 1) "" else "s"} \u00b7 using its OpenAI-compatible /v1",
+                )
+            }
         }
         refused?.let { root ->
             val preset = presetFor(root)
@@ -269,7 +274,18 @@ object CustomProviders {
                 )
             }
         }
-        Detection(false, base, hostName(base), CUSTOM_PRESET, emptyList(), "No OpenAI-compatible API found there. Try the URL ending in /v1.")
+        val failMessage = when {
+            // Nothing ever answered (connection refused, timeout, DNS): the platform-level
+            // cleartext block used to land here and read like a compatibility problem.
+            !answeredAny ->
+                (if (isLocalAddress(base))
+                    "Nothing answered at that address. Check the device is on the same network and " +
+                        "the server allows it (Ollama starts with OLLAMA_HOST=0.0.0.0)."
+                else
+                    "Nothing answered there — check the address.")
+            else -> "No OpenAI-compatible API found there. Try the URL ending in /v1."
+        }
+        Detection(false, base, hostName(base), CUSTOM_PRESET, emptyList(), failMessage)
     }
 
     /** Re-reads a saved provider's model list with its active key; null on failure. */

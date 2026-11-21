@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Everything stays HTTPS-only, except servers on this phone itself (a llama.cpp, Ollama or
-     LM Studio-style server started in Termux, or the emulator's host), which usually speak
-     plain http on localhost, and the app's own web preview server on 127.0.0.1). -->
+<!-- Cloud APIs are always called on their https:// URLs. Cleartext http is permitted so
+     servers on the local network work: an Ollama, LM Studio or llama.cpp instance running on
+     another device is reached as http://192.168.1.x:11434, and Android has no way to allow
+     cleartext for a whole address range, only for named hosts. Only explicitly http:// URLs
+     are affected; every provider preset and every cloud request keeps using https. -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
+    <base-config cleartextTrafficPermitted="true" />
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">localhost</domain>
         <domain includeSubdomains="false">127.0.0.1</domain>

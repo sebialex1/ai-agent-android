@@ -174,7 +174,7 @@ internal fun OnDeviceSettings(
                         MiniLabel(if (tier == 1) "Ultra-light \u00b7 1 GB RAM" else "From $tier GB RAM")
                         models.forEachIndexed { i, m ->
                             if (i > 0) RowDivider()
-                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context, onDetail = { detail = m }) { message = it }
+                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, onDetail = { detail = m }) { message = it }
                         }
                     }
                     if (snap.hfModels.isNotEmpty()) {
@@ -182,7 +182,7 @@ internal fun OnDeviceSettings(
                         snap.hfModels.forEachIndexed { i, hf ->
                             if (i > 0) RowDivider()
                             ModelItem(
-                                hf.toLocalModel(), statuses, snap.model, ramGb, store, engine, settings, scope, context,
+                                hf.toLocalModel(), statuses, snap.model, ramGb, store, engine, settings, scope,
                                 removable = true,
                                 afterDelete = { settings.removeHfModel(hf.id) },
                                 onDetail = { detail = hf.toLocalModel() },
@@ -193,7 +193,7 @@ internal fun OnDeviceSettings(
                         MiniLabel("Imported")
                         imported.forEachIndexed { i, m ->
                             if (i > 0) RowDivider()
-                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, context, onDetail = { detail = m }) { message = it }
+                            ModelItem(m, statuses, snap.model, ramGb, store, engine, settings, scope, onDetail = { detail = m }) { message = it }
                         }
                     }
                     RowDivider()
@@ -378,7 +378,6 @@ private fun ModelItem(
     engine: LocalEngine,
     settings: SecureSettings,
     scope: kotlinx.coroutines.CoroutineScope,
-    context: Context,
     removable: Boolean = false,
     afterDelete: () -> Unit = {},
     onDetail: (() -> Unit)? = null,
@@ -405,22 +404,14 @@ private fun ModelItem(
                 if (settings.model() == m.id) settings.setModel(settings.cloudModel())
             }
         },
-        onOpenPage = { url -> runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
     )
 }
 
-/** RAM tiers as a short range, e.g. "4\u20137 GB". */
-private fun tierText(tiers: List<Int>): String = when {
-    tiers.isEmpty() -> ""
-    tiers.min() == tiers.max() -> "${tiers.min()} GB"
-    else -> "${tiers.min()}\u2013${tiers.max()} GB"
-}
-
 /**
- * One model as a dense list row: name with a small facts line on the left, at most one action
- * on the right, and extra lines only while downloading, importing or failing. Tapping the name
- * opens the model card; the trash icon deletes the file (and, for added Hugging Face models,
- * removes them from the list).
+ * One model as a compact list row: the name on the left, minimal icon actions on the right —
+ * download when missing, X to cancel while downloading and to remove when installed, a check
+ * while in use. Tapping an installed model's name opens its card; extra lines appear only for
+ * download progress, failures and RAM warnings.
  */
 @Composable
 private fun ModelRow(
@@ -434,91 +425,77 @@ private fun ModelRow(
     onCancel: () -> Unit,
     onUse: () -> Unit,
     onDelete: () -> Unit,
-    onOpenPage: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 34.dp), verticalAlignment = Alignment.CenterVertically) {
-            val page = model.pageUrl
-            Row(
-                Modifier
+        Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+            // While installed, the name itself opens the model card (context window, sampling).
+            val open = if (status is ModelStatus.Ready) onDetail else null
+            Text(
+                model.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.TextPrimary,
+                maxLines = 1,
+                modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .then(if (page != null) Modifier.clickable(onClickLabel = "Open the model card") { onOpenPage(page) } else Modifier)
+                    .then(if (open != null) Modifier.clickable(onClickLabel = "Open the model card") { open() } else Modifier)
                     .padding(vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.name, style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary, maxLines = 1)
-                        if (page != null) {
-                            Spacer(Modifier.width(4.dp))
-                            AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 12.dp)
-                        }
-                    }
-                    val size = (status as? ModelStatus.Ready)?.bytes ?: model.sizeBytes
-                    val facts = buildList {
-                        if (size > 0) add(LocalModels.formatSize(size))
-                        if (model.ramTiersGb.isNotEmpty()) add(tierText(model.ramTiersGb) + " RAM")
-                        if (model.toolCalling) add("Tools")
-                        if (model.thinking) add("Thinking")
-                        if (!model.imported) add("${model.maxContext / 1000}K context")
-                        if (model.license.isNotEmpty()) add(model.license)
-                    }
-                    if (facts.isNotEmpty()) Text(facts.joinToString(" \u00b7 "), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
-                }
-            }
-            if (selected) AppIcon(R.drawable.ic_check, "In use", tint = Palette.IconActive, size = 15.dp)
-            if (onDetail != null && status is ModelStatus.Ready) QuietIconButton(
-                R.drawable.ic_settings, "Settings for ${model.name}", onClick = onDetail,
-                tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,
-            )
-            if (status is ModelStatus.Ready || removable) QuietIconButton(
-                R.drawable.ic_trash, "Delete ${model.name}", onClick = onDelete,
-                tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,
             )
             when (status) {
-                is ModelStatus.Downloading -> PillButton("Cancel", onClick = onCancel)
-                is ModelStatus.Ready -> if (!selected) PillButton("Use", onClick = onUse, primary = true)
-                is ModelStatus.Failed -> if (model.url != null) PillButton("Retry", onClick = onDownload)
+                is ModelStatus.Downloading -> QuietIconButton(
+                    R.drawable.ic_close, "Cancel the ${model.name} download", onClick = onCancel,
+                    tint = Palette.TextSecondary, size = 32.dp, iconSize = 15.dp,
+                )
+                is ModelStatus.Ready -> {
+                    if (selected) {
+                        AppIcon(R.drawable.ic_check, "In use", tint = Palette.IconActive, size = 16.dp)
+                    } else {
+                        QuietIconButton(
+                            R.drawable.ic_play, "Use ${model.name}", onClick = onUse,
+                            tint = Palette.TextPrimary, size = 32.dp, iconSize = 15.dp,
+                        )
+                    }
+                    QuietIconButton(
+                        R.drawable.ic_close, "Remove ${model.name}", onClick = onDelete,
+                        tint = Palette.IconMuted, size = 32.dp, iconSize = 15.dp,
+                    )
+                }
+                is ModelStatus.Failed -> {
+                    if (model.url != null) QuietIconButton(
+                        R.drawable.ic_download, "Retry ${model.name}", onClick = onDownload,
+                        tint = Palette.Warning, size = 32.dp, iconSize = 15.dp,
+                    )
+                    if (removable) QuietIconButton(
+                        R.drawable.ic_close, "Remove ${model.name}", onClick = onDelete,
+                        tint = Palette.IconMuted, size = 32.dp, iconSize = 15.dp,
+                    )
+                }
+                ModelStatus.Missing -> {
+                    if (model.url != null) QuietIconButton(
+                        R.drawable.ic_download, "Get ${model.name}", onClick = onDownload,
+                        tint = Palette.TextPrimary, size = 32.dp, iconSize = 15.dp,
+                    )
+                    if (removable) QuietIconButton(
+                        R.drawable.ic_close, "Remove ${model.name}", onClick = onDelete,
+                        tint = Palette.IconMuted, size = 32.dp, iconSize = 15.dp,
+                    )
+                }
                 is ModelStatus.Importing -> Unit
-                ModelStatus.Missing -> if (model.url != null) PillButton("Get", onClick = onDownload, primary = true)
             }
         }
         when (status) {
             is ModelStatus.Downloading -> {
-                LinearProgressIndicator(
-                    progress = { status.fraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = Palette.Accent,
-                    trackColor = Palette.SurfaceHigh,
-                )
                 val progress = if (status.total > 0) "${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Starting\u2026"
-                Text(status.waiting ?: progress, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp, bottom = 2.dp))
+                SlimProgress(status.fraction, status.waiting ?: progress)
             }
             is ModelStatus.Importing -> {
-                LinearProgressIndicator(
-                    progress = { status.fraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = Palette.Accent,
-                    trackColor = Palette.SurfaceHigh,
-                )
-                Text(
-                    if (status.moving) "Moving to Downloads\u2026 ${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Importing\u2026",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Palette.TextTertiary,
-                    modifier = Modifier.padding(top = 1.dp, bottom = 2.dp),
-                )
+                val caption = if (status.moving) "Moving to Downloads\u2026 ${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Importing\u2026"
+                SlimProgress(status.fraction, caption)
             }
             is ModelStatus.Failed -> Text(status.message, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
             else -> Unit
         }
-        if (model.minRamGb > 0 && ramGb in 1 until model.minRamGb) {
-            Text(
-                "Needs ${model.minRamGb}+ GB RAM (this phone has $ramGb GB)",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.Warning,
-            )
-        }
+        RamNote(model.minRamGb, ramGb)
     }
 }
 
@@ -553,10 +530,7 @@ private fun ImageSection(
     val context = LocalContext.current
 
     Text(
-        "Runs the picture entirely on this phone: model weights stay on the device, nothing is sent anywhere. " +
-            "The engine only fits Stable Diffusion 1.5 architecture models (256x256 square), and " +
-            "generating takes a while (\u2248 40\u201390 s on the CPU, faster where the phone's GPU can help) " +
-            "on \u2265 8 GB RAM phones. The engine runs in its own process: a failure is reported, never a crash.",
+        "Generates pictures entirely on this phone \u2014 nothing is sent anywhere. 256x256, roughly 40\u201390 s per picture on the CPU; needs 8+ GB RAM.",
         style = MaterialTheme.typography.labelSmall,
         color = Palette.TextTertiary,
         modifier = Modifier.padding(bottom = 4.dp),
@@ -654,7 +628,7 @@ private fun ImageSection(
     if (free > 0) MiniLabel("Saved in ${store.root.parentFile?.name}/${store.root.name} \u00b7 ${LocalModels.formatSize(free)} free")
 }
 
-/** One image model as a dense row: name + facts left, at most one action right, progress below. */
+/** One image model as a compact row, matching the text-model rows: name left, icons right. */
 @Composable
 private fun ImageRow(
     model: ImageModel,
@@ -668,74 +642,78 @@ private fun ImageRow(
     onOpenPage: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 34.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
             val page = model.pageUrl
-            Row(
-                Modifier
+            Text(
+                model.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.TextPrimary,
+                maxLines = 1,
+                modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .then(if (page != null) Modifier.clickable(onClickLabel = "Open the model card") { onOpenPage(page) } else Modifier)
                     .padding(vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(model.name, style = MaterialTheme.typography.bodyMedium, color = Palette.TextPrimary, maxLines = 1)
-                        if (page != null) {
-                            Spacer(Modifier.width(4.dp))
-                            AppIcon(R.drawable.ic_open_external, null, tint = Palette.IconMuted, size = 12.dp)
-                        }
-                    }
-                    Text(model.tagline, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 2)
-                    val facts = buildList {
-                        if (model.sizeBytes > 0) add(LocalModels.formatSize(model.sizeBytes))
-                        if (model.ramTiersGb.isNotEmpty()) add(tierText(model.ramTiersGb) + " RAM")
-                        if (model.license.isNotEmpty()) add(model.license)
-                    }
-                    if (facts.isNotEmpty()) Text(facts.joinToString(" \u00b7 "), style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, maxLines = 1)
-                }
-            }
-            if (selected) AppIcon(R.drawable.ic_check, "Used by generate_image", tint = Palette.IconActive, size = 15.dp)
-            if (status is ModelStatus.Ready) QuietIconButton(
-                R.drawable.ic_trash, "Delete ${model.name}", onClick = onDelete,
-                tint = Palette.IconMuted, size = 30.dp, iconSize = 14.dp,
             )
             when (status) {
-                is ModelStatus.Downloading -> PillButton("Cancel", onClick = onCancel)
+                is ModelStatus.Downloading -> QuietIconButton(
+                    R.drawable.ic_close, "Cancel the ${model.name} download", onClick = onCancel,
+                    tint = Palette.TextSecondary, size = 32.dp, iconSize = 15.dp,
+                )
+                is ModelStatus.Ready -> {
+                    if (selected) {
+                        AppIcon(R.drawable.ic_check, "Used by generate_image", tint = Palette.IconActive, size = 16.dp)
+                    } else {
+                        QuietIconButton(
+                            R.drawable.ic_play, "Use ${model.name}", onClick = onUse,
+                            tint = Palette.TextPrimary, size = 32.dp, iconSize = 15.dp,
+                        )
+                    }
+                    QuietIconButton(
+                        R.drawable.ic_close, "Remove ${model.name}", onClick = onDelete,
+                        tint = Palette.IconMuted, size = 32.dp, iconSize = 15.dp,
+                    )
+                }
+                is ModelStatus.Failed -> QuietIconButton(
+                    R.drawable.ic_download, "Retry ${model.name}", onClick = onDownload,
+                    tint = Palette.Warning, size = 32.dp, iconSize = 15.dp,
+                )
+                ModelStatus.Missing -> QuietIconButton(
+                    R.drawable.ic_download, "Get ${model.name}", onClick = onDownload,
+                    tint = Palette.TextPrimary, size = 32.dp, iconSize = 15.dp,
+                )
                 is ModelStatus.Importing -> Unit
-                is ModelStatus.Ready -> if (!selected) PillButton("Use", onClick = onUse, primary = true)
-                is ModelStatus.Failed -> if (model.url != null || model.parts.isNotEmpty()) PillButton("Retry", onClick = onDownload)
-                ModelStatus.Missing -> if (model.url != null || model.parts.isNotEmpty()) PillButton("Get", onClick = onDownload, primary = true)
             }
         }
         when (status) {
             is ModelStatus.Downloading -> {
-                LinearProgressIndicator(
-                    progress = { status.fraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = Palette.Accent,
-                    trackColor = Palette.SurfaceHigh,
-                )
                 val progress = if (status.total > 0) "${LocalModels.formatSize(status.done)} of ${LocalModels.formatSize(status.total)}" else "Starting\u2026"
-                Text(status.waiting ?: progress, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp, bottom = 2.dp))
+                SlimProgress(status.fraction, status.waiting ?: progress)
             }
-            is ModelStatus.Importing -> {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = Palette.Accent,
-                    trackColor = Palette.SurfaceHigh,
-                )
-                Text("Unpacking the model\u2026", style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp, bottom = 2.dp))
-            }
+            is ModelStatus.Importing -> SlimProgress(status.fraction, "Unpacking the model\u2026")
             is ModelStatus.Failed -> Text(status.message, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
             else -> Unit
         }
-        if (model.minRamGb > 0 && ramGb in 1 until model.minRamGb) {
-            Text(
-                "Needs ${model.minRamGb}+ GB RAM (this phone has $ramGb GB)",
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.Warning,
-            )
-        }
+        RamNote(model.minRamGb, ramGb)
+    }
+}
+
+/** Thin transfer bar with a one-line caption, shared by the model rows. */
+@Composable
+private fun SlimProgress(fraction: Float, caption: String) {
+    LinearProgressIndicator(
+        progress = { fraction },
+        modifier = Modifier.fillMaxWidth().padding(top = 3.dp).height(3.dp).clip(RoundedCornerShape(2.dp)),
+        color = Palette.Accent,
+        trackColor = Palette.SurfaceHigh,
+    )
+    Text(caption, style = MaterialTheme.typography.labelSmall, color = Palette.TextTertiary, modifier = Modifier.padding(top = 1.dp))
+}
+
+/** Shown only when the phone's RAM is below what the model recommends. */
+@Composable
+private fun RamNote(minRamGb: Int, ramGb: Int) {
+    if (minRamGb > 0 && ramGb in 1 until minRamGb) {
+        Text("Needs $minRamGb+ GB RAM (this phone has $ramGb GB)", style = MaterialTheme.typography.labelSmall, color = Palette.Warning)
     }
 }

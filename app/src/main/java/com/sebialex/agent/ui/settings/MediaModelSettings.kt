@@ -127,13 +127,16 @@ internal fun ImageModelGroup(
         }
         if (problem != null) Text(problem, style = MaterialTheme.typography.labelSmall, color = Palette.Danger)
         if (open) {
-            // On-device first (free, private, slower); then the cloud providers.
-            val tabs = listOf(MediaModels.PROVIDER_DEVICE, MediaModels.PROVIDER_OPENROUTER) +
+            // On-device first (free, private, slower); then the cloud providers. Removed ones
+            // are left out — their cards are gone from Settings, so is their tab here.
+            val tabs = listOf(MediaModels.PROVIDER_DEVICE) +
+                (if (MediaModels.PROVIDER_OPENROUTER !in snap.hiddenProviders) listOf(MediaModels.PROVIDER_OPENROUTER) else emptyList()) +
                 snap.customProviders.filter { custom[it.id].orEmpty().isNotEmpty() || markable[it.id].orEmpty().isNotEmpty() }.map { it.id }
             var tab by remember(current.provider) {
                 mutableStateOf(
                     if (current.provider == MediaModels.PROVIDER_DEVICE) MediaModels.PROVIDER_DEVICE
-                    else MediaModels.customProviderId(current)?.takeIf { it in tabs } ?: MediaModels.PROVIDER_OPENROUTER,
+                    else MediaModels.customProviderId(current)?.takeIf { it in tabs }
+                        ?: (if (MediaModels.PROVIDER_OPENROUTER in tabs) MediaModels.PROVIDER_OPENROUTER else MediaModels.PROVIDER_DEVICE),
                 )
             }
             if (tabs.size > 1) ChoiceChips(

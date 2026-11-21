@@ -72,6 +72,13 @@ import com.sebialex.agent.ui.theme.Palette
 import com.sebialex.agent.ui.theme.themeBackdrop
 import com.sebialex.agent.ui.theme.softSurface
 
+/** Display names of the built-in key rings, shown while removing / restoring them. */
+internal val BUILT_IN_PROVIDER_NAMES = mapOf(
+    SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
+    SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
+    SecureSettings.PROVIDER_TINYFISH to "Web search (TinyFish)",
+)
+
 /**
  * Settings sections. The settings home is a vertical list of these; tapping one opens it as its
  * own page, with the section name in the top bar next to Back (no tab strip, no pill slider).
@@ -193,6 +200,15 @@ fun SettingsScreen(
                         // capability overrides. The chat's + sheet opens the same picker.
                         val statuses by modelStore.statuses.collectAsStateWithLifecycle()
                         val downloaded = statuses.values.count { it is com.sebialex.agent.data.local.ModelStatus.Ready }
+                        var confirmRemove by remember { mutableStateOf<String?>(null) }
+                        confirmRemove?.let { id ->
+                            com.sebialex.agent.ui.components.SheetConfirm(
+                                message = "Remove ${BUILT_IN_PROVIDER_NAMES[id] ?: id} from Settings? Its key is deleted (the model picker stops listing it) — you can add it back below the providers.",
+                                confirm = "Remove",
+                                onConfirm = { settings.hideProvider(id); confirmRemove = null },
+                                onCancel = { confirmRemove = null },
+                            )
+                        }
                         SettingsGroup("Chat model") {
                             NavRow(
                                 title = modelName(snap.model),
@@ -202,6 +218,7 @@ fun SettingsScreen(
                             )
                         }
                         // Two categories, each nested: what runs on the phone, and what runs elsewhere.
+                        // Image-capable on-device models (the ncnn engine) count as local too.
                         SettingsGroup("Local") {
                             ExpandRow(
                                 "On-device models",
@@ -213,22 +230,40 @@ fun SettingsScreen(
                                     value = "${com.sebialex.agent.data.local.LocalModels.forModality(com.sebialex.agent.data.local.Modality.TEXT).size} in the catalogue",
                                     onClick = { section = SettingsSection.ON_DEVICE },
                                 )
-                                // Image and video generation exist only through cloud providers here
-                                // (on-device models are text models), so they are not listed as local.
+                                RowDivider()
+                                NavRow(
+                                    "Image",
+                                    value = "${com.sebialex.agent.data.local.ImageModels.all.size + snap.hfImageModels.size} in the catalogue",
+                                    onClick = { section = SettingsSection.IMAGE },
+                                )
+                                // Video generation is too heavy for a phone; it runs on a cloud provider.
                             }
                         }
                         SettingsGroup("Cloud") {
-                            listOf(
-                                SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
-                                SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
-                                SecureSettings.PROVIDER_TINYFISH to "Web search (TinyFish)",
-                            ).forEach { (id, name) ->
+                            BUILT_IN_PROVIDER_NAMES.filter { it.key !in snap.hiddenProviders }.forEach { (id, name) ->
                                 KeyRingCard(
                                     title = name,
                                     keys = snap.keys[id].orEmpty(),
                                     onAdd = { key, label -> settings.addKey(id, key, label) },
                                     onRemove = { settings.removeKey(id, it) },
                                     onActivate = { settings.setActiveKey(id, it) },
+                                    action = {
+                                        QuietIconButton(
+                                            R.drawable.ic_trash, "Remove $name",
+                                            onClick = {
+                                                if (confirmRemove == null) confirmRemove = id
+                                            },
+                                            size = 38.dp, iconSize = 17.dp, tint = Palette.IconMuted,
+                                        )
+                                    },
+                                )
+                            }
+                            snap.hiddenProviders.forEach { id ->
+                                NavRow(
+                                    "Add ${BUILT_IN_PROVIDER_NAMES[id] ?: id} back",
+                                    icon = R.drawable.ic_plus,
+                                    onClick = { settings.restoreProvider(id) },
+                                    chevron = false,
                                 )
                             }
                             RowDivider()

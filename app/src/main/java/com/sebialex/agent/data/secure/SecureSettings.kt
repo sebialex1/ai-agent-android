@@ -68,6 +68,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         val keys: Map<String, List<KeyView>> = emptyMap(),
         /** User-added OpenAI-compatible providers. */
         val customProviders: List<CustomProvider> = emptyList(),
+        /** Built-in providers (OpenRouter, Ollama Cloud, TinyFish) removed from Settings, by provider id. */
+        val hiddenProviders: Set<String> = emptySet(),
         /** generate_image's model as saved; null while the default ([MediaModels.DEFAULT]) applies. */
         val mediaImage: com.sebialex.agent.data.llm.MediaModelRef? = null,
         /** Manual thinking-support overrides of custom-provider models, by app model id. */
@@ -529,6 +531,24 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
             if (model().startsWith("$CUSTOM_MODEL_PREFIX$id/")) putString(KEY_MODEL, remoteModel())
         }
     }
+    /** Built-in providers removed from Settings (their keys are cleared too). */
+    fun hiddenProviders(): Set<String> =
+        prefs.getString(KEY_HIDDEN_PROVIDERS, null)?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+
+    /** Removes a built-in provider's card (and its keys) from Settings; it can be restored. */
+    @Synchronized
+    fun hideProvider(id: String) {
+        clearKeys(id)
+        edit { putString(KEY_HIDDEN_PROVIDERS, (hiddenProviders() + id).joinToString(",")) }
+    }
+
+    /** Brings a removed built-in provider back (no keys retained; the ring is empty again). */
+    @Synchronized
+    fun restoreProvider(id: String) {
+        val next = hiddenProviders() - id
+        edit { putOrRemove(KEY_HIDDEN_PROVIDERS, next.joinToString(",").ifEmpty { null }) }
+    }
+
     /** Stores a hand-typed Ollama model name (already normalized, no prefix); empty clears it. */
     fun setOllamaCustomModel(value: String?) = edit { putOrRemove(KEY_OLLAMA_CUSTOM, value) }
 
@@ -699,6 +719,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         emojiRecent = emojiRecent(),
         keys = keyViews(),
         customProviders = customProviders(),
+        hiddenProviders = hiddenProviders(),
         mediaImage = storedMediaImageModel(),
         reasoningOverrides = reasoningOverrides(),
         imageOverrides = imageOverrides(),
@@ -713,6 +734,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_RING_PREFIX = "api_keys_v2::"
         private const val KEY_ACTIVE_PREFIX = "api_key_active::"
         private const val KEY_CUSTOM_PROVIDERS = "custom_providers_v1"
+        private const val KEY_HIDDEN_PROVIDERS = "hidden_providers_v1"
         /** A key that failed is skipped by rotation for this long (it is still tried when it is the only one). */
         private const val KEY_COOLDOWN_MS = 10 * 60_000L
         const val PROVIDER_TINYFISH = "tinyfish"
