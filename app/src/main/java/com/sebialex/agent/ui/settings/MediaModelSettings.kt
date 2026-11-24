@@ -33,6 +33,7 @@ import com.sebialex.agent.data.llm.MediaModelOption
 import com.sebialex.agent.data.llm.MediaModelRef
 import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.OpenRouterModels
+import com.sebialex.agent.data.llm.PollinationsModels
 import com.sebialex.agent.data.llm.RoutedImageGenerator
 import com.sebialex.agent.data.local.ImageEngine
 import com.sebialex.agent.data.local.ImageModelStore
@@ -50,9 +51,12 @@ internal fun imageModelLine(snap: SecureSettings.Snapshot): String {
     if (ref.provider == MediaModels.PROVIDER_DEVICE) {
         return "On-device \u00b7 ${ImageModels.displayName(ref.model)}"
     }
-    val provider = MediaModels.customProviderId(ref)?.let { id ->
-        snap.customProviders.firstOrNull { it.id == id }?.name ?: "Custom provider"
-    } ?: "OpenRouter"
+    val provider = when {
+        ref.provider == MediaModels.PROVIDER_POLLINATIONS -> "Pollinations"
+        else -> MediaModels.customProviderId(ref)?.let { id ->
+            snap.customProviders.firstOrNull { it.id == id }?.name ?: "Custom provider"
+        } ?: "OpenRouter"
+    }
     return "$provider \u00b7 ${ref.model}"
 }
 
@@ -86,6 +90,7 @@ internal fun ImageModelGroup(
     }
     val custom = snap.customProviders.associate { p -> p.id to MediaModels.customImageModels(p, snap.imageOverrides) }
     val markable = snap.customProviders.associate { p -> p.id to MediaModels.markableModels(p) }
+    val pollinations = PollinationsModels.imageModels()
     val imageStatuses by imageStore.statuses.collectAsStateWithLifecycle()
     val imageImported by imageStore.imported.collectAsStateWithLifecycle()
     // Is the saved choice usable right now? Shown under the row instead of switching providers.
@@ -98,11 +103,12 @@ internal fun ImageModelGroup(
     }.exceptionOrNull()?.message
     val providerName = when {
         current.provider == MediaModels.PROVIDER_DEVICE -> "On-device"
+        current.provider == MediaModels.PROVIDER_POLLINATIONS -> "Pollinations"
         else -> MediaModels.customProviderId(current)?.let { id -> snap.customProviders.firstOrNull { it.id == id }?.name ?: "Removed provider" } ?: "OpenRouter"
     }
     val currentName = when {
         current.provider == MediaModels.PROVIDER_DEVICE -> ImageModels.displayName(current.model)
-        else -> (openRouter.orEmpty() + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
+        else -> (openRouter.orEmpty() + pollinations + custom.values.flatten()).firstOrNull { it.ref == current }?.name ?: current.model
     }
 
     SettingsGroup("Image generation") {
@@ -130,11 +136,13 @@ internal fun ImageModelGroup(
             // On-device first (free, private, slower); then the cloud providers. Removed ones
             // are left out — their cards are gone from Settings, so is their tab here.
             val tabs = listOf(MediaModels.PROVIDER_DEVICE) +
+                (if (MediaModels.PROVIDER_POLLINATIONS !in snap.hiddenProviders) listOf(MediaModels.PROVIDER_POLLINATIONS) else emptyList()) +
                 (if (MediaModels.PROVIDER_OPENROUTER !in snap.hiddenProviders) listOf(MediaModels.PROVIDER_OPENROUTER) else emptyList()) +
                 snap.customProviders.filter { custom[it.id].orEmpty().isNotEmpty() || markable[it.id].orEmpty().isNotEmpty() }.map { it.id }
             var tab by remember(current.provider) {
                 mutableStateOf(
                     if (current.provider == MediaModels.PROVIDER_DEVICE) MediaModels.PROVIDER_DEVICE
+                    else if (current.provider in tabs) current.provider
                     else MediaModels.customProviderId(current)?.takeIf { it in tabs }
                         ?: (if (MediaModels.PROVIDER_OPENROUTER in tabs) MediaModels.PROVIDER_OPENROUTER else MediaModels.PROVIDER_DEVICE),
                 )
@@ -145,6 +153,7 @@ internal fun ImageModelGroup(
                 label = { id ->
                     when (id) {
                         MediaModels.PROVIDER_DEVICE -> "On-device"
+                        MediaModels.PROVIDER_POLLINATIONS -> "Pollinations"
                         MediaModels.PROVIDER_OPENROUTER -> "OpenRouter"
                         else -> snap.customProviders.firstOrNull { it.id == id }?.name ?: id
                     }
@@ -162,6 +171,7 @@ internal fun ImageModelGroup(
                 }
             val items: List<MediaModelOption>? = when (tab) {
                 MediaModels.PROVIDER_DEVICE -> deviceItems
+                MediaModels.PROVIDER_POLLINATIONS -> pollinations
                 MediaModels.PROVIDER_OPENROUTER -> openRouter
                 else -> custom[tab]
             }

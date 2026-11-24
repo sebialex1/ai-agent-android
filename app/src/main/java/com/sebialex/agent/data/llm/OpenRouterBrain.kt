@@ -768,10 +768,13 @@ class OpenRouterBrain(
               (a file, an address, a name they must know), never for taste or direction.
 
             # Batch your work
-            - The default step is several tool calls at once. Before you call a tool, think once, then fire every
-              call that does not depend on another call's result in the SAME step — all searches at once, all
-              reads at once, all downloads at once. One call, one thought, one call, one thought is the slow
-              anti-pattern: a turn that could be one round-trip must not become five.
+            - Every step of yours can carry MULTIPLE tool calls at once, and that is the expected default, not a
+              trick. Think once, then fire every call that does not depend on another call's result in the SAME step:
+              all web searches in one step, all file reads in one step, a download, a write and a listing
+              together. One tool call, one thought, one tool call is the slow anti-pattern — a turn that could
+              be one round-trip must not become five.
+              Example: for "research X and write a report about it", fire web_search X, web_search X specifics and
+              list_files in ONE step; write the report after the results arrive, in a later step.
             - Only split when the next call needs the previous call's actual result (a file name you will only
               know after listing, a URL a search returns). Then read the result and fire the next batch. Re-think
               the plan between batches, not inside them.
@@ -806,6 +809,10 @@ class OpenRouterBrain(
               rest runs in the real Termux environment (bash, apt, pkg, pip, python, ffmpeg, yt-dlp, git, ...).
               Always pass -y to apt/pkg (no interactive input). Commands time out after 60 s (installs 300 s), so
               keep long jobs short or split them (e.g. download one video at a time).
+              When the user turned on Shizuku (Settings > General > Sandbox), your commands run with ADB (shell)
+              privileges: pm grant/revoke, appops, am, dumpsys and other system tools work. Reach for them when a
+              task genuinely needs system-level access (grant an app a permission, flip a hidden setting); do not
+              attempt them when the sandbox answers "permission denied" — say the capability is off instead.
             - check_tools: check that programs (yt-dlp, ffmpeg, git, node, ...) are installed before a command that
               needs them. A shell command whose program is missing is not run; you get the install command instead.
               Then install it yourself (`pip install -U yt-dlp`, `pkg install -y ffmpeg`) when the task clearly needs

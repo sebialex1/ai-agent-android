@@ -6,6 +6,7 @@ import com.sebialex.agent.data.llm.MediaModels
 import com.sebialex.agent.data.llm.ProviderMetadata
 import com.sebialex.agent.data.llm.ProviderModelMeta
 import com.sebialex.agent.data.llm.OpenRouterImages
+import com.sebialex.agent.data.llm.PollinationsModels
 import com.sebialex.agent.data.llm.RoutedImageGenerator
 import com.sebialex.agent.data.secure.SecureSettings
 import org.junit.Assert.assertArrayEquals
@@ -89,7 +90,6 @@ class MediaModelsTest {
         fails(MediaModels.customRef("gone", "gpt-image-1"), listOf(oa), { 1 }, "removed")
         fails(MediaModels.customRef("oa", "gpt-4o"), listOf(oa), { 1 }, "no longer lists")
         fails(MediaModels.customRef("oa", "gpt-image-1"), listOf(oa), { 0 }, "no Oa key")
-        fails(MediaModels.DEFAULT, emptyList(), { 0 }, "no OpenRouter key")
         fails(MediaModelRef("weird", "x"), emptyList(), { 1 }, "not one this app knows")
         // A local server needs no key.
         val local = provider("lm", "http://192.168.1.5:1234/v1", listOf("flux"), mapOf("flux" to ProviderModelMeta(image = true)))
@@ -166,7 +166,13 @@ class MediaModelsTest {
         // gemini-2.5-flash-image is served by one provider only (Google Vertex) and 403s for many
         // keys; the default must be a multi-provider current model.
         assertEquals("google/gemini-3.1-flash-image", OpenRouterImages.DEFAULT_MODEL)
-        assertEquals(OpenRouterImages.DEFAULT_MODEL, MediaModels.DEFAULT.model)
+    }
+
+    @Test fun theDefaultImageModelNeedsNoKeyAtAll() {
+        // generate_image answers out of the box: the default resolves on Pollinations' free tier
+        // with zero keys, instead of failing on a missing OpenRouter key.
+        assertEquals(MediaModelRef(MediaModels.PROVIDER_POLLINATIONS, PollinationsModels.FREE_MODEL), MediaModels.DEFAULT)
+        assertEquals("Pollinations", RoutedImageGenerator.resolve(MediaModels.DEFAULT, emptyList(), keyCount = { 0 }).first)
     }
 
     @Test fun mediaSelectionIsAPlainBackedUpSetting() {

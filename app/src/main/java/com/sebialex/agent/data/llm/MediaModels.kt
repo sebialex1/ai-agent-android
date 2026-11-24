@@ -51,10 +51,14 @@ object MediaModels {
     const val PROVIDER_OPENROUTER = KeyPool.OPENROUTER
     /** generate_image runs on the phone itself (Settings > On-device > Image), no provider. */
     const val PROVIDER_DEVICE = "device"
+    /** Pollinations: works with no key; a saved key (optional) only lifts the free rate limit. */
+    const val PROVIDER_POLLINATIONS = SecureSettings.PROVIDER_POLLINATIONS
     const val IMAGES_ENDPOINT_OPENROUTER = "https://openrouter.ai/api/v1/images/models"
 
-    /** What generate_image used before the picker existed; shown as the default until the user picks. */
-    val DEFAULT = MediaModelRef(PROVIDER_OPENROUTER, OpenRouterImages.DEFAULT_MODEL)
+    /** What generate_image used before the picker existed; shown as the default until the user picks.
+     *  Pollinations is the default because it works with no key at all: generate_image answers out
+     *  of the box instead of failing on a missing OpenRouter key. */
+    val DEFAULT = MediaModelRef(PROVIDER_POLLINATIONS, PollinationsModels.FREE_MODEL)
 
     /** Providers this app talks to that cannot generate images here, with the reason shown in Settings. */
     val LIMITATIONS = listOf(

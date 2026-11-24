@@ -149,6 +149,8 @@ class RoutedImageGenerator(
     private val settings: SecureSettings,
     private val openRouter: (String) -> ImageGenerator = { model -> OpenRouterImages(settings, model = { model }) },
     private val custom: (SecureSettings.CustomProvider, String) -> ImageGenerator = { p, m -> OpenAiCompatibleImages(settings, p, m) },
+    /** Pollinations' own free/keyed endpoints (no OpenAI envelope of its own). */
+    private val pollinations: (String) -> ImageGenerator = { m -> PollinationsImages(settings, m) },
     /** On-device generators, one per image model id (built where its model files can be found). */
     private val device: (String) -> ImageGenerator,
     /** diffusion-step readout of the running generation (null = none running), for the chat UI. */
@@ -179,7 +181,8 @@ class RoutedImageGenerator(
         }
         val (name, provider) = resolve(ref, settings.customProviders(), settings.imageOverrides(), keyCount = settings::keyCount)
         return try {
-            if (provider == null) openRouter(ref.model).generate(prompt, aspectRatio)
+            if (ref.provider == MediaModels.PROVIDER_POLLINATIONS) pollinations(ref.model).generate(prompt, aspectRatio)
+            else if (provider == null) openRouter(ref.model).generate(prompt, aspectRatio)
             else custom(provider, ref.model).generate(prompt, aspectRatio)
         } catch (e: IOException) {
             throw IOException("Image generation with $name \u00b7 ${ref.model} failed: ${e.message}", e)
@@ -205,6 +208,9 @@ class RoutedImageGenerator(
                 )
                 return "On-device" to null
             }
+            if (ref.provider == MediaModels.PROVIDER_POLLINATIONS) {
+                return "Pollinations" to null // works with no key at all; see PollinationsImages
+            }
             if (ref.provider == MediaModels.PROVIDER_OPENROUTER) {
                 if (keyCount(KeyPool.OPENROUTER) == 0) throw IOException(
                     "The image model is OpenRouter \u00b7 ${ref.model}, but no OpenRouter key is saved. " +
@@ -222,8 +228,8 @@ class RoutedImageGenerator(
                 "${p.name} no longer lists ${ref.model} as an image model, and it is not marked as one in Settings. Pick another image model in Settings > Models > Image generation. Nothing was generated.",
             )
             if (keyCount(CustomProviders.keyRing(p.id)) == 0 && !CustomProviders.isLocalAddress(p.baseUrl)) throw IOException(
-                "The image model is ${p.name} \u00b7 ${ref.model}, but no ${p.name} key is saved. Add one in Settings > Models. Nothing was generated.",
-            )
+                    "The image model is ${p.name} \u00b7 ${ref.model}, but no ${p.name} key is saved. Add one in Settings > Models. Nothing was generated.",
+                )
             return p.name to p
         }
     }

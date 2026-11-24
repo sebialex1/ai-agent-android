@@ -284,8 +284,9 @@ class AppContainer(app: Application) {
         }
 
     /**
-     * generate_image: the provider and model picked in Settings (OpenRouter's Image API, a
-     * custom provider's /images/generations, or an on-device model), never a silent fallback.
+     * generate_image: the provider and model picked in Settings (OpenRouter's Image API,
+     * Pollinations (works with no key), a custom provider's /images/generations, or an on-device
+     * model), never a silent fallback.
      */
     private val images = com.sebialex.agent.data.llm.RoutedImageGenerator(
         settings,

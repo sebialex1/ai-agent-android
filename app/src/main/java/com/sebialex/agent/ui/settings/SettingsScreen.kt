@@ -77,6 +77,7 @@ internal val BUILT_IN_PROVIDER_NAMES = mapOf(
     SecureSettings.PROVIDER_OPENROUTER to "OpenRouter",
     SecureSettings.PROVIDER_OLLAMA to "Ollama Cloud",
     SecureSettings.PROVIDER_TINYFISH to "Web search (TinyFish)",
+    SecureSettings.PROVIDER_POLLINATIONS to "Pollinations",
 )
 
 /**
@@ -244,6 +245,8 @@ fun SettingsScreen(
                                 KeyRingCard(
                                     title = name,
                                     keys = snap.keys[id].orEmpty(),
+                                    subtitle = if (id == SecureSettings.PROVIDER_POLLINATIONS)
+                                        "No key needed" else null,
                                     onAdd = { key, label -> settings.addKey(id, key, label) },
                                     onRemove = { settings.removeKey(id, it) },
                                     onActivate = { settings.setActiveKey(id, it) },

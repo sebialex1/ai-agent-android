@@ -797,6 +797,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val OLLAMA_PREFIX = "ollama/"
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_OLLAMA = "ollama"
+        /** Pollinations: image generation with no key at all; a key only lifts the free rate limit. */
+        const val PROVIDER_POLLINATIONS = "pollinations"
         /** Where the single key of each built-in provider lived before the key ring. */
         private val LEGACY_KEYS = mapOf(
             PROVIDER_OPENROUTER to KEY_OPENROUTER,

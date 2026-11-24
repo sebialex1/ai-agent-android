@@ -31,6 +31,10 @@ class GeminiShimTest {
         // One-time setup ends in the patch (idempotent via the marker); every start runs it
         // first, so a pip upgrade cannot silently drop the account-registry behaviour.
         assertTrue("setup runs the patch", GeminiShim.SETUP.contains("&& " + GeminiShim.PATCH.trim()))
+        // gemini-webapi 2.0.x has no account model registry: an unknown name (gemini-4-*) would
+        // degrade to the silent default again. -U forces the leftover install up to 2.1.x.
+        assertTrue("setup forces the registry-capable gemini_webapi", "gemini_webapi>=2.1.1,<2.2" in GeminiShim.SETUP)
+        assertTrue("setup upgrades an old leftover install", "pip install -U " in GeminiShim.SETUP)
         assertTrue(GeminiShim.PATCH.contains("'PYPATCH'"))
         assertTrue("start applies the patch first", GeminiShim.startScript(AgtFile.Payload()).startsWith(GeminiShim.PATCH))
     }

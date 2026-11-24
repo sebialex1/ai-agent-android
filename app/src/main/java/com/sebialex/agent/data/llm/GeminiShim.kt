@@ -77,13 +77,19 @@ object GeminiShim {
         PYPATCH""".trimIndent()
 
     /**
-     * One-time setup in Termux. `pip install -U pip` is deliberately absent: Termux forbids it
-     * because it breaks the python-pip package. `rust` is required because orjson ships no
-     * Android wheel and maturin builds it from source; curl_cffi does have an Android wheel.
+     * Setup in Termux. `pip install -U pip` is deliberately absent: Termux forbids it because it
+     * breaks the python-pip package. `rust` is required because orjson ships no Android wheel and
+     * maturin builds it from source; curl_cffi does have an Android wheel.
+     *
+     * The shim library is forced to 2.1.x (`-U` upgrades a leftover install), never 2.0.x: only
+     * 2.1 knows the account's live model registry (`list_models` / `resolve_model`) — on 2.0.x
+     * an unknown name like gemini-4-hydrogen degrades to the default model and the registry side
+     * of the patch has nothing to merge. `-U` matters because pip keeps any already-installed
+     * satisfiable version, so the first setup could have left 2.0.x behind.
      */
     val SETUP =
         "pkg install -y python python-pip git clang cmake make openssl binutils rust patchelf && " +
-            "pip install \"git+https://github.com/FarisHijazi/gemini-web-api\" && " + PATCH
+            "pip install -U \"git+https://github.com/FarisHijazi/gemini-web-api\" \"gemini_webapi>=2.1.1,<2.2\" && " + PATCH
 
 
 
