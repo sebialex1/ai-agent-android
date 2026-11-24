@@ -42,6 +42,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sebialex.agent.R
+import com.sebialex.agent.data.secure.SecureSettings
+import com.sebialex.agent.data.shell.ShizukuRunner
 import com.sebialex.agent.data.shell.TermuxBridge
 import com.sebialex.agent.data.shell.TermuxSetupCheck
 import com.sebialex.agent.ui.components.AppIcon
@@ -72,9 +74,11 @@ private const val TERMUX_SETUP =
 /**
  * Status of the Termux environment that runs apt, pkg, pip and python, with one tap per
  * missing piece. Refreshed whenever the screen resumes (after returning from system settings).
+ * Below it the opt-in Shizuku group: shell commands with ADB privileges once the user has the
+ * Shizuku app running and has granted this app the permission.
  */
 @Composable
-fun SandboxSetting(termux: TermuxBridge) {
+fun SandboxSetting(termux: TermuxBridge, settings: SecureSettings) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -166,6 +170,71 @@ fun SandboxSetting(termux: TermuxBridge) {
                 } else {
                     askLegacyStorage.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
+            },
+        )
+    }
+
+    SettingsGroup("Shizuku (ADB shell)") {
+        var installed by remember { mutableStateOf(ShizukuRunner.installed(context)) }
+        var alive by remember { mutableStateOf(ShizukuRunner.binderAlive()) }
+        var granted by remember { mutableStateOf(ShizukuRunner.granted()) }
+        fun refreshShizuku() {
+            installed = ShizukuRunner.installed(context)
+            alive = ShizukuRunner.binderAlive()
+            granted = ShizukuRunner.granted()
+        }
+        val askShizuku = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refreshShizuku() }
+        DisposableEffect(Unit) {
+            // The grant/deny result arrives through Shizuku's binder listener (and, on some
+            // Android versions, without a dialog at all — screen resume re-checks either way).
+            val listener = ShizukuRunner.listen { granted = ShizukuRunner.granted() }
+            onDispose { ShizukuRunner.unlisten(listener) }
+        }
+
+        StatusRow(
+            label = "Shizuku app installed",
+            ok = installed,
+            action = "Get",
+            onAction = {
+                if (open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api")))) {
+                    installed = ShizukuRunner.installed(context)
+                }
+            },
+        )
+        if (installed) {
+            StatusRow(
+                label = "Shizuku running",
+                ok = alive,
+                action = "Open",
+                onAction = {
+                    // Starting the app is the one way in: it is started from wireless debugging
+                    // (development settings) or root, inside the Shizuku app itself.
+                    context.packageManager.getLaunchIntentForPackage(ShizukuRunner.PACKAGE)?.let { askShizuku.launch(it) }
+                        ?: refreshShizuku()
+                },
+            )
+            Text(
+                "Start Shizuku inside its app (wireless debugging on your phone, or root).",
+                style = MaterialTheme.typography.labelSmall,
+                color = Palette.TextTertiary,
+                modifier = Modifier.fillMaxWidth().padding(start = 32.dp, bottom = 4.dp),
+            )
+        }
+        if (installed && alive) {
+            StatusRow(
+                label = "Permission to run commands",
+                ok = granted,
+                action = "Allow",
+                onAction = { ShizukuRunner.requestPermission() },
+            )
+        }
+        SwitchRow(
+            title = "Run shell commands with ADB",
+            subtitle = "External commands (with the toggle on and Shizuku ready) run with shell privileges — pm grant, appops, system services. Termux, Python and pip are unchanged.",
+            checked = settings.shizukuEnabled(),
+            onChange = {
+                settings.setShizukuEnabled(it)
+                refreshShizuku()
             },
         )
     }

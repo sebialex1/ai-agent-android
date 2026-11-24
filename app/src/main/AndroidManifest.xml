@@ -26,7 +26,9 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Shizuku: its binder gives the app ADB (shell uid) shell access when the user opts in. -->
     <queries>
+        <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.termux" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
@@ -92,5 +94,13 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_paths" />
         </provider>
+        <!-- Shizuku's connection provider: the app talks to the Shizuku service through it. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>

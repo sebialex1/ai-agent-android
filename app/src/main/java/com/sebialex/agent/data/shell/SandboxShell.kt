@@ -41,10 +41,11 @@ class SandboxShell(
     private val ws: Workspace,
     private val termux: TermuxRunner? = null,
     private val mirror: WorkspaceMirror? = null,
+    private val shizuku: ShizukuGate? = null,
 ) : Shell {
 
     /** Where external commands run right now. */
-    private enum class Backend { TERMUX, DEVICE }
+    private enum class Backend { SHIZUKU, TERMUX, DEVICE }
 
     /**
      * Programs already found installed (name to path) in [knownIn]; removals and uninstalls
@@ -60,8 +61,15 @@ class SandboxShell(
      * The one decision of where an external command runs, shared by [which] and [external] so a
      * lookup always answers for the environment that will execute the command.
      */
-    private fun backend(status: TermuxStatus?): Backend =
-        if (termux != null && mirror != null && status?.ready == true) Backend.TERMUX else Backend.DEVICE
+    // ADB (shell uid) privileges beat both Termux and the device shell when the user opted in
+    // and Shizuku is ready; Termux-only programs stay in Termux (handled by the callers).
+    private fun shizukuFirst(): Boolean = shizuku?.ready() == true
+
+    private fun backend(status: TermuxStatus?): Backend = when {
+        shizukuFirst() -> Backend.SHIZUKU
+        termux != null && mirror != null && status?.ready == true -> Backend.TERMUX
+        else -> Backend.DEVICE
+    }
 
     override fun which(programs: List<String>): Map<String, String?>? {
         if (programs.isEmpty()) return emptyMap()
@@ -73,7 +81,10 @@ class SandboxShell(
         if (todo.isNotEmpty()) {
             val script = ToolCheck.script(todo)
             val output = try {
-                if (backend == Backend.TERMUX) {
+                if (backend == Backend.SHIZUKU) {
+                    // A probe changes nothing: run it outside the mirrored workspace.
+                    shizuku!!.run(script, "/", PROBE_TIMEOUT_SECONDS).output
+                } else if (backend == Backend.TERMUX) {
                     // Termux's bash, through the same RUN_COMMAND wrapper as the command itself (see
                     // inTermux); a probe needs no workspace sync because it changes nothing.
                     val dir = mirror!!.shared.apply { mkdirs() }
@@ -285,12 +296,16 @@ class SandboxShell(
     /** Runs a command line for real: in Termux when it is ready, otherwise with the device shell. */
     private fun external(command: String, cwd: String, stdin: String?): ShellResult {
         val status = termux?.status()
-        if (backend(status) == Backend.TERMUX) return inTermux(command, cwd, stdin)
+        // Termux-only programs keep the old rule even when Shizuku is on: python, pip, pkg and
+        // apt do not exist for the shell uid — they are Termux programs, never a fallback.
         if (needsTermux(command)) {
-            val reason = status?.problem?.message ?: TermuxProblem.NOT_INSTALLED.message
+            if (termux != null && mirror != null && status?.ready == true) return inTermux(command, cwd, stdin)
             val program = tokenize(command).firstOrNull().orEmpty()
+            val reason = status?.problem?.message ?: TermuxProblem.NOT_INSTALLED.message
             return fail("$program: cannot run, the Termux environment is not available.\n$reason", cwd, 127)
         }
+        if (shizukuFirst()) return inShizuku(command, cwd, stdin)
+        if (backend(status) == Backend.TERMUX) return inTermux(command, cwd, stdin)
         val r = systemShell(command, cwd, stdin)
         // "not found" on the device shell while Termux is installed but unreachable: the program
         // may be installed in Termux, so say why it was not used rather than leave a bare 127.
@@ -300,6 +315,33 @@ class SandboxShell(
                 "so programs installed in Termux cannot be used.\n" + reason.message).trim())
         }
         return r
+    }
+
+    /** Executes with ADB (shell uid) privileges through Shizuku, inside the mirrored workspace. */
+    private fun inShizuku(command: String, cwd: String, stdin: String?): ShellResult {
+        val g = shizuku!!
+        val m = mirror ?: return systemShell(command, cwd, stdin)
+        val sharedDir = java.io.File(m.shared, cwd.removePrefix("/")).apply { mkdirs() }
+        val sharedRoot = m.shared.absolutePath
+        // Inside the Shizuku shell the workspace lives at the shared path, so /workspace paths
+        // are rewritten exactly as for Termux (see inTermux).
+        var script = command.replace(WORKSPACE_PATH, sharedRoot)
+        if (stdin != null) script = "printf '%s' " + shellQuote(stdin) + " | { $script; }"
+        try {
+            m.push()
+        } catch (e: Exception) {
+            return fail("sandbox: could not share the workspace with Shizuku: ${e.message}", cwd, 126)
+        }
+        val result = try {
+            g.run(script, sharedDir.absolutePath, timeoutFor(command))
+        } catch (e: Exception) {
+            return fail("shizuku: ${e.message}", cwd, 126)
+        } finally {
+            runCatching { m.pull() }
+        }
+        var text = result.output
+        text = text.replace(sharedRoot, "/workspace").replace(ws.root.canonicalPath, "/workspace")
+        return ShellResult(text.trimEnd('\n'), result.exitCode, cwd)
     }
 
     /** Executes in Termux, inside this conversation's mirrored workspace. */

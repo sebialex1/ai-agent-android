@@ -190,7 +190,7 @@ fun SettingsScreen(
                                 onChange = settings::setAutoApprove,
                             )
                         }
-                        SandboxSetting(termux)
+                        SandboxSetting(termux, settings)
                         BackgroundSetting()
                     }
                     SettingsSection.APPEARANCE -> AppearanceSettings(settings, snap)

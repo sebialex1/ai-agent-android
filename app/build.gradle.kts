@@ -92,6 +92,11 @@ dependencies {
     // On-device image generation (the MediaPipe Image Generator task; its transitive
     // tasks-core brings the MPImage + BitmapExtractor classes the generator's API uses).
     implementation("com.google.mediapipe:tasks-vision-image-generator:0.10.26.1")
+    // Shizuku: the agent's shell commands can run with ADB (shell uid) privileges when the user
+    // opts in — package grants, appops, system services — behind the Shizuku app on the phone.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:aidl:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     implementation(libs.pdfbox.android)

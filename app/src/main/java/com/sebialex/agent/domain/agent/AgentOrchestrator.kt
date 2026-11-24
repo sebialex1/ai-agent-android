@@ -384,7 +384,10 @@ class AgentOrchestrator(
                                 hits = result.searchHits,
                             )
                             send(AgentEvent.StepUpdated(finished)); audit.record(finished)
-                            result.attachment?.let { a ->
+                            // Attachment pills under the answer come from attach_files only: a tool that
+                            // merely wrote or changed a file is already described by its step row, and
+                            // showing it as "attached" made every update look like an attachment.
+                            if (call is ToolCall.AttachFiles) result.attachment?.let { a ->
                                 val prior = attachments[a.path]
                                 attachments[a.path] = if (prior?.baseSnapshot != null) a.copy(baseSnapshot = prior.baseSnapshot) else a
                             }

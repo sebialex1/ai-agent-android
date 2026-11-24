@@ -85,6 +85,19 @@ class AttachFilesTest {
     }
 
     @Test
+    fun aToolMerelyWritingAFileDoesNotShowItAsAttached() {
+        val brain = ScriptedBrain(
+            BrainDecision.Act(ToolCall.WriteFile("c1", "notes.md", "hello")),
+            BrainDecision.Answer("Wrote notes.md."),
+        )
+        val (done, ws) = run("write some notes", brain)
+        assertTrue(done.artifacts.isEmpty())
+        // Only a real attach_files call makes attachment pills; a written file is described by its step row.
+        assertTrue(done.attachments.isEmpty())
+        assertTrue(ws.resolve("notes.md").isFile)
+    }
+
+    @Test
     fun generatedImageIsAttachedByARealAttachCall() {
         val brain = ScriptedBrain(
             BrainDecision.Act(ToolCall.GenerateImage("c1", "water dripping in the desert", filename = "images/raw.png")),

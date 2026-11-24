@@ -26,6 +26,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -46,6 +48,7 @@ import com.sebialex.agent.domain.markdown.InlineParser
 import com.sebialex.agent.domain.markdown.MarkdownParser
 import com.sebialex.agent.domain.markdown.MdBlock
 import com.sebialex.agent.domain.markdown.MdInline
+import com.sebialex.agent.domain.markdown.WordColor
 import com.sebialex.agent.ui.components.AppIcon
 import com.sebialex.agent.ui.components.QuietIconButton
 import com.sebialex.agent.ui.theme.Mono
@@ -73,14 +76,28 @@ fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
                         TextLinkStyles(style = SpanStyle(color = Palette.Link, textDecoration = TextDecoration.Underline)),
                     ),
                 ) { emit(n.children) }
-                // The model's own colour for a word or a letter; see MdInline.Color.
-                is MdInline.Color -> withStyle(SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF000000L or n.hex.toLong(16)))) { emit(n.children) }
+                // The model's own colour for a word or a letter; see MdInline.Color. The theme's
+                // actual background decides readability: a raw picked hex can be near-invisible
+                // on the dark ink, so it is pushed toward the text colour until it stands out.
+                is MdInline.Color -> withStyle(SpanStyle(color = colorSpan(n.hex))) { emit(n.children) }
                 // Inline math (and $$…$$ written mid-sentence) flows with the words; see MathView.
                 is MdInline.Math -> appendMath(n.tex)
             }
         }
     }
     emit(InlineParser.parse(text))
+}
+
+/**
+ * The model's picked colour, made readable on the live theme: the raw hex stands palette-less
+ * against the dark chat background, so it is contrast-checked against the ink and pushed toward
+ * the normal text colour when it would fade into it (see [WordColor]).
+ */
+private fun colorSpan(hex: String): Color {
+    val bg = Palette.Ink.toArgb() and 0xffffff
+    val fallback = Palette.TextPrimary.toArgb() and 0xffffff
+    val rgb = WordColor.readableOn(hex, bg, fallback)
+    return Color(0xFF000000L or rgb.toLong(16))
 }
 
 /**

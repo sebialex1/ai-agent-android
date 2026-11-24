@@ -45,6 +45,7 @@ class SessionRuntime(
     images: com.sebialex.agent.domain.tools.ImageGenerator? = null,
     videos: com.sebialex.agent.data.llm.VideoGenerator? = null,
     userMemory: com.sebialex.agent.data.persistence.UserMemoryStore? = null,
+    shizuku: com.sebialex.agent.data.shell.ShizukuGate? = null,
 ) {
     val workspace = Workspace(dir)
     val mirror = WorkspaceMirror(
@@ -52,7 +53,7 @@ class SessionRuntime(
         shared = java.io.File(java.io.File(termux.sharedRoot, sessionId), "workspace"),
         manifestFile = java.io.File(dir, "mirror.manifest"),
     )
-    val shell = SandboxShell(workspace, termux, mirror)
+    val shell = SandboxShell(workspace, termux, mirror, shizuku)
     val audit = FileAuditLog(dir)
     /** Read-only view of the other conversations, used only when memory is on for this one. */
     val memory = ConversationMemoryReader(sessions, sessionId)
@@ -68,6 +69,8 @@ class AppContainer(app: Application) {
     val runKeeper = com.sebialex.agent.data.background.RunKeeper(app)
     /** The real on-device environment: Termux's bash, apt/dpkg, pkg, Python and pip. */
     val termux = TermuxBridge(app)
+    /** ADB (shell uid) shell access through Shizuku, when the user opted in and Shizuku is ready. */
+    val shizuku = com.sebialex.agent.data.shell.ShizukuRunner { settings.shizukuEnabled() }
     val sessions = SessionStore(app.filesDir)
     private val web = RoutingWebGateway(
         keyProvider = { settings.tinyFishKey() },
@@ -277,7 +280,7 @@ class AppContainer(app: Application) {
     @Synchronized
     fun runtime(sessionId: String): SessionRuntime =
         runtimes.getOrPut(sessionId) {
-            SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images, videos, userMemory)
+            SessionRuntime(sessionId, sessions.dirFor(sessionId), web, termux, sessions, images, videos, userMemory, shizuku)
         }
 
     /**

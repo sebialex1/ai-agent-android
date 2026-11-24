@@ -49,6 +49,36 @@ class PromptRulesTest {
         assertTrue(OpenRouterBrain.SYSTEM_PROMPT.trim() in system)
     }
 
+    @Test
+    fun promptsOwnCreativeAsksInsteadOfAskingWhatTheUserWants() {
+        assertTrue("the forbidden helpdesk opener is named", "How can I assist you today?" in OpenRouterBrain.SYSTEM_PROMPT)
+        for (prompt in listOf(OpenRouterBrain.SYSTEM_PROMPT, OpenRouterBrain.COMPACT_SYSTEM_PROMPT)) {
+            assertTrue("invent the subject" in prompt.lowercase())
+        }
+    }
+
+    @Test
+    fun thePromptMakesBatchedToolCallsTheDefault() {
+        assertTrue("Batch your work" in OpenRouterBrain.SYSTEM_PROMPT)
+        assertTrue("SAME step" in OpenRouterBrain.SYSTEM_PROMPT)
+    }
+
+    @Test
+    fun volatilePromptPartsSitAfterTheStablePrefix() {
+        val ctx = com.sebialex.agent.domain.agent.BrainContext(
+            "task", emptyList(), emptyList(), listOf("notes.txt"),
+            todos = listOf(com.sebialex.agent.domain.model.TodoItem(1, "do it", false)),
+        )
+        val system = systemPromptOf(ctx)
+        // The instruction block leads byte for byte; per-turn facts trail it so a provider
+        // caches the stable prefix across turns.
+        assertTrue(system.startsWith(OpenRouterBrain.SYSTEM_PROMPT))
+        val date = system.indexOf("Today is ")
+        val files = system.indexOf("Workspace files:")
+        val todos = system.indexOf("This conversation's todo list")
+        assertTrue(date in 0..files && files in 0..todos)
+    }
+
     /** The system message actually sent for [ctx], as the brain builds it. */
     private fun systemPromptOf(ctx: com.sebialex.agent.domain.agent.BrainContext): String {
         val messages = OpenRouterBrain(apiKey = "k", model = "m").messages(ctx)

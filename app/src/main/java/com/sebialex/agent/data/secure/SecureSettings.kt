@@ -141,6 +141,8 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
     fun model(): String = prefs.getString(KEY_MODEL, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
     fun askBeforeWeb(): Boolean = prefs.getBoolean(KEY_ASK_WEB, false)
     fun autoApprove(): Boolean = prefs.getBoolean(KEY_AUTO_APPROVE, false)
+    /** Opt-in: the agent's external shell commands run with ADB (shell uid) rights via Shizuku. */
+    fun shizukuEnabled(): Boolean = prefs.getBoolean(KEY_SHIZUKU_SHELL, false)
     fun remoteModel(): String = prefs.getString(KEY_REMOTE_MODEL, null)?.takeIf { it.isNotBlank() }
         ?: model().takeUnless { it.startsWith(LOCAL_PREFIX) || it.startsWith(OLLAMA_PREFIX) || it.startsWith(CUSTOM_MODEL_PREFIX) } ?: DEFAULT_MODEL
     /** The model of the selected cloud provider: last Ollama model, or the last OpenRouter model. */
@@ -614,6 +616,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         if (v.isEmpty()) remove(KEY_PROMPT_PREFIX + sessionId) else putString(KEY_PROMPT_PREFIX + sessionId, v)
     }
     fun setAskBeforeWeb(value: Boolean) = edit { putBoolean(KEY_ASK_WEB, value) }
+    fun setShizukuEnabled(value: Boolean) = edit { putBoolean(KEY_SHIZUKU_SHELL, value) }
     fun setAutoApprove(value: Boolean) = edit { putBoolean(KEY_AUTO_APPROVE, value) }
 
     // ---- Subagents (spawn_subagent) ----
@@ -746,6 +749,7 @@ class SecureSettings(context: Context) : com.sebialex.agent.domain.agent.KeyPool
         private const val KEY_MODEL = "openrouter_model"
         private const val KEY_ASK_WEB = "ask_before_web"
         private const val KEY_AUTO_APPROVE = "auto_approve_actions"
+    private const val KEY_SHIZUKU_SHELL = "shizuku_shell_v1"
         private const val KEY_SUBAGENTS_ON = "subagents_on"
         private const val KEY_SUBAGENT_MODELS = "subagent_models_v1"
         private const val KEY_REASONING_ON_PREFIX = "reasoning_enabled::"
