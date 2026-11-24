@@ -118,7 +118,13 @@ class AppContainer(app: Application) {
 
     /** Remembered facts about the user, shared by every conversation (the user_memory tool). */
     val userMemory = com.sebialex.agent.data.persistence.UserMemoryStore(app.filesDir)
-    val localEngine = LocalEngine(modelStore, settings, appScope)
+    val localEngine = LocalEngine(
+        modelStore, settings, appScope,
+        // Before a native engine exists, cap the context to what this phone can hold and
+        // remember crashes, so a GPU crash in a previous run does not repeat for ever.
+        totalRamBytes = { com.sebialex.agent.data.local.totalRamBytes(app) },
+        crashTimestamps = { com.sebialex.agent.data.local.recentCrashes(app) },
+    )
 
     /** Typing suggestions from the tiny on-device model; active only when the user turns it on. */
     val autocomplete = com.sebialex.agent.data.local.Autocomplete(

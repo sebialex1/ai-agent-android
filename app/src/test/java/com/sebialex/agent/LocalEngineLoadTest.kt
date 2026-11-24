@@ -47,10 +47,12 @@ class LocalEngineLoadTest {
         backend: () -> String = { "gpu" },
         files: ((LocalModel) -> File?)? = null,
         cacheDir: File = tmp.newFolder(),
+        totalRamBytes: () -> Long = { 0L },
+        crashTimestamps: () -> List<Long> = { emptyList() },
     ): LocalEngine {
         // One stable file per engine, so the capabilities cache can be exercised.
         val f = file()
-        return LocalEngine(runtime, files ?: { f }, cacheDir, backend, { context }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default))
+        return LocalEngine(runtime, files ?: { f }, cacheDir, backend, { context }, { false }, { null }, { "" }, CoroutineScope(Dispatchers.Default), totalRamBytes, crashTimestamps)
     }
 
     // ------------------------------------------------------------------ GPU out of memory
@@ -286,5 +288,46 @@ class LocalEngineLoadTest {
         assertTrue(runtime.conversations.single().closed.get())
         assertTrue(runtime.engines.single().closed.get())
         assertTrue(engine.state.value is EngineState.Idle)
+    }
+
+    // ------------------------------------------------------------------ memory & crash guards
+
+    @Test
+    fun aContextTooBigForThePhoneIsCappedBeforeTheEngineOpens() = runBlocking {
+        // The 6-byte test file with a 2 GB phone: half the RAM minus the model minus the runtime
+        // overhead is negative, so the floor (2048) applies to the requested 4096.
+        val e = engine(FakeLmRuntime(), context = 4096, totalRamBytes = { 2L shl 30 })
+        assertEquals(2_048, e.load(model).contextTokens)
+    }
+
+    @Test
+    fun unknownMemoryNeverCapsTheContext() = runBlocking {
+        val e = engine(FakeLmRuntime(), context = 8192, totalRamBytes = { 0L })
+        assertEquals(8_192, e.load(model).contextTokens)
+    }
+
+    @Test
+    fun aPreviousRunCrashInsideTheLoadedSpanStartsWithTheGpuOff() = runBlocking {
+        val dir = tmp.newFolder()
+        val marker = File(dir, "lm_engine_live")
+        marker.writeText(model.id)
+        marker.setLastModified(System.currentTimeMillis() - 60_000)
+        val runtime = FakeLmRuntime() // GPU works; only the crash memo explains the fallback.
+        val e = engine(runtime, cacheDir = dir, crashTimestamps = { listOf(System.currentTimeMillis()) })
+        val loaded = e.load(model)
+        assertEquals("CPU", loaded.backend)
+        assertTrue("fallback mentions the crash, got: ${loaded.fallbackReason}", loaded.fallbackReason.orEmpty().contains("crash"))
+    }
+
+    @Test
+    fun aMarkerWithoutACrashDoesNotSkipTheGpu() = runBlocking {
+        val dir = tmp.newFolder()
+        val marker = File(dir, "lm_engine_live")
+        marker.writeText(model.id)
+        marker.setLastModified(System.currentTimeMillis() - 60_000)
+        val runtime = FakeLmRuntime()
+        val e = engine(runtime, cacheDir = dir, crashTimestamps = { listOf(System.currentTimeMillis() - 600_000) })
+        val loaded = e.load(model)
+        assertEquals("GPU", loaded.backend)
     }
 }

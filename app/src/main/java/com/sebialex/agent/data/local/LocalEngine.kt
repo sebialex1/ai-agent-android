@@ -74,8 +74,18 @@ class LocalEngine(
     private val sampler: () -> SamplerSpec?,
     private val activation: () -> String,
     private val scope: CoroutineScope,
+    /** Total RAM in bytes, 0 when unknown; caps the context window before a native OOM can. */
+    private val totalRamBytes: () -> Long = { 0L },
+    /** Recent crash timestamps of this app's process (ApplicationExitInfo). */
+    private val crashTimestamps: () -> List<Long> = { emptyList() },
 ) {
-    constructor(store: ModelStore, settings: SecureSettings, scope: CoroutineScope) : this(
+    constructor(
+        store: ModelStore,
+        settings: SecureSettings,
+        scope: CoroutineScope,
+        totalRamBytes: () -> Long = { 0L },
+        crashTimestamps: () -> List<Long> = { emptyList() },
+    ) : this(
         runtime = LiteRtLmRuntime,
         files = { store.fileFor(it) },
         cacheDir = store.cacheDir,
@@ -125,6 +135,17 @@ class LocalEngine(
      */
     @Volatile
     private var gpuBroken = false
+
+    /** The reason the breaker came pre-tripped after a crash in a previous run, if that happened. */
+    private var crashMemoReason: String? = null
+    private var crashMemoChecked = false
+
+    /**
+     * Lives exactly as long as a model is loaded or loading. If the app dies (a native crash
+     * leaves nothing to catch or classify) while it exists, the phone's exit history shows a
+     * crash inside this span, and the next run starts with the breaker tripped.
+     */
+    private val loadMarker: File get() = File(cacheDir, "lm_engine_live")
 
     /** Capabilities read from the file at the last load, used for imported models. */
     fun capabilities(modelId: String): ModelCapabilities? = synchronized(caps) { caps[modelId] }
@@ -278,11 +299,13 @@ class LocalEngine(
 
         closeLocked()
         _state.value = EngineState.Loading(model.id, model.name, if (wantGpu) "GPU" else "CPU", System.currentTimeMillis())
+        runCatching { loadMarker.writeText(model.id) }
         // Loading is a long blocking native call. It is never abandoned halfway: a cancelled
         // caller still waits for it, so the engine is either kept or closed, never leaked.
         return try {
             withContext(NonCancellable + Dispatchers.IO) { create(model, file, requested, wantGpu) }
         } catch (t: Throwable) {
+            runCatching { loadMarker.delete() }
             val message = if (t is NotEnoughMemory) "not enough memory" else describe(t)
             _state.value = EngineState.Failed(model.id, model.name, message)
             throw IOException("${model.name} could not be loaded: $message", t)
@@ -292,20 +315,37 @@ class LocalEngine(
     private fun create(model: LocalModel, file: File, requested: Key, wantGpu: Boolean): LoadedModel {
         // The whole load is timed: metadata, the GPU attempt and the CPU fallback.
         val started = System.currentTimeMillis()
+        // Once per run: did the previous run die in a crash while a model was loaded? A native
+        // crash inside the engine leaves no throwable to classify; the exit history is the only
+        // witness. If so, the breaker starts tripped and this run says why.
+        if (!crashMemoChecked) {
+            crashMemoChecked = true
+            val marker = loadMarker
+            runCatching {
+                if (marker.isFile && GpuCrashMemo.shouldSkipGpu(crashTimestamps(), marker.lastModified())) {
+                    gpuBroken = true
+                    crashMemoReason = "the last run ended in a crash while a model was answering"
+                }
+            }
+        }
         // CPU loads and decodes get a fixed thread cap (see [cpuThreadCap]) so the phone stays
         // responsive while the model loads; the GPU path passes null, it is ignored there.
         val cpuThreads = cpuThreadCap(Runtime.getRuntime().availableProcessors())
         val info = readCapabilities(file)
         synchronized(caps) { if (info != null) caps[model.id] = info }
         val maxFromFile = info?.maxContext?.takeIf { it > 0 }
-        val context = if (maxFromFile != null) minOf(requested.context, maxFromFile) else requested.context
+        val context = ContextCeiling.effective(
+            if (maxFromFile != null) minOf(requested.context, maxFromFile) else requested.context,
+            file.length(),
+            totalRamBytes(),
+        )
         // MTP must only be requested when the file has it; LiteRT-LM fails otherwise.
         val speculative = requested.speculative && info?.speculativeDecoding == true
         var fallback: String? = null
         val (created, backendName) = when {
             !wantGpu -> openCpu(requested.path, context, requested, cpuThreads) to "CPU"
             gpuBroken -> {
-                fallback = "the GPU stays off for this app run: it failed to start before"
+                fallback = crashMemoReason ?: "the GPU stays off for this app run: it failed to start before"
                 openCpu(requested.path, context, requested, cpuThreads) to "CPU"
             }
             else -> {
@@ -372,6 +412,7 @@ class LocalEngine(
         engine = null
         key = null
         loaded = null
+        runCatching { loadMarker.delete() }
         if (s != null) runCatching { s.conversation.close() }
         if (e != null) runCatching { e.close() }
     }
